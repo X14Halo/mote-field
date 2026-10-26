@@ -4,7 +4,7 @@ A live WebGL mockup of **MoteField**, a proposed Nuke node that adds physically 
 
 **Live page:** https://x14halo.github.io/mote-field/
 
-The node would read the shot camera, a P / depth pass and the key light's depth map. In this mockup a stand-in room, sun and camera supply that data:
+The node would read the shot camera, a P / depth pass and the key light's depth map. In this mockup a grey clay stand-in room (sunlight traced through the windows and bounced twice), a stand-in sun and a virtual camera supply that data:
 
 - Four kinds of mote (grit, skin/paper flakes, lint fibres, fluff), each with its own size range, shape, scattering and drag
 - Lit only where the sun reaches them (light-space depth map), with a forward-scattering phase function
