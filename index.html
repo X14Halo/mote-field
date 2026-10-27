@@ -39,7 +39,9 @@ button{font:inherit;color:inherit}
 .mark{font-family:var(--f-mark);font-size:17px;letter-spacing:.16em;display:flex;align-items:center;gap:10px}
 .mark i{width:7px;height:7px;border-radius:50%;background:var(--dust);box-shadow:0 0 10px 2px rgba(228,186,107,.55);display:inline-block}
 .sub{color:var(--mute);font-family:var(--f-cond);font-size:13px;letter-spacing:.02em}
-.presets{display:flex;align-items:center;gap:6px;margin-left:auto;overflow-x:auto;max-width:100%;padding-bottom:2px;scrollbar-width:none}
+.scenebar{display:flex;align-items:center;gap:6px;margin-left:auto}
+.scenebar .seg button{padding:5px 10px;font-size:13px}
+.presets{display:flex;align-items:center;gap:6px;overflow-x:auto;max-width:100%;padding-bottom:2px;scrollbar-width:none}
 .presets::-webkit-scrollbar{display:none}
 .plabel{font-family:var(--f-mark);font-size:8.5px;letter-spacing:.2em;color:var(--mute);margin-right:4px;white-space:nowrap}
 .chip{background:var(--bin-2);border:1px solid var(--rule);border-radius:3px;padding:5px 10px;font-family:var(--f-cond);font-size:13px;white-space:nowrap;cursor:pointer}
@@ -70,6 +72,9 @@ button{font:inherit;color:inherit}
 .reticle::before{left:50%;top:-6px;width:1px;height:10px}.reticle::after{top:50%;left:-6px;height:1px;width:10px}
 .reticle.puff{border-radius:50%;border-color:var(--sky)}
 .reticle.on{opacity:1;transition:none}
+.gizmo{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.kcolor{justify-self:start;width:44px;height:22px;padding:0;border:1px solid var(--rule);border-radius:3px;background:var(--bin-2);cursor:pointer}
+.kbtn[aria-pressed="true"]{border-color:var(--dust);color:var(--dust)}
 .loupe{position:absolute;width:192px;height:192px;pointer-events:none;border:1px solid var(--dust);box-shadow:0 6px 24px rgba(0,0,0,.6);image-rendering:pixelated;background:#000}
 .glerr{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;background:var(--bin);z-index:3}
 .glerr p{max-width:46ch;color:var(--mute)}
@@ -168,7 +173,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 }
 @media (prefers-reduced-motion:reduce){ .reticle,.loader,.lbar i{transition:none} }
 </style>
-<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust node. Physically based dust motes in light shafts with real bokeh, shutter motion blur and depth holdouts.">
+<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust and ember node. Physically based dust motes in light shafts and fire embers with real bokeh, shutter motion blur and depth holdouts.">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
 </head>
 <body>
@@ -179,6 +184,10 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div class="brand">
       <span class="mark"><i aria-hidden="true"></i>MOTEFIELD</span>
       <span class="sub">Camera-aware dust for comp · tool concept for Lighting &amp; Compositing</span>
+    </div>
+    <div class="scenebar">
+      <span class="plabel">SCENE</span>
+      <div class="seg" id="sceneseg" role="group" aria-label="Scene"></div>
     </div>
     <nav class="presets" aria-label="Looks" id="presets">
       <span class="plabel">LOOKS</span>
@@ -202,6 +211,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
           <div class="ov tr" id="ovTR"></div>
           <div class="ov bl" id="ovBL"></div>
           <div class="ov br" id="ovBR"></div>
+          <canvas class="gizmo" id="gizmo" aria-hidden="true"></canvas>
           <div class="reticle" id="reticle"></div>
           <canvas class="loupe" id="loupe" width="192" height="192" hidden></canvas>
         </div>
@@ -221,7 +231,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     </section>
 
     <aside class="props" aria-label="MoteField properties">
-      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.6</span></div>
+      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.7</span></div>
       <div class="tabs" role="tablist" id="tabs"></div>
       <div class="knobs" id="knobs" role="tabpanel"></div>
     </aside>
@@ -299,6 +309,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div class="row"><dt>Defocus</dt><dd><h3>Every mote renders its own bokeh</h3>Circle of confusion comes from focal length, T-stop, focus distance and film back. Each mote's shape is spread through the lens aperture, with blade count, rotation and cat's eye toward the frame edge. A defocused lint fibre becomes a soft streak, not a disc. Energy is conserved, so an out-of-focus mote gets larger and dimmer, never brighter.</dd></div>
     <div class="row"><dt>Motion blur</dt><dd><h3>Shutter-accurate, from the mote and the camera</h3>Each mote is projected at shutter open and shutter close using its velocity and the camera's matrices at both times, then swept between them. Glints are integrated across the shutter too, so they sparkle without strobing.</dd></div>
     <div class="row"><dt>Holdouts</dt><dd><h3>Per-pixel depth from the P pass</h3>Motes behind geometry are held out using scene depth. Where the foreground is out of focus, a defocused coverage layer is used instead, so held-out edges match a ZDefocus'd plate rather than cutting a sharp line through soft geometry.</dd></div>
+    <div class="row"><dt>Embers</dt><dd><h3>A second emitter for fire</h3>The same node can emit embers from an area you place in the shot and size to the fire. Embers ride a buoyant plume that widens and slows with height, swirl in turbulence and wind, and cool as they rise, so their colour follows real black-body temperature from yellow-orange to dull red before they wink out. Pops of the wood throw short bursts of fast sparks. They get the same lens and shutter treatment as dust: streaks from motion blur, bokeh when out of focus, and depth holdouts. Try the Campfire scene.</dd></div>
     <div class="row"><dt>Movement</dt><dd><h3>Air, not noise</h3>Curl-noise eddies at a chosen scale, slow drift, micro-turbulence, thermal lift inside the warm shaft and size-dependent settling: grit sinks, fluff and lint hang. A puff injects a real velocity field, for a door slam or a character walking through.</dd></div>
   </dl>
 
@@ -307,7 +318,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div><span class="ph">PHASE 2</span><h4>Deterministic sim cache</h4><p>Seeded per shot and frame-addressable, so scrubbing, the farm and the artist's viewer all see the same motes. Motion vectors out for re-blur.</p></div>
     <div><span class="ph">PHASE 3</span><h4>NDK node + presets</h4><p>C++ node with show presets (dusty attic, cathedral, exterior pollen), multi-light support and deep output for deep comps.</p></div>
   </div>
-  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, shift-click to puff air through the shaft, press L for a pixel loupe, and try the Looks along the top. The ID channel colours each mote by type.</p>
+  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, shift-click to puff air through the shaft, press L for a pixel loupe, and try the Looks along the top. Switch the Scene to Campfire for the ember tool. The ID channel colours each mote by type.</p>
 </section>
 
 <script>
@@ -329,26 +340,43 @@ canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); failed=tr
 
 /* =================== parameters =================== */
 const DEF = {
-  density:180, sizeMin:4, sizeMax:60, sizeBias:2.4, flakes:18, fibers:1.2, fluff:0.4, flakeScale:1, fiberScale:1,
-  bright:1.0, g:0.65, ambVis:0.35, glint:0.4, tumble:1, tint:'neutral',
-  speed:1, drift:1.2, driftDir:200, turb:3.0, eddy:1.4, micro:0.8, thermal:1.5, settle:0.5, puffAmt:1.2,
+  scene:'room',
+  density:180, sizeMin:4, sizeMax:60, sizeBias:2.4, flakes:18, fibers:1.2, fluff:0.4, flakeScale:1, fiberScale:1, fluffScale:0.6, fluffBright:0.5,
+  bright:1.0, g:0.65, ambVis:0.35, glint:0.4, tumble:1, tint:'neutral', tintCustom:'#d9b88f',
+  speed:1, drift:1.2, driftDir:200, lift:0, turb:3.0, eddy:1.4, micro:0.8, thermal:1.5, settle:0.5, puffAmt:1.2,
   sunAz:30, sunEl:30, sunI:6, sunK:5000, cookie:0, atmos:true, haze:0.3, hazeVar:0.5, gi:1, fill:1,
   focal:32, film:'s35', format:'2.39', move:'static', moveAmt:0.6,
   fstop:4, focus:4.5, blades:9, bladeRot:14, round:0.6, ring:0, cat:0.3, dof:true,
-  shutter:180, fps:24, mb:true, ev:0, expLink:false, bloom:0.35, halation:0.15, grain:0.25, vig:0.5, hold:true, proxy:false
+  shutter:180, fps:24, mb:true, ev:0, expLink:false, bloom:0.35, halation:0.15, grain:0.25, vig:0.5, hold:true, proxy:false,
+  // embers + fire
+  embers:false, showEmitter:true, emitX:-1.2, emitY:0.0, emitZ:-2.0, eRad:0.3, eHeight:0.15,
+  eRate:120, eLife:1, eTemp:1300, eSize:0.6, eGain:1, eTwinkle:0.6,
+  eRise:2.2, eSpread:0.4, eTurb:0.9, eWind:0.3, pops:0.5, popSize:0.4,
+  flames:false, flameH:0.65, fireI:0, flick:0.5
+};
+// the campfire scene starts from the same defaults with these changes
+const FIRE_DEF = {
+  scene:'fire', density:30, sunI:0.16, sunK:8200, sunEl:38, sunAz:-55, haze:0.35, hazeVar:0.45, fill:1, ambVis:0.5,
+  focal:32, fstop:2.8, focus:4.4, ev:-2.4, bloom:0.45, halation:0.35, eRate:200,
+  embers:true, emitX:0, emitY:0.06, emitZ:0, eRad:0.3, eHeight:0.15, flames:true, flameH:0.65, fireI:1, flick:0.5
 };
 const S = {...DEF};
 const FILMS = {s35:{w:24.89,label:'Super 35'}, a35:{w:27.99,label:'ALEXA 35'}, ff:{w:36.0,label:'Full frame'}, lf:{w:36.70,label:'ALEXA LF'}};
 const FORMATS = {'2.39':2.39, '1.85':1.85, '16:9':16/9};
-const TINTS = {neutral:[1,1,1], warm:[1.05,0.96,0.84], pollen:[1.1,0.98,0.6], ash:[0.86,0.91,1.0]};
+const TINTS = {neutral:[1,1,1], warm:[1.0,0.78,0.55], pollen:[1.0,0.82,0.25], ash:[0.62,0.74,1.0]};
+function hexRGB(h){ const n=parseInt(h.slice(1),16); return [((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255].map(v=>Math.pow(v,2.2)); }
+function tintRGB(){ let c=S.tint==='custom'?hexRGB(S.tintCustom):TINTS[S.tint]; const l=0.2126*c[0]+0.7152*c[1]+0.0722*c[2]||1; return c.map(v=>v/l*0.9); }
 const VIEWS = ['Comp','Dust','Plate','Shafts','P','Z','ID'];
 let viewMode = 0;
 // parameters that change the plate (room image) and so restart its accumulation
-const PLATE_KEYS = new Set(['sunAz','sunEl','sunI','sunK','cookie','atmos','haze','hazeVar','gi','fill','focal','film','format','focus','fstop','dof','blades','bladeRot','round','cat','proxy']);
-const LIGHT_KEYS = new Set(['sunAz','sunEl','sunI','sunK','cookie','fill']);
+const PLATE_KEYS = new Set(['sunAz','sunEl','sunI','sunK','cookie','atmos','haze','hazeVar','gi','fill','focal','film','format','focus','fstop','dof','blades','bladeRot','round','cat','proxy','fireI','emitX','emitY','emitZ']);
+const LIGHT_KEYS = new Set(['sunAz','sunEl','sunI','sunK','cookie','fill','fireI','emitX','emitY','emitZ']);
 
 const CAM_DEFAULT = {E:[2.4,1.55,2.6], T:[-1.2,1.25,-3.0]};
-const PRESETS = [
+const CAM_FIRE = {E:[1.15,0.95,4.3], T:[0,0.78,0]};
+const SCENES = {room:{label:'Sunlit room', def:{}}, fire:{label:'Campfire', def:FIRE_DEF}};
+const PRESETS = {
+ room:[
   {id:'loft', label:'Sunlit loft', p:{}, cam:CAM_DEFAULT},
   {id:'cathedral', label:'Cathedral hush', p:{sunEl:46, sunAz:24, haze:0.55, hazeVar:0.65, density:150, turb:1.6, drift:0.6, micro:0.4, focal:40, fstop:4, focus:5.6, bright:1.3, sunK:5600, fill:0.6, speed:0.8}, cam:{E:[2.7,1.1,2.9], T:[-2.2,2.0,-3.3]}},
   {id:'blinds', label:'Venetian blinds', p:{cookie:1, sunEl:26, sunAz:38, density:220, haze:0.4, focal:35, fstop:4, focus:4.2, sunK:4700}, cam:{E:[2.1,1.4,1.6], T:[-2.2,1.35,-2.6]}},
@@ -356,7 +384,16 @@ const PRESETS = [
   {id:'disturbed', label:'Door slam', p:{density:320, turb:8, micro:2.6, drift:3.5, thermal:1.0, move:'handheld', moveAmt:0.7, fibers:3, fluff:1, flakes:26}, cam:CAM_DEFAULT, puff:true},
   {id:'closeup', label:'Close-up', p:{focal:50, fstop:2.8, focus:1.3, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:{E:[-1.6,1.15,1.0], T:[-3.0,1.5,-3.5]}},
   {id:'truck', label:'Truck move', p:{move:'truck', moveAmt:1, shutter:180, focal:32, fstop:2.8, focus:3.0, density:240}, cam:{E:[1.2,1.2,0.8], T:[-1.6,1.2,-4.6]}}
-];
+ ],
+ fire:[
+  {id:'campfire', label:'Campfire', p:{}, cam:CAM_FIRE},
+  {id:'roaring', label:'Roaring fire', p:{ev:-2.9, focus:4.8, eRate:420, flameH:1.0, fireI:1.6, pops:1.6, popSize:0.7, eRise:3.0, eTurb:1.2, eRad:0.38, haze:0.45}, cam:{E:[0.9,0.8,3.6], T:[0,1.0,0]}},
+  {id:'dying', label:'Dying embers', p:{flames:false, eRate:22, eTemp:1060, fireI:0.3, flick:0.3, pops:0.08, eRise:0.9, eTurb:0.5, ev:-1.2, focus:3.1}, cam:{E:[0.9,0.7,3.0], T:[0,0.3,0]}},
+  {id:'windy', label:'Windy night', p:{focus:4.6, eWind:2.2, driftDir:15, eTurb:1.6, eRate:260, flameH:0.75, flick:0.8}, cam:{E:[0.2,0.75,3.4], T:[0.5,0.95,0]}},
+  {id:'bokeh', label:'Ember bokeh', p:{focal:75, fstop:1.6, focus:6.0, eRate:380, eRise:2.4, eTemp:1420, eSize:0.9, eGain:1.6, ev:-1.6}, cam:{E:[0.25,0.85,1.45], T:[-0.2,1.15,-5.0]}},
+  {id:'firemove', label:'Handheld', p:{move:'handheld', moveAmt:0.8, eRate:200}, cam:CAM_FIRE}
+ ]
+};
 
 /* =================== math =================== */
 const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]], scl=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
@@ -438,9 +475,29 @@ function curtain(a,x0,zA,zB,yT,yB,folds,amp,col,ph0){
   const mn=[x0,yB,Math.min(zA,zB)], mx=[x0+amp*1.2,yT,Math.max(zA,zB)];
   rayBoxes.push([mn,mx,col[0]]); voxPrims.push({t:'b',mn,mx,a:col[0]});}
 
+// oriented cylinder (logs, branches) with smooth sides
+function cylA(a,p0,p1,r,col,m=0,seg=18){
+  const ax=nrm(sub(p1,p0)); const t=nrm(Math.abs(ax[1])<0.95?cross(ax,[0,1,0]):cross(ax,[1,0,0])); const b=cross(ax,t);
+  for(let i=0;i<seg;i++){ const a0=i/seg*2*Math.PI,a1=(i+1)/seg*2*Math.PI;
+    const n0=add(scl(t,Math.cos(a0)),scl(b,Math.sin(a0))), n1=add(scl(t,Math.cos(a1)),scl(b,Math.sin(a1)));
+    const A=add(p0,scl(n0,r)),B=add(p0,scl(n1,r)),C=add(p1,scl(n1,r)),D=add(p1,scl(n0,r));
+    pv(a,A,n0,col,m);pv(a,B,n1,col,m);pv(a,C,n1,col,m);pv(a,A,n0,col,m);pv(a,C,n1,col,m);pv(a,D,n0,col,m);
+    const nn=scl(ax,-1); pv(a,p0,nn,col,m);pv(a,B,nn,col,m);pv(a,A,nn,col,m); pv(a,p1,ax,col,m);pv(a,D,ax,col,m);pv(a,C,ax,col,m); }
+  const mn=[0,1,2].map(k=>Math.min(p0[k],p1[k])-r), mx=[0,1,2].map(k=>Math.max(p0[k],p1[k])+r);
+  rayBoxes.push([mn,mx,col[0]]); voxPrims.push({t:'y',p0,p1,r,a:col[0]}); }
+// lumpy rock: displaced ellipsoid
+function rock(a,c,rad,col,seed,su=30,sv=18){
+  const P=(u,v)=>{ const th=clamp(v,0.002,0.998)*Math.PI, ph=u*2*Math.PI; const d=[Math.sin(th)*Math.cos(ph),Math.cos(th),Math.sin(th)*Math.sin(ph)];
+    const k=1+0.16*Math.sin(3.1*d[0]+seed)*Math.sin(2.6*d[1]+seed*1.7)*Math.sin(3.4*d[2]+seed*0.6)+0.07*Math.sin(7.7*d[0]+seed*2.3)*Math.sin(6.1*d[2]+seed)+0.03*Math.sin(15.*d[1]+seed*3.);
+    return add(c,[d[0]*rad[0]*k,d[1]*rad[1]*k,d[2]*rad[2]*k]); };
+  const Nrm=(u,v)=>{ const e=1e-3; let n=nrm(cross(sub(P(u+e,v),P(u-e,v)),sub(P(u,v+e),P(u,v-e)))); if(dot(n,sub(P(u,v),c))<0) n=scl(n,-1); return n; };
+  for(let j=0;j<sv;j++) for(let i=0;i<su;i++){ const q=[[i/su,j/sv],[(i+1)/su,j/sv],[(i+1)/su,(j+1)/sv],[i/su,(j+1)/sv]].map(([u,v])=>[P(u,v),Nrm(u,v)]);
+    pv(a,q[0][0],q[0][1],col,0);pv(a,q[1][0],q[1][1],col,0);pv(a,q[2][0],q[2][1],col,0);pv(a,q[0][0],q[0][1],col,0);pv(a,q[2][0],q[2][1],col,0);pv(a,q[3][0],q[3][1],col,0); }
+  rayBoxes.push([sub(c,scl(rad,1.15)),add(c,scl(rad,1.15)),col[0]]); voxPrims.push({t:'e',c,rad,a:col[0]}); }
+
 const WALL=G(0.62), FLOORC=G(0.36), WOOD=G(0.3), LIGHT=G(0.7), CRATE=G(0.46), CLOTH=G(0.66), DARKM=G(0.08), CER=G(0.78);
 const WINS=[[-4.9,-3.3],[-2.5,-0.9]], WY0=0.8, WY1=3.1;
-function buildScene(){
+function buildRoom(){
   box(GM,[-4.25,-0.2,-6.25],[4.25,0,3.75],FLOORC);
   box(GM,[-4.25,3.6,-6.25],[4.25,3.85,3.75],WALL);
   box(GM,[4,0,-6.25],[4.25,3.6,3.75],WALL);
@@ -507,8 +564,37 @@ function buildScene(){
   quad(GS,[-12,-25,-60],[-12,-25,60],[-12,40,60],[-12,40,-60],[1,0,0],[1,1,1],6);
 }
 
+function buildFire(){
+  box(GM,[-30,-0.3,-30],[30,0,30],G(0.22),14);
+  // fire pit: a ring of stones, an ash and coal bed, a teepee of charred logs
+  for(let i=0;i<11;i++){ const a=i/11*2*Math.PI+0.2, rr=0.53+0.04*Math.sin(i*2.3), sz=0.1+0.04*((i*37)%7)/7;
+    rock(GM,[Math.cos(a)*rr, sz*0.42, Math.sin(a)*rr],[sz*1.3,sz*0.82,sz],G(0.22+0.1*((i*13)%5)/5),i*1.7+0.3); }
+  lathe(GM,[0,0,0],[[0.47,0],[0.44,0.006],[0.34,0.026],[0.18,0.045],[0.0,0.05]],G(0.14),12,48);
+  for(let i=0;i<5;i++){ const a=i/5*2*Math.PI+0.4; cylA(GM,[Math.cos(a)*0.34,0.03,Math.sin(a)*0.34],[Math.cos(a+0.5)*0.05,0.5+0.04*(i%2),Math.sin(a+0.5)*0.05],0.038+0.006*(i%3),G(0.12),13); }
+  cylA(GM,[-0.4,0.06,0.12],[0.38,0.07,-0.16],0.05,G(0.12),13);
+  cylA(GM,[-0.18,0.07,-0.38],[0.2,0.06,0.36],0.045,G(0.12),13);
+  // a log bench, rocks, and tree trunks receding into the dark
+  cylA(GM,[-1.9,0.19,1.0],[-0.8,0.19,2.0],0.17,G(0.32),15,24);
+  rock(GM,[1.9,0.12,-1.3],[0.42,0.3,0.36],G(0.3),5.1);
+  rock(GM,[-2.3,0.08,-0.5],[0.5,0.32,0.45],G(0.28),2.7);
+  rock(GM,[2.4,0.05,1.2],[0.3,0.2,0.28],G(0.27),8.3);
+  for(const [x,z,r] of [[-2.6,-3.4,0.22],[1.3,-4.6,0.3],[3.6,-2.1,0.2],[-4.1,-1.3,0.26],[-1.0,-6.0,0.34],[3.0,-6.2,0.28],[-3.4,2.8,0.24],[4.2,1.8,0.3],[0.2,-8.5,0.4],[-5.5,-5.0,0.35],[5.6,-4.2,0.3]])
+    lathe(GM,[x,0,z],[[r*1.35,0],[r*1.05,0.35],[r,1.5],[r*0.9,4.5],[r*0.82,8]],G(0.3),15,20);
+  box(GS,[-80,-2,-80],[80,80,80],[1,1,1],6,false,false);
+}
+const SCENE_GEO = {
+  room:{vmin:[-4.3,-0.06,-6.3], vsize:[8.6,3.96,10.1], bmin:[-3.95,0.02,-5.95], bmax:[3.95,3.56,3.45], cmin:[-3.85,0.15,-5.85], cmax:[3.85,3.25,3.35], lightC:[0,1.6,-1.5]},
+  fire:{vmin:[-7,-0.06,-9.5], vsize:[14,4.06,14], bmin:[-4,0.02,-4], bmax:[4,3.6,4], cmin:[-9,0.12,-9], cmax:[9,4,9], lightC:[0,1.2,0]}
+};
+let GEO=SCENE_GEO.room;
+function buildScene(){
+  GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
+  GEO=SCENE_GEO[S.scene]; VMIN=GEO.vmin; VDIM=GEO.vsize.map(v=>Math.ceil(v/VS)); BMIN=GEO.bmin; BMAX=GEO.bmax;
+  if(S.scene==='fire') buildFire(); else buildRoom();
+}
+
 /* =================== voxel grid for the path tracer =================== */
-const VS=0.04, VMIN=[-4.3,-0.06,-6.3], VDIM=[Math.ceil(8.6/VS),Math.ceil(3.96/VS),Math.ceil(10.1/VS)];
+const VS=0.04; let VMIN=[-4.3,-0.06,-6.3], VDIM=[Math.ceil(8.6/VS),Math.ceil(3.96/VS),Math.ceil(10.1/VS)];
 let voxTex=null;
 function voxelize(){
   const [DX,DY,DZ]=VDIM, vox=new Uint8Array(DX*DY*DZ);
@@ -520,12 +606,19 @@ function voxelize(){
       for(let z=z0;z<=z1;z++) for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) put(x,y,z,p.a); }
     else if(p.t==='s'){ const [x0,x1]=range(p.c[0]-p.r,p.c[0]+p.r,0),[y0,y1]=range(p.c[1]-p.r,p.c[1]+p.r,1),[z0,z1]=range(p.c[2]-p.r,p.c[2]+p.r,2);
       for(let z=z0;z<=z1;z++) for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ const q=[VMIN[0]+(x+0.5)*VS-p.c[0],VMIN[1]+(y+0.5)*VS-p.c[1],VMIN[2]+(z+0.5)*VS-p.c[2]]; if(dot(q,q)<=p.r*p.r) put(x,y,z,p.a); } }
+    else if(p.t==='y'){ const ab=sub(p.p1,p.p0), L2=dot(ab,ab), rr=(p.r+VS*0.25)*(p.r+VS*0.25);
+      const [x0,x1]=range(Math.min(p.p0[0],p.p1[0])-p.r,Math.max(p.p0[0],p.p1[0])+p.r,0),[y0,y1]=range(Math.min(p.p0[1],p.p1[1])-p.r,Math.max(p.p0[1],p.p1[1])+p.r,1),[z0,z1]=range(Math.min(p.p0[2],p.p1[2])-p.r,Math.max(p.p0[2],p.p1[2])+p.r,2);
+      for(let z=z0;z<=z1;z++) for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ const qx=VMIN[0]+(x+0.5)*VS-p.p0[0], qy=VMIN[1]+(y+0.5)*VS-p.p0[1], qz=VMIN[2]+(z+0.5)*VS-p.p0[2];
+        const t=clamp((qx*ab[0]+qy*ab[1]+qz*ab[2])/L2,0,1); const dx=qx-ab[0]*t, dy=qy-ab[1]*t, dz=qz-ab[2]*t; if(dx*dx+dy*dy+dz*dz<=rr) put(x,y,z,p.a); } }
+    else if(p.t==='e'){ const [x0,x1]=range(p.c[0]-p.rad[0],p.c[0]+p.rad[0],0),[y0,y1]=range(p.c[1]-p.rad[1],p.c[1]+p.rad[1],1),[z0,z1]=range(p.c[2]-p.rad[2],p.c[2]+p.rad[2],2);
+      for(let z=z0;z<=z1;z++) for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ const qx=(VMIN[0]+(x+0.5)*VS-p.c[0])/p.rad[0], qy=(VMIN[1]+(y+0.5)*VS-p.c[1])/p.rad[1], qz=(VMIN[2]+(z+0.5)*VS-p.c[2])/p.rad[2]; if(qx*qx+qy*qy+qz*qz<=1.05) put(x,y,z,p.a); } }
     else { const ys=p.prof.map(q=>q[1]), rmax=Math.max(...p.prof.map(q=>q[0]));
       const [x0,x1]=range(p.c[0]-rmax,p.c[0]+rmax,0),[y0,y1]=range(p.c[1]+Math.min(...ys),p.c[1]+Math.max(...ys),1),[z0,z1]=range(p.c[2]-rmax,p.c[2]+rmax,2);
       for(let y=y0;y<=y1;y++){ const yy=VMIN[1]+(y+0.5)*VS-p.c[1]; let r=0; for(let i=0;i<p.prof.length-1;i++){ const a=p.prof[i],b=p.prof[i+1]; if((yy-a[1])*(yy-b[1])<=0){ const t=(yy-a[1])/((b[1]-a[1])||1); r=Math.max(r,a[0]+(b[0]-a[0])*t); } }
         r=Math.max(r,VS*0.6);
         for(let z=z0;z<=z1;z++) for(let x=x0;x<=x1;x++){ const dx=VMIN[0]+(x+0.5)*VS-p.c[0], dz=VMIN[2]+(z+0.5)*VS-p.c[2]; if(dx*dx+dz*dz<=r*r) put(x,y,z,p.a); } } }
   }
+  if(voxTex) gl.deleteTexture(voxTex);
   voxTex=gl.createTexture(); gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_3D,voxTex);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
   gl.texImage3D(gl.TEXTURE_3D,0,gl.R8,DX,DY,DZ,0,gl.RED,gl.UNSIGNED_BYTE,vox);
@@ -558,9 +651,9 @@ float leaves(vec2 uv){
 }
 vec3 lightUV(vec3 p){ return (uLightVP*vec4(p,1.)).xyz*0.5+0.5; }
 bool outL(vec3 s){ return s.x<0.||s.y<0.||s.x>1.||s.y>1.; }
-float sunVis(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 0.;
+float sunVis(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 1.;
   float v=texture(uShadow,vec3(s.xy,s.z-0.0004)); if(uCookie==2 && v>0.) v*=leaves(s.xy); return v; }
-float sunVisSoft(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 0.; float t=1.6/2048.; float z=s.z-0.0004;
+float sunVisSoft(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 1.; float t=1.6/2048.; float z=s.z-0.0004;
   float v=texture(uShadow,vec3(s.xy,z))*0.36+(texture(uShadow,vec3(s.xy+vec2(t,0.),z))+texture(uShadow,vec3(s.xy-vec2(t,0.),z))+texture(uShadow,vec3(s.xy+vec2(0.,t),z))+texture(uShadow,vec3(s.xy-vec2(0.,t),z)))*0.16;
   if(uCookie==2 && v>0.) v*=leaves(s.xy); return v; }
 `;
@@ -595,170 +688,7 @@ vec4 history(vec3 P, float depth){
   return bilin(uHist,puv); }
 `;
 
-const NVM=8;
-const SHADERS = {
-depth: [HDR+`layout(location=0) in vec3 aPos; uniform mat4 uVP; void main(){ gl_Position=uVP*vec4(aPos,1.); }`, HDR+`out vec4 o; void main(){ o=vec4(1.); }`],
-
-// raster pass: direct sun on clay + G-buffer for the path tracer, the defocus and the holdouts
-raster: [MESH_VS, HDR+NOISE+SHADOW+`
-in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; in float vD;
-layout(location=0) out vec4 oDirect; layout(location=1) out vec4 oPos; layout(location=2) out vec4 oNrm;
-uniform vec3 uCam, uL, uSunCol; uniform float uSunI, uSkyI, uFill;
-float pcf(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 0.; float t=1.4/2048., z=s.z-0.0005, v=0.;
-  for(int x=-1;x<=1;x++) for(int y=-1;y<=1;y++) v+=texture(uShadow,vec3(s.xy+vec2(x,y)*t,z));
-  v/=9.; if(uCookie==2 && v>0.) v*=leaves(s.xy); return v; }
-void main(){
-  vec3 V=normalize(uCam-vP); oPos=vec4(vP,vD);
-  if(vMat==6){ vec3 d=-V; vec3 c=mix(vec3(0.94),vec3(0.8,0.84,0.9),smoothstep(0.,0.6,d.y)); if(d.y<0.02) c=vec3(0.62);
-    oDirect=vec4(c*uSkyI*uFill,0.); oNrm=vec4(0.); return; }
-  vec3 N=normalize(vN); if((vMat==9||vMat==10) && dot(N,V)<0.) N=-N;
-  float nl=dot(N,uL); float vis=nl>0.?pcf(vP+N*0.02):0.;
-  vec3 E=uSunCol*uSunI*max(nl,0.)*vis;
-  if(vMat==9) E+=uSunCol*uSunI*max(-nl,0.)*pcf(vP-N*0.03)*0.3;
-  float alb=vCol.r*(vMat==10?0.4:1.);
-  oDirect=vec4(alb*E,alb); oNrm=vec4(N,1.);
-}`],
-
-// two-bounce path tracing through the voxelised room, one path per half-res pixel per frame, accumulated over time
-gi: [FSQ_VS, HDR+NOISE+SHADOW+HISTORY+`
-uniform sampler2D uPosTex, uNrmTex; uniform sampler3D uVox; uniform vec3 uVoxMin; uniform float uVoxS; uniform ivec3 uVoxDim;
-uniform vec3 uL, uSunCol, uSkyRad, uGround, uTail; uniform float uSunI; uniform vec2 uRes; uniform uint uSeed;
-out vec4 o;
-uint pcg(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28u)+4u))^s)*277803737u; return (w>>22u)^w; }
-float rnd(inout uint s){ return float(pcg(s))*(1./4294967296.); }
-vec3 cosDir(vec3 n, inout uint s){ float u=rnd(s), v=rnd(s); float r=sqrt(u), a=6.2831853*v;
-  vec3 t=normalize(abs(n.y)<0.99?cross(n,vec3(0.,1.,0.)):cross(n,vec3(1.,0.,0.))); vec3 b=cross(n,t);
-  return normalize(t*(r*cos(a))+b*(r*sin(a))+n*sqrt(max(1.-u,0.))); }
-vec3 outside(vec3 d){ return d.y>0.02 ? mix(vec3(0.94),vec3(0.8,0.84,0.9),smoothstep(0.,0.6,d.y))*uSkyRad : uGround; }
-int trace(vec3 ro, vec3 rd, out vec3 hp, out vec3 hn, out float alb){
-  hp=ro; hn=vec3(0.); alb=0.;
-  rd=vec3(abs(rd.x)<1e-5?1e-5:rd.x, abs(rd.y)<1e-5?1e-5:rd.y, abs(rd.z)<1e-5?1e-5:rd.z);
-  vec3 p=(ro-uVoxMin)/uVoxS; ivec3 c=ivec3(floor(p)); ivec3 st=ivec3(sign(rd));
-  vec3 tD=abs(1./rd); vec3 tM=(vec3(c)+step(vec3(0.),rd)-p)/rd; float t=0.;
-  for(int i=0;i<240;i++){
-    if(c.x<0||c.y<0||c.z<0||c.x>=uVoxDim.x||c.y>=uVoxDim.y||c.z>=uVoxDim.z) return 0;
-    float a=texelFetch(uVox,c,0).r;
-    if(a>0.){ hp=ro+rd*(t*uVoxS); alb=a; return 1; }
-    if(tM.x<tM.y && tM.x<tM.z){ t=tM.x; tM.x+=tD.x; c.x+=st.x; hn=vec3(-float(st.x),0.,0.); }
-    else if(tM.y<tM.z){ t=tM.y; tM.y+=tD.y; c.y+=st.y; hn=vec3(0.,-float(st.y),0.); }
-    else { t=tM.z; tM.z+=tD.z; c.z+=st.z; hn=vec3(0.,0.,-float(st.z)); }
-  }
-  return 2; }
-vec3 sunAt(vec3 p, vec3 n){ float nl=dot(n,uL); return nl>0. ? uSunCol*uSunI*nl*sunVis(p+n*0.03) : vec3(0.); }
-void main(){
-  ivec2 gp=ivec2(gl_FragCoord.xy);
-  uint s=uint(gp.x)*1973u+uint(gp.y)*9277u+uSeed*26699u; s=pcg(s);
-  ivec2 fp=min(gp*2, ivec2(uFull)-1);
-  vec4 P=texelFetch(uPosTex,fp,0); vec4 Nn=texelFetch(uNrmTex,fp,0);
-  if(Nn.w<0.5){ o=vec4(0.,0.,0.,1.); return; }
-  vec3 N=normalize(Nn.xyz);
-  vec3 E=vec3(0.);
-  vec3 hp,hn; float a;
-  vec3 d=cosDir(N,s);
-  int r=trace(P.xyz+N*(uVoxS*1.6),d,hp,hn,a);
-  if(r==0) E=outside(d);
-  else if(r==1 && dot(hn,hn)>0.5){
-    vec3 E1=sunAt(hp,hn);
-    vec3 hp2,hn2; float a2; vec3 d2=cosDir(hn,s);
-    int r2=trace(hp+hn*(uVoxS*1.2),d2,hp2,hn2,a2);
-    if(r2==0) E1+=outside(d2);
-    else if(r2==1 && dot(hn2,hn2)>0.5) E1+=a2*(sunAt(hp2,hn2)+uTail);
-    E=a*E1; }
-  float l=dot(E,vec3(0.3,0.6,0.1)); if(l>8.) E*=8./l;   // tame fireflies
-  vec4 h=history(P.xyz,P.w); float n=min(h.a+1.,uMaxN);
-  o=vec4(mix(h.rgb,E,1./n),n);
-}`],
-
-haze: [FSQ_VS, HDR+NOISE+SHADOW+`
-uniform sampler2D uPosTex; uniform mat4 uInvVP; uniform vec3 uCam, uFwd, uL, uSunCol, uAmbE; uniform float uSunI, uHaze, uHazeVar, uG, uFill, uFrame; uniform vec2 uRes, uFull;
-out vec4 o;
-void main(){
-  vec2 uv=gl_FragCoord.xy/uRes;
-  vec4 w=uInvVP*vec4(uv*2.-1.,1.,1.); vec3 rd=normalize(w.xyz/w.w-uCam);
-  float depth=texelFetch(uPosTex, ivec2(uv*uFull), 0).w;
-  float tmax=min(depth/max(dot(rd,uFwd),1e-3), 16.);
-  if(rd.x<0.) tmax=min(tmax,(-4.0-uCam.x)/rd.x);
-  const int N=32; float dt=tmax/float(N); float j=fract(ign(gl_FragCoord.xy)+uFrame*0.618034);
-  float acc=0.;
-  for(int i=0;i<N;i++){ float t=(float(i)+j)*dt; vec3 p=uCam+rd*t; float v=sunVis(p);
-    if(v>0.){ float d=1.+uHazeVar*(vnoise(p*0.9+vec3(uTime*0.03,0.,uTime*0.02))*2.-1.)*0.9; acc+=v*max(d,0.); } }
-  acc*=dt;
-  vec3 c=uSunCol*uSunI*acc*hg(dot(uL,rd),uG*0.85)*uHaze*0.011 + uAmbE*uFill*uHaze*0.008*tmax;
-  o=vec4(c,1.);
-}`],
-
-// plate = direct + albedo × (path-traced bounce, upsampled with depth/normal weights) + atmosphere
-plate: [FSQ_VS, HDR+`
-uniform sampler2D uDirect, uGI, uNrmTex, uPosTex, uHazeTex; uniform vec2 uHazeTexel, uRes; uniform ivec2 uGIDim; uniform float uHazeOn, uGIAmt; uniform vec3 uTail; out vec4 o;
-void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec2 uv=gl_FragCoord.xy/uRes;
-  vec4 D=texelFetch(uDirect,ip,0); vec3 c=D.rgb;
-  if(D.a>0.){
-    float d0=texelFetch(uPosTex,ip,0).w; vec3 n0=texelFetch(uNrmTex,ip,0).xyz;
-    vec2 g=(vec2(ip)+0.5)*0.5-0.5; ivec2 g0=ivec2(floor(g)); vec2 f=fract(g);
-    vec3 s=vec3(0.); float ws=0.;
-    for(int j=0;j<2;j++) for(int i=0;i<2;i++){ ivec2 gc=clamp(g0+ivec2(i,j),ivec2(0),uGIDim-1);
-      ivec2 fq=min(gc*2,ivec2(uRes)-1); float d=texelFetch(uPosTex,fq,0).w; vec3 n=texelFetch(uNrmTex,fq,0).xyz;
-      float w=(i==0?1.-f.x:f.x)*(j==0?1.-f.y:f.y)*exp(-abs(d-d0)/(0.03*d0+0.02))*pow(max(dot(n,n0),0.),6.)+1e-5;
-      s+=texelFetch(uGI,gc,0).rgb*w; ws+=w; }
-    c+=D.a*(s/ws+uTail)*uGIAmt; }
-  vec3 h=vec3(0.); float ws2=0.;
-  for(int x=-1;x<=1;x++) for(int y=-1;y<=1;y++){ float w=(2.-abs(float(x)))*(2.-abs(float(y))); h+=texture(uHazeTex,uv+vec2(x,y)*uHazeTexel*1.25).rgb*w; ws2+=w; }
-  o=vec4(c+h/ws2*uHazeOn,1.); }`],
-
-// defocus gather with a fresh random pattern each frame; accumulation below removes the noise and banding
-dof: [FSQ_VS, HDR+NOISE+COC+`
-uniform sampler2D uPlate, uPosTex; uniform vec2 uRes; uniform float uMaxR, uFrame;
-layout(location=0) out vec4 oCol; layout(location=1) out vec4 oFg;
-void main(){
-  ivec2 ip=ivec2(gl_FragCoord.xy); ivec2 mx=ivec2(uRes)-1;
-  vec3 c0=texelFetch(uPlate,ip,0).rgb; float d0=texelFetch(uPosTex,ip,0).w;
-  float coc0=cocPx(d0), r0=abs(coc0)*0.5;
-  if(uMaxR<0.75){ oCol=vec4(c0,0.); oFg=vec4(1e4); return; }
-  float w0=1./max(3.14159*r0*r0,1.);
-  vec3 acc=c0*w0; float ws=w0; float fgw=coc0<-1.5?w0:0., fgd=fgw*d0;
-  const int N=40; const float GA=2.39996323;
-  float jr=fract(ign(gl_FragCoord.xy)+uFrame*0.618034)*6.2831853, jo=hash12(gl_FragCoord.xy+uFrame*1.37);
-  float sa=3.14159*uMaxR*uMaxR/float(N);
-  for(int i=0;i<N;i++){
-    float r=sqrt((float(i)+jo)/float(N))*uMaxR; float a=float(i)*GA+jr;
-    ivec2 sp=clamp(ip+ivec2(floor(vec2(cos(a),sin(a))*r+0.5)),ivec2(0),mx);
-    vec3 cs=texelFetch(uPlate,sp,0).rgb; float ds=texelFetch(uPosTex,sp,0).w;
-    float cc=cocPx(ds), rs=abs(cc)*0.5;
-    float w=clamp(rs-r+1.,0.,1.);
-    if(ds>d0+0.02) w*=clamp(r0-r+1.,0.,1.);
-    w*=sa/max(3.14159*rs*rs,1.);
-    acc+=cs*w; ws+=w;
-    if(cc<-1.5){ fgw+=w; fgd+=w*ds; }
-  }
-  oCol=vec4(acc/ws, clamp(fgw/ws,0.,1.));
-  oFg=vec4(fgw>1e-5?fgd/fgw:1e4);
-}`],
-
-atrous: [FSQ_VS, HDR+`
-uniform sampler2D uTex, uPosTex, uNrmTex; uniform vec2 uFull; uniform ivec2 uDim; uniform int uStep; out vec4 o;
-void main(){ ivec2 g=ivec2(gl_FragCoord.xy); ivec2 fm=ivec2(uFull)-1;
-  vec4 P0=texelFetch(uPosTex,min(g*2,fm),0); vec3 N0=texelFetch(uNrmTex,min(g*2,fm),0).xyz;
-  vec4 c0=texelFetch(uTex,g,0); if(dot(N0,N0)<0.1){ o=c0; return; }
-  vec3 s=vec3(0.); float ws=0.;
-  for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
-    ivec2 q=clamp(g+ivec2(i,j)*uStep,ivec2(0),uDim-1); ivec2 fq=min(q*2,fm);
-    vec4 Pq=texelFetch(uPosTex,fq,0); vec3 Nq=texelFetch(uNrmTex,fq,0).xyz;
-    float k=(i==0?2.:1.)*(j==0?2.:1.);
-    float sp=(0.06*float(uStep)+0.01*P0.w)*(0.3+3./sqrt(max(c0.a,1.)));
-    float w=k*exp(-length(Pq.xyz-P0.xyz)/sp)*pow(max(dot(Nq,N0),0.),16.);
-    s+=texelFetch(uTex,q,0).rgb*w; ws+=w; }
-  o=vec4(s/max(ws,1e-5),c0.a); }`],
-
-accum: [FSQ_VS, HDR+HISTORY+`
-uniform sampler2D uCur, uPosTex; out vec4 o;
-void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec3 c=texelFetch(uCur,ip,0).rgb; vec4 P=texelFetch(uPosTex,ip,0);
-  vec4 h=history(P.xyz,P.w); float n=min(h.a+1.,uMaxN); o=vec4(mix(h.rgb,c,1./n),n); }`],
-
-sim: [FSQ_VS, HDR+NOISE+SHADOW+MOTETYPE+`
-uniform sampler2D uPos, uVel; uniform float uDt, uT, uTurb, uScale, uMicro, uThermal, uSettle, uPuffAmp, uSizeMin, uSizeMax, uSizeBias;
-uniform vec3 uWind, uBMin, uBMax; uniform vec4 uPuff;
-layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
-vec3 mod289(vec3 x){return x-floor(x*(1./289.))*289.;} vec4 mod289(vec4 x){return x-floor(x*(1./289.))*289.;}
+const CURL = `vec3 mod289(vec3 x){return x-floor(x*(1./289.))*289.;} vec4 mod289(vec4 x){return x-floor(x*(1./289.))*289.;}
 vec4 permute(vec4 x){return mod289(((x*34.)+1.)*x);} vec4 tis(vec4 r){return 1.79284291400159-0.85373472095314*r;}
 float snoise(vec3 v){ const vec2 C=vec2(1./6.,1./3.); const vec4 D=vec4(0.,.5,1.,2.);
   vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx); vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
@@ -774,115 +704,13 @@ float snoise(vec3 v){ const vec2 C=vec2(1./6.,1./3.); const vec4 D=vec4(0.,.5,1.
 vec3 pot(vec3 p){ return vec3(snoise(p), snoise(p+vec3(31.4,17.1,-9.7)), snoise(p+vec3(-12.3,45.6,7.8))); }
 vec3 curl(vec3 p){ const float e=0.1; vec3 dx=vec3(e,0.,0.), dy=vec3(0.,e,0.), dz=vec3(0.,0.,e);
   vec3 a=pot(p+dx), b=pot(p-dx), c=pot(p+dy), d=pot(p-dy), f=pot(p+dz), g=pot(p-dz);
-  return vec3((c.z-d.z)-(f.y-g.y), (f.x-g.x)-(a.z-b.z), (a.y-b.y)-(c.x-d.x))/(2.*e); }
-void main(){
-  ivec2 ip=ivec2(gl_FragCoord.xy); vec4 Pp=texelFetch(uPos,ip,0), Vv=texelFetch(uVel,ip,0);
-  vec3 p=Pp.xyz; int ty=moteType(hash11(Pp.w*137.1));
-  vec3 tgt=uWind+uTurb*0.45*curl(p/uScale+vec3(0.,uT*0.015,uT*0.01));
-  float micro=uMicro*(ty>=2?1.6:1.);
-  if(micro>0.) tgt+=micro*0.45*curl(p/(uScale*0.22)+vec3(uT*0.05,7.3,-uT*0.04));
-  tgt.y+=uThermal*sunVis(p);
-  float sf;
-  if(ty==0){ float sz=uSizeMin*pow(uSizeMax/uSizeMin, pow(Vv.w,uSizeBias)); sf=0.15+min((sz/50.)*(sz/50.),4.); }
-  else if(ty==1) sf=0.5; else if(ty==2) sf=0.22; else sf=0.12;
-  tgt.y-=uSettle*sf;
-  if(uPuffAmp>1e-3){ vec3 d=p-uPuff.xyz; float r2=dot(d,d); float gf=exp(-r2/(uPuff.w*uPuff.w)); vec3 nd=d/max(sqrt(r2),1e-3);
-    tgt+=uPuffAmp*gf*(nd+vec3(0.,0.35,0.)+cross(nd,vec3(0.,1.,0.))*0.6); }
-  float k=1.-exp(-uDt/(ty>=2?0.22:0.35));
-  vec3 v=mix(Vv.xyz,tgt,k);
-  p+=v*uDt;
-  vec3 ext=uBMax-uBMin; p=uBMin+mod(p-uBMin,ext);
-  oP=vec4(p,Pp.w); oV=vec4(v,Vv.w);
-}`],
-
-motes: [HDR+NOISE+SHADOW+COC+MOTETYPE+`
-uniform sampler2D uPos, uVel; uniform int uTexW, uId;
-uniform mat4 uVPo, uVPc, uVPm, uViewM; uniform vec3 uCam, uL, uSunCol, uTint, uAmbE, uBMin, uBMax;
-uniform vec4 uVplP[${NVM}], uVplN[${NVM}], uVplF[${NVM}];
-uniform vec2 uRes; uniform float uShutter, uExpT, uMB, uSunI, uGI, uBright, uG, uGlint, uTumble, uFlakeScale, uFiberScale, uAmbVis, uSizeMin, uSizeMax, uSizeBias, uMaxR, uCat, uBladeRot, uFocalPx, uFocalRef;
-out vec2 vLocal; flat out vec4 vA; flat out vec4 vB; flat out vec4 vC; flat out vec4 vM; flat out vec3 vCol; flat out float vDepth; flat out vec2 vCat;
-void cull(){ gl_Position=vec4(-9.,-9.,0.,1.); vA=vec4(0.); vB=vec4(0.); vC=vec4(0.); vM=vec4(0.); vCol=vec3(0.); vLocal=vec2(0.); vCat=vec2(0.); vDepth=0.; }
-vec2 loc(vec2 v, vec2 d){ return vec2(dot(v,d), dot(v,vec2(-d.y,d.x))); }
-vec3 tumbleAxis(float h4,float h5,float h6,float rate,float t){ float a=6.2831853*(h4+rate*t), b=6.2831853*h5+4.1*rate*t*(0.5+h6); return vec3(sin(a)*cos(b), cos(a), sin(a)*sin(b)); }
-void main(){
-  int id=gl_InstanceID; ivec2 tc=ivec2(id%uTexW, id/uTexW);
-  vec4 Pp=texelFetch(uPos,tc,0), Vv=texelFetch(uVel,tc,0);
-  float sd=Pp.w;
-  float h1=hash11(sd*137.1), h2=hash11(sd*71.3+1.), h3=hash11(sd*19.7+2.), h4=hash11(sd*53.9+3.), h5=hash11(sd*91.1+4.), h6=hash11(sd*29.3+5.), h7=hash11(sd*61.7+6.), h8=hash11(sd*13.3+7.), h9=hash11(sd*47.9+8.);
-  int ty=moteType(h1);
-  vec3 p=Pp.xyz; vec3 v=Vv.xyz*uMB;
-  vec3 db=min(p-uBMin,uBMax-p);
-  float fade=smoothstep(0.,0.25,db.x)*smoothstep(0.,0.18,db.y)*smoothstep(0.,0.25,db.z);
-  float depth=-(uViewM*vec4(p,1.)).z;
-  fade*=smoothstep(0.06,0.3,depth);
-  if(fade<1e-3){ cull(); return; }
-  vec4 cm=uVPm*vec4(p,1.);
-  if(cm.w<0.05){ cull(); return; }
-  vec2 sm=(cm.xy/cm.w*.5+.5)*uRes;
-  if(any(lessThan(sm,vec2(-uMaxR-60.)))||any(greaterThan(sm,uRes+uMaxR+60.))){ cull(); return; }
-  vec3 p0=p-v*uShutter*0.5, p1=p+v*uShutter*0.5;
-  vec4 c0=uVPo*vec4(p0,1.), c1=uVPc*vec4(p1,1.);
-  if(c0.w<0.05||c1.w<0.05){ cull(); return; }
-  vec2 s0=(c0.xy/c0.w*.5+.5)*uRes, s1=(c1.xy/c1.w*.5+.5)*uRes;
-  float coc=cocPx(depth); float R=clamp(abs(coc)*0.5,0.25,uMaxR);
-  vec2 seg=s1-s0; float L=min(length(seg)*0.5,120.);
-  vec3 Vd=normalize(uCam-p); float dist=length(uCam-p);
-  float ppm=uFocalPx/depth;
-  mat3 Rv=mat3(uViewM);
-  float rate=uTumble*(ty==1?mix(0.12,0.9,h3):ty==0?mix(0.1,0.7,h3):mix(0.03,0.3,h3));
-  vec3 ax=tumbleAxis(h4,h5,h6,rate,uTime);
-  float sigma=1., rs=0., sq=1., ang=0., gph=uG; vec2 A=vec2(0.),B=vec2(0.),C=vec2(0.); vec3 tcol=vec3(1.);
-  // physical sizes; brightness ∝ projected scattering area, so most motes are faint and a few are bright
-  if(ty==0){ float d=uSizeMin*pow(uSizeMax/uSizeMin, pow(Vv.w,uSizeBias));
-    sigma=(d/40.)*(d/40.)*(1.+0.12*sin(6.2831853*(rate*uTime*1.3+h7)));
-    rs=0.5*d*1e-6*ppm; ang=6.2831853*h8+rate*uTime; sq=0.65+0.35*h9; }
-  else if(ty==1){ float d=30.*pow(8.,pow(Vv.w,2.2))*uFlakeScale;
-    float nl=abs(dot(ax,uL)), nv=abs(dot(ax,Vd));
-    sigma=(d*d/1600.)*(0.4*nl*(0.25+0.75*nv)+0.03);
-    rs=0.5*d*1e-6*ppm; sq=clamp(nv,0.1,1.); vec2 ns=(Rv*ax).xy; ang=atan(ns.y,ns.x+1e-6);
-    gph=uG*0.85; tcol=mix(vec3(1.04,1.,0.94),vec3(0.95,0.95,0.97),h7); }
-  else if(ty==2){ float ln=300.*pow(8.,pow(Vv.w,1.8))*uFiberScale; float th=8.+12.*h8;
-    vec3 bend=normalize(cross(ax, normalize(vec3(h7-0.5,h9-0.5,h6-0.5)+vec3(0.,0.,1e-3))));
-    float k=mix(0.06,0.4,h2);
-    A=(Rv*(-ax*ln*0.5e-6)).xy*ppm; B=(Rv*(ax*ln*0.5e-6)).xy*ppm; C=(Rv*(bend*ln*1e-6*k)).xy*ppm*2.;
-    rs=th*1e-6*ppm;
-    float tl=dot(ax,uL); sigma=(ln*th/1600.)*sqrt(max(1.-tl*tl,0.03))*0.5;
-    gph=uG*0.5;
-    tcol= h9<0.4?vec3(0.95,0.95,0.93): h9<0.58?vec3(0.5,0.58,0.82): h9<0.7?vec3(0.85,0.45,0.42): h9<0.84?vec3(0.36,0.34,0.32): vec3(0.82,0.74,0.55); }
-  else { float d=200.*pow(7.,pow(Vv.w,2.))*1.; sigma=(d*d/1600.)*0.07; rs=0.5*d*1e-6*ppm; gph=uG*0.45; tcol=vec3(0.9,0.9,0.93); ang=6.2831853*h7+rate*uTime*0.5; }
-  float vis=sunVisSoft(p);
-  vec3 rad=uSunCol*uSunI*vis*hg(dot(-uL,Vd),gph);
-  if(ty==1 && uGlint>0. && vis>0.){ vec3 H=normalize(uL+Vd); float g=0.;
-    for(int i=0;i<4;i++){ float tt=uTime+(float(i)/3.-0.5)*uExpT; g+=pow(abs(dot(tumbleAxis(h4,h5,h6,rate,tt),H)),90.); }
-    rad+=uSunCol*uSunI*vis*g*0.25*8.*uGlint*(0.4+0.6*h2); }
-  vec3 Ei=uAmbE*uGI;
-  for(int i=0;i<${NVM};i++){ vec3 d=uVplP[i].xyz-p; float r2=dot(d,d)+0.12; vec3 l=d*inversesqrt(r2); Ei+=uVplF[i].rgb*max(dot(uVplN[i].xyz,-l),0.)/(PI*r2)*uGI; }
-  rad+=Ei*uAmbVis*1.5;
-  // a point's light lands in one pixel, so its pixel value scales with 1/(pixel solid angle) = (focal length in pixels)²
-  vec3 col=rad*uTint*tcol*(uBright*0.8*sigma/(dist*dist))*fade*(uFocalPx*uFocalPx)/(uFocalRef*uFocalRef);
-  if(uId==1){ vec3 ic= ty==0?vec3(1.,0.86,0.6): ty==1?vec3(0.35,0.8,1.): ty==2?vec3(1.,0.35,0.5): vec3(0.55,1.,0.45);
-    col=ic*0.4*sqrt(sigma)*(0.25+0.75*min(vis,1.))*fade/max(dist,0.3); }
-  float peak=max(col.r,max(col.g,col.b))/(PI*max(R*R,rs*rs)+1.);
-  if(peak<2e-5){ cull(); return; }
-  float ext = ty==2 ? min(max(length(A),max(length(B),length(C)*0.5)),80.)+rs+1. : min(rs*1.7,80.);
-  vec2 dir=L>1e-4?seg/(2.*L):vec2(1.,0.);
-  float rot=atan(dir.y,dir.x);
-  vCol=col; vDepth=depth;
-  vec2 fromC=(sm/uRes-0.5)*vec2(uRes.x/uRes.y,1.);
-  float rn=length(fromC)/(0.5*length(vec2(uRes.x/uRes.y,1.)));
-  vec2 cat=rn>1e-4?-normalize(fromC)*uCat*rn*0.55:vec2(0.);
-  vCat=loc(cat,dir);
-  vA=vec4(float(ty), rs, sq, ang-rot);
-  vB=vec4(loc(A,dir), loc(B,dir));
-  vC=vec4(loc(C,dir), fract(sd*7.77), rot);
-  vM=vec4(L, R, coc, rot-uBladeRot);
-  float pad=R<2.5?3.:1.5;
-  vec2 corner=vec2(float(gl_VertexID&1), float((gl_VertexID>>1)&1))*2.-1.;
-  vec2 lc=vec2(corner.x*(L+ext+R+pad), corner.y*(ext+R+pad));
-  vLocal=lc;
-  vec2 scr=(s0+s1)*0.5+dir*lc.x+vec2(-dir.y,dir.x)*lc.y;
-  gl_Position=vec4(scr/uRes*2.-1.,0.,1.);
-}`, HDR+COC+`
+  return vec3((c.z-d.z)-(f.y-g.y), (f.x-g.x)-(a.z-b.z), (a.y-b.y)-(c.x-d.x))/(2.*e); }`;
+const ELIFE = `
+float elife(float s){ float h=hash11(s*311.7); return mix(0.45,3.2,h*h); }
+float esize(float s){ return mix(0.25,1.5,pow(hash11(s*29.3),2.5)); }
+vec3 planck(float T){ vec3 lam=vec3(0.61,0.55,0.465); vec3 e=exp(14388./(lam*T)); return 1./(lam*lam*lam*lam*lam*(e-1.)); }
+`;
+const MOTE_FS = HDR+COC+`
 in vec2 vLocal; flat in vec4 vA; flat in vec4 vB; flat in vec4 vC; flat in vec4 vM; flat in vec3 vCol; flat in float vDepth; flat in vec2 vCat;
 uniform sampler2D uPosTex, uFgCol, uFgDepth; uniform float uBlades, uRound, uRing, uHold, uHoldScale;
 out vec4 o;
@@ -957,15 +785,422 @@ void main(){
     float fa=texelFetch(uFgCol,ip,0).a, fd=texelFetch(uFgDepth,ip,0).r;
     if(vDepth>fd) hold*=1.-fa; }
   o=vec4(vCol*val*hold,1.);
+}`;
+const NVM=8;
+const SHADERS = {
+depth: [HDR+`layout(location=0) in vec3 aPos; uniform mat4 uVP; void main(){ gl_Position=uVP*vec4(aPos,1.); }`, HDR+`out vec4 o; void main(){ o=vec4(1.); }`],
+
+// raster pass: direct sun on clay + G-buffer for the path tracer, the defocus and the holdouts
+raster: [MESH_VS, HDR+NOISE+SHADOW+`
+in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; in float vD;
+layout(location=0) out vec4 oDirect; layout(location=1) out vec4 oPos; layout(location=2) out vec4 oNrm;
+uniform vec3 uCam, uL, uSunCol, uSkyLo, uSkyHi, uSkyGnd, uCoal; uniform float uSunI, uSkyI, uFill;
+float pcf(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 1.; float t=1.4/2048., z=s.z-0.0005, v=0.;
+  for(int x=-1;x<=1;x++) for(int y=-1;y<=1;y++) v+=texture(uShadow,vec3(s.xy+vec2(x,y)*t,z));
+  v/=9.; if(uCookie==2 && v>0.) v*=leaves(s.xy); return v; }
+void main(){
+  vec3 V=normalize(uCam-vP); oPos=vec4(vP,vD);
+  if(vMat==6){ vec3 d=-V; vec3 c=mix(uSkyLo,uSkyHi,smoothstep(0.,0.6,d.y)); if(d.y<0.02) c=uSkyGnd;
+    oDirect=vec4(c,0.); oNrm=vec4(0.); return; }
+  vec3 N=dot(vN,vN)>1e-10?normalize(vN):vec3(0.,1.,0.); if((vMat==9||vMat==10) && dot(N,V)<0.) N=-N;
+  float nl=dot(N,uL); float vis=nl>0.?pcf(vP+N*0.02):0.;
+  vec3 E=uSunCol*uSunI*max(nl,0.)*vis;
+  if(vMat==9) E+=uSunCol*uSunI*max(-nl,0.)*pcf(vP-N*0.03)*0.3;
+  float alb=vCol.r*(vMat==10?0.4:1.); vec3 em=vec3(0.);
+  if(vMat==14) alb*=0.72+0.5*fbm3(vP*2.5)+0.16*(vnoise(vP*40.)-0.5);
+  else if(vMat==15) alb*=0.75+0.4*vnoise(vP*vec3(30.,5.,30.));
+  else if(vMat==12){ float r=length(vP.xz), n=fbm3(vP*26.); float g=smoothstep(0.5,0.78,n)*(1.-smoothstep(0.16,0.42,r));
+    alb=mix(0.17,0.05,g); em=uCoal*g*g*(0.5+0.9*vnoise(vP*80.)); }
+  else if(vMat==13){ float n=vnoise(vP*55.)*0.65+vnoise(vP*140.)*0.35; float g=smoothstep(0.6,0.72,n)*(1.-smoothstep(0.05,0.24,vP.y));
+    em=uCoal*g*0.45; alb*=0.8+0.4*vnoise(vP*90.); }
+  oDirect=vec4(alb*E+em,alb); oNrm=vec4(N,1.);
 }`],
 
+// two-bounce path tracing through the voxelised room, one path per half-res pixel per frame, accumulated over time
+gi: [FSQ_VS, HDR+NOISE+SHADOW+HISTORY+`
+uniform sampler2D uPosTex, uNrmTex; uniform sampler3D uVox; uniform vec3 uVoxMin; uniform float uVoxS; uniform ivec3 uVoxDim;
+uniform vec3 uL, uSunCol, uSkyLo, uSkyHi, uGround, uTail, uFireP, uFireCol; uniform float uSunI, uFireOn, uFireR; uniform vec2 uRes; uniform uint uSeed;
+out vec4 o;
+uint pcg(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28u)+4u))^s)*277803737u; return (w>>22u)^w; }
+float rnd(inout uint s){ return float(pcg(s))*(1./4294967296.); }
+vec3 cosDir(vec3 n, inout uint s){ float u=rnd(s), v=rnd(s); float r=sqrt(u), a=6.2831853*v;
+  vec3 t=normalize(abs(n.y)<0.99?cross(n,vec3(0.,1.,0.)):cross(n,vec3(1.,0.,0.))); vec3 b=cross(n,t);
+  return normalize(t*(r*cos(a))+b*(r*sin(a))+n*sqrt(max(1.-u,0.))); }
+vec3 outside(vec3 d){ return d.y>0.02 ? mix(uSkyLo,uSkyHi,smoothstep(0.,0.6,d.y)) : uGround; }
+bool blocked(vec3 ro, vec3 tg){
+  vec3 rd=tg-ro; float Ld=length(rd); rd/=Ld; float lim=(Ld-0.22)/uVoxS; if(lim<=0.) return false;
+  rd=vec3(abs(rd.x)<1e-5?1e-5:rd.x, abs(rd.y)<1e-5?1e-5:rd.y, abs(rd.z)<1e-5?1e-5:rd.z);
+  vec3 p=(ro-uVoxMin)/uVoxS; ivec3 c=ivec3(floor(p)); ivec3 st=ivec3(sign(rd));
+  vec3 tD=abs(1./rd); vec3 tM=(vec3(c)+step(vec3(0.),rd)-p)/rd; float t=0.;
+  for(int i=0;i<200;i++){
+    if(t>lim) return false;
+    if(c.x<0||c.y<0||c.z<0||c.x>=uVoxDim.x||c.y>=uVoxDim.y||c.z>=uVoxDim.z) return false;
+    if(texelFetch(uVox,c,0).r>0.) return true;
+    if(tM.x<tM.y && tM.x<tM.z){ t=tM.x; tM.x+=tD.x; c.x+=st.x; } else if(tM.y<tM.z){ t=tM.y; tM.y+=tD.y; c.y+=st.y; } else { t=tM.z; tM.z+=tD.z; c.z+=st.z; }
+  }
+  return false; }
+int trace(vec3 ro, vec3 rd, out vec3 hp, out vec3 hn, out float alb){
+  hp=ro; hn=vec3(0.); alb=0.;
+  rd=vec3(abs(rd.x)<1e-5?1e-5:rd.x, abs(rd.y)<1e-5?1e-5:rd.y, abs(rd.z)<1e-5?1e-5:rd.z);
+  vec3 p=(ro-uVoxMin)/uVoxS; ivec3 c=ivec3(floor(p)); ivec3 st=ivec3(sign(rd));
+  vec3 tD=abs(1./rd); vec3 tM=(vec3(c)+step(vec3(0.),rd)-p)/rd; float t=0.;
+  for(int i=0;i<240;i++){
+    if(c.x<0||c.y<0||c.z<0||c.x>=uVoxDim.x||c.y>=uVoxDim.y||c.z>=uVoxDim.z) return 0;
+    float a=texelFetch(uVox,c,0).r;
+    if(a>0.){ hp=ro+rd*(t*uVoxS); alb=a; return 1; }
+    if(tM.x<tM.y && tM.x<tM.z){ t=tM.x; tM.x+=tD.x; c.x+=st.x; hn=vec3(-float(st.x),0.,0.); }
+    else if(tM.y<tM.z){ t=tM.y; tM.y+=tD.y; c.y+=st.y; hn=vec3(0.,-float(st.y),0.); }
+    else { t=tM.z; tM.z+=tD.z; c.z+=st.z; hn=vec3(0.,0.,-float(st.z)); }
+  }
+  return 2; }
+vec3 sunAt(vec3 p, vec3 n){ float nl=dot(n,uL); return nl>0. ? uSunCol*uSunI*nl*sunVis(p+n*0.03) : vec3(0.); }
+// fire: a small spherical light; a random point each sample gives soft shadows once accumulated
+vec3 fireAt(vec3 p, vec3 n, inout uint s){
+  if(uFireOn<0.5) return vec3(0.);
+  vec3 o=normalize(vec3(rnd(s),rnd(s),rnd(s))-0.5+1e-4)*pow(rnd(s),0.333)*uFireR;
+  vec3 c=uFireP+o; vec3 d=c-p; float d2=dot(d,d); vec3 l=d*inversesqrt(d2); float nl=dot(n,l);
+  if(nl<=0.) return vec3(0.);
+  if(blocked(p+n*(uVoxS*1.5),c)) return vec3(0.);
+  return uFireCol*nl/(d2+0.09); }
+void main(){
+  ivec2 gp=ivec2(gl_FragCoord.xy);
+  uint s=uint(gp.x)*1973u+uint(gp.y)*9277u+uSeed*26699u; s=pcg(s);
+  ivec2 fp=min(gp*2, ivec2(uFull)-1);
+  vec4 P=texelFetch(uPosTex,fp,0); vec4 Nn=texelFetch(uNrmTex,fp,0);
+  if(Nn.w<0.5){ o=vec4(0.,0.,0.,1.); return; }
+  vec3 N=normalize(Nn.xyz);
+  vec3 E=vec3(0.);
+  vec3 hp,hn; float a;
+  vec3 d=cosDir(N,s);
+  int r=trace(P.xyz+N*(uVoxS*1.6),d,hp,hn,a);
+  if(r==0) E=outside(d);
+  else if(r==1 && dot(hn,hn)>0.5){
+    vec3 E1=sunAt(hp,hn)+fireAt(hp,hn,s);
+    vec3 hp2,hn2; float a2; vec3 d2=cosDir(hn,s);
+    int r2=trace(hp+hn*(uVoxS*1.2),d2,hp2,hn2,a2);
+    if(r2==0) E1+=outside(d2);
+    else if(r2==1 && dot(hn2,hn2)>0.5) E1+=a2*(sunAt(hp2,hn2)+uTail);
+    E=a*E1; }
+  float l=dot(E,vec3(0.3,0.6,0.1)); if(l>8.) E*=8./l;   // tame fireflies
+  E+=fireAt(P.xyz,N,s);
+  if(any(isnan(E))||any(isinf(E))) E=vec3(0.);
+  vec4 h=history(P.xyz,P.w); if(any(isnan(h))) h=vec4(0.); float n=min(h.a+1.,uMaxN);
+  o=vec4(mix(h.rgb,E,1./n),n);
+}`],
+
+haze: [FSQ_VS, HDR+NOISE+SHADOW+`
+uniform sampler2D uPosTex; uniform mat4 uInvVP; uniform vec3 uCam, uFwd, uL, uSunCol, uAmbE, uFireP, uFireCol; uniform float uSunI, uHaze, uHazeVar, uG, uFill, uFrame, uRoom, uFireOn; uniform vec2 uRes, uFull;
+out vec4 o;
+void main(){
+  vec2 uv=gl_FragCoord.xy/uRes;
+  vec4 w=uInvVP*vec4(uv*2.-1.,1.,1.); vec3 rd=normalize(w.xyz/w.w-uCam);
+  float depth=texelFetch(uPosTex, ivec2(uv*uFull), 0).w;
+  float tmax=min(depth/max(dot(rd,uFwd),1e-3), 16.);
+  if(uRoom>0.5 && rd.x<0.) tmax=min(tmax,(-4.0-uCam.x)/rd.x);
+  const int N=32; float dt=tmax/float(N); float j=fract(ign(gl_FragCoord.xy)+uFrame*0.618034);
+  float acc=0., fg=0.;
+  for(int i=0;i<N;i++){ float t=(float(i)+j)*dt; vec3 p=uCam+rd*t; float v=sunVis(p);
+    if(uFireOn>0.5){ vec3 q=p-uFireP; fg+=1./(dot(q,q)+0.12); }
+    if(v>0.){ float d=1.+uHazeVar*(vnoise(p*0.9+vec3(uTime*0.03,0.,uTime*0.02))*2.-1.)*0.9; acc+=v*max(d,0.); } }
+  acc*=dt;
+  vec3 c=uSunCol*uSunI*acc*hg(dot(uL,rd),uG*0.85)*uHaze*0.011 + uAmbE*uFill*uHaze*0.008*tmax + uFireCol*fg*dt*uHaze*0.004;
+  o=vec4(c,1.);
+}`],
+
+// plate = direct + albedo × (path-traced bounce, upsampled with depth/normal weights) + atmosphere
+plate: [FSQ_VS, HDR+`
+uniform sampler2D uDirect, uGI, uNrmTex, uPosTex, uHazeTex; uniform vec2 uHazeTexel, uRes; uniform ivec2 uGIDim; uniform float uHazeOn, uGIAmt; uniform vec3 uTail; out vec4 o;
+void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec2 uv=gl_FragCoord.xy/uRes;
+  vec4 D=texelFetch(uDirect,ip,0); vec3 c=D.rgb;
+  if(D.a>0.){
+    float d0=texelFetch(uPosTex,ip,0).w; vec3 n0=texelFetch(uNrmTex,ip,0).xyz;
+    vec2 g=(vec2(ip)+0.5)*0.5-0.5; ivec2 g0=ivec2(floor(g)); vec2 f=fract(g);
+    vec3 s=vec3(0.); float ws=0.;
+    for(int j=0;j<2;j++) for(int i=0;i<2;i++){ ivec2 gc=clamp(g0+ivec2(i,j),ivec2(0),uGIDim-1);
+      ivec2 fq=min(gc*2,ivec2(uRes)-1); float d=texelFetch(uPosTex,fq,0).w; vec3 n=texelFetch(uNrmTex,fq,0).xyz;
+      float w=(i==0?1.-f.x:f.x)*(j==0?1.-f.y:f.y)*exp(-abs(d-d0)/(0.03*d0+0.02))*pow(max(dot(n,n0),0.),6.)+1e-5;
+      s+=texelFetch(uGI,gc,0).rgb*w; ws+=w; }
+    c+=D.a*(s/ws+uTail)*uGIAmt; }
+  vec3 h=vec3(0.); float ws2=0.;
+  for(int x=-1;x<=1;x++) for(int y=-1;y<=1;y++){ float w=(2.-abs(float(x)))*(2.-abs(float(y))); h+=texture(uHazeTex,uv+vec2(x,y)*uHazeTexel*1.25).rgb*w; ws2+=w; }
+  o=vec4(c+h/ws2*uHazeOn,1.); }`],
+
+// defocus gather with a fresh random pattern each frame; accumulation below removes the noise and banding
+dof: [FSQ_VS, HDR+NOISE+COC+`
+uniform sampler2D uPlate, uPosTex; uniform vec2 uRes; uniform float uMaxR, uFrame;
+layout(location=0) out vec4 oCol; layout(location=1) out vec4 oFg;
+void main(){
+  ivec2 ip=ivec2(gl_FragCoord.xy); ivec2 mx=ivec2(uRes)-1;
+  vec3 c0=texelFetch(uPlate,ip,0).rgb; float d0=texelFetch(uPosTex,ip,0).w;
+  float coc0=cocPx(d0), r0=abs(coc0)*0.5;
+  if(uMaxR<0.75){ oCol=vec4(c0,0.); oFg=vec4(1e4); return; }
+  float w0=1./max(3.14159*r0*r0,1.);
+  vec3 acc=c0*w0; float ws=w0; float fgw=coc0<-1.5?w0:0., fgd=fgw*d0;
+  const int N=40; const float GA=2.39996323;
+  float jr=fract(ign(gl_FragCoord.xy)+uFrame*0.618034)*6.2831853, jo=hash12(gl_FragCoord.xy+uFrame*1.37);
+  float sa=3.14159*uMaxR*uMaxR/float(N);
+  for(int i=0;i<N;i++){
+    float r=sqrt((float(i)+jo)/float(N))*uMaxR; float a=float(i)*GA+jr;
+    ivec2 sp=clamp(ip+ivec2(floor(vec2(cos(a),sin(a))*r+0.5)),ivec2(0),mx);
+    vec3 cs=texelFetch(uPlate,sp,0).rgb; float ds=texelFetch(uPosTex,sp,0).w;
+    float cc=cocPx(ds), rs=abs(cc)*0.5;
+    float w=clamp(rs-r+1.,0.,1.);
+    if(ds>d0+0.02) w*=clamp(r0-r+1.,0.,1.);
+    w*=sa/max(3.14159*rs*rs,1.);
+    acc+=cs*w; ws+=w;
+    if(cc<-1.5){ fgw+=w; fgd+=w*ds; }
+  }
+  oCol=vec4(acc/ws, clamp(fgw/ws,0.,1.));
+  oFg=vec4(fgw>1e-5?fgd/fgw:1e4);
+}`],
+
+atrous: [FSQ_VS, HDR+`
+uniform sampler2D uTex, uPosTex, uNrmTex; uniform vec2 uFull; uniform ivec2 uDim; uniform int uStep; out vec4 o;
+void main(){ ivec2 g=ivec2(gl_FragCoord.xy); ivec2 fm=ivec2(uFull)-1;
+  vec4 P0=texelFetch(uPosTex,min(g*2,fm),0); vec3 N0=texelFetch(uNrmTex,min(g*2,fm),0).xyz;
+  vec4 c0=texelFetch(uTex,g,0); if(dot(N0,N0)<0.1){ o=c0; return; }
+  vec3 s=vec3(0.); float ws=0.;
+  for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
+    ivec2 q=clamp(g+ivec2(i,j)*uStep,ivec2(0),uDim-1); ivec2 fq=min(q*2,fm);
+    vec4 Pq=texelFetch(uPosTex,fq,0); vec3 Nq=texelFetch(uNrmTex,fq,0).xyz;
+    float k=(i==0?2.:1.)*(j==0?2.:1.);
+    float sp=(0.06*float(uStep)+0.01*P0.w)*(0.3+3./sqrt(max(c0.a,1.)));
+    float w=k*exp(-length(Pq.xyz-P0.xyz)/sp)*pow(max(dot(Nq,N0),0.),16.);
+    s+=texelFetch(uTex,q,0).rgb*w; ws+=w; }
+  o=vec4(s/max(ws,1e-5),c0.a); }`],
+
+accum: [FSQ_VS, HDR+HISTORY+`
+uniform sampler2D uCur, uPosTex; out vec4 o;
+void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec3 c=texelFetch(uCur,ip,0).rgb; vec4 P=texelFetch(uPosTex,ip,0);
+  if(any(isnan(c))||any(isinf(c))) c=vec3(0.); vec4 h=history(P.xyz,P.w); if(any(isnan(h))) h=vec4(0.); float n=min(h.a+1.,uMaxN); o=vec4(mix(h.rgb,c,1./n),n); }`],
+
+sim: [FSQ_VS, HDR+NOISE+SHADOW+MOTETYPE+`
+uniform sampler2D uPos, uVel; uniform float uDt, uT, uTurb, uScale, uMicro, uThermal, uSettle, uPuffAmp, uSizeMin, uSizeMax, uSizeBias;
+uniform vec3 uWind, uBMin, uBMax; uniform vec4 uPuff;
+layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
+${CURL}
+void main(){
+  ivec2 ip=ivec2(gl_FragCoord.xy); vec4 Pp=texelFetch(uPos,ip,0), Vv=texelFetch(uVel,ip,0);
+  vec3 p=Pp.xyz; int ty=moteType(hash11(Pp.w*137.1));
+  vec3 tgt=uWind+uTurb*0.45*curl(p/uScale+vec3(0.,uT*0.015,uT*0.01));
+  float micro=uMicro*(ty>=2?1.6:1.);
+  if(micro>0.) tgt+=micro*0.45*curl(p/(uScale*0.22)+vec3(uT*0.05,7.3,-uT*0.04));
+  tgt.y+=uThermal*sunVis(p);
+  float sf;
+  if(ty==0){ float sz=uSizeMin*pow(uSizeMax/uSizeMin, pow(Vv.w,uSizeBias)); sf=0.15+min((sz/50.)*(sz/50.),4.); }
+  else if(ty==1) sf=0.5; else if(ty==2) sf=0.22; else sf=0.12;
+  tgt.y-=uSettle*sf;
+  if(uPuffAmp>1e-3){ vec3 d=p-uPuff.xyz; float r2=dot(d,d); float gf=exp(-r2/(uPuff.w*uPuff.w)); vec3 nd=d/max(sqrt(r2),1e-3);
+    tgt+=uPuffAmp*gf*(nd+vec3(0.,0.35,0.)+cross(nd,vec3(0.,1.,0.))*0.6); }
+  float k=1.-exp(-uDt/(ty>=2?0.22:0.35));
+  vec3 v=mix(Vv.xyz,tgt,k);
+  p+=v*uDt;
+  vec3 ext=uBMax-uBMin; p=uBMin+mod(p-uBMin,ext);
+  oP=vec4(p,Pp.w); oV=vec4(v,Vv.w);
+}`],
+
+motes: [HDR+NOISE+SHADOW+COC+MOTETYPE+`
+uniform sampler2D uPos, uVel; uniform int uTexW, uId;
+uniform mat4 uVPo, uVPc, uVPm, uViewM; uniform vec3 uCam, uL, uSunCol, uTint, uAmbE, uBMin, uBMax;
+uniform vec4 uVplP[${NVM}], uVplN[${NVM}], uVplF[${NVM}];
+uniform vec2 uRes; uniform float uShutter, uExpT, uMB, uSunI, uGI, uBright, uG, uGlint, uTumble, uFlakeScale, uFiberScale, uFluffScale, uFluffBright, uAmbVis, uSizeMin, uSizeMax, uSizeBias, uMaxR, uCat, uBladeRot, uFocalPx, uFocalRef, uFireOn;
+uniform vec3 uFireP, uFireCol;
+out vec2 vLocal; flat out vec4 vA; flat out vec4 vB; flat out vec4 vC; flat out vec4 vM; flat out vec3 vCol; flat out float vDepth; flat out vec2 vCat;
+void cull(){ gl_Position=vec4(-9.,-9.,0.,1.); vA=vec4(0.); vB=vec4(0.); vC=vec4(0.); vM=vec4(0.); vCol=vec3(0.); vLocal=vec2(0.); vCat=vec2(0.); vDepth=0.; }
+vec2 loc(vec2 v, vec2 d){ return vec2(dot(v,d), dot(v,vec2(-d.y,d.x))); }
+vec3 tumbleAxis(float h4,float h5,float h6,float rate,float t){ float a=6.2831853*(h4+rate*t), b=6.2831853*h5+4.1*rate*t*(0.5+h6); return vec3(sin(a)*cos(b), cos(a), sin(a)*sin(b)); }
+void main(){
+  int id=gl_InstanceID; ivec2 tc=ivec2(id%uTexW, id/uTexW);
+  vec4 Pp=texelFetch(uPos,tc,0), Vv=texelFetch(uVel,tc,0);
+  float sd=Pp.w;
+  float h1=hash11(sd*137.1), h2=hash11(sd*71.3+1.), h3=hash11(sd*19.7+2.), h4=hash11(sd*53.9+3.), h5=hash11(sd*91.1+4.), h6=hash11(sd*29.3+5.), h7=hash11(sd*61.7+6.), h8=hash11(sd*13.3+7.), h9=hash11(sd*47.9+8.);
+  int ty=moteType(h1);
+  vec3 p=Pp.xyz; vec3 v=Vv.xyz*uMB;
+  vec3 db=min(p-uBMin,uBMax-p);
+  float fade=smoothstep(0.,0.25,db.x)*smoothstep(0.,0.18,db.y)*smoothstep(0.,0.25,db.z);
+  float depth=-(uViewM*vec4(p,1.)).z;
+  fade*=smoothstep(0.06,0.3,depth);
+  if(fade<1e-3){ cull(); return; }
+  vec4 cm=uVPm*vec4(p,1.);
+  if(cm.w<0.05){ cull(); return; }
+  vec2 sm=(cm.xy/cm.w*.5+.5)*uRes;
+  if(any(lessThan(sm,vec2(-uMaxR-60.)))||any(greaterThan(sm,uRes+uMaxR+60.))){ cull(); return; }
+  vec3 p0=p-v*uShutter*0.5, p1=p+v*uShutter*0.5;
+  vec4 c0=uVPo*vec4(p0,1.), c1=uVPc*vec4(p1,1.);
+  if(c0.w<0.05||c1.w<0.05){ cull(); return; }
+  vec2 s0=(c0.xy/c0.w*.5+.5)*uRes, s1=(c1.xy/c1.w*.5+.5)*uRes;
+  float coc=cocPx(depth); float R=clamp(abs(coc)*0.5,0.25,uMaxR);
+  vec2 seg=s1-s0; float L=min(length(seg)*0.5,120.);
+  vec3 Vd=normalize(uCam-p); float dist=length(uCam-p);
+  float ppm=uFocalPx/depth;
+  mat3 Rv=mat3(uViewM);
+  float rate=uTumble*(ty==1?mix(0.12,0.9,h3):ty==0?mix(0.1,0.7,h3):mix(0.03,0.3,h3));
+  vec3 ax=tumbleAxis(h4,h5,h6,rate,uTime);
+  float sigma=1., rs=0., sq=1., ang=0., gph=uG; vec2 A=vec2(0.),B=vec2(0.),C=vec2(0.); vec3 tcol=vec3(1.);
+  // physical sizes; brightness ∝ projected scattering area, so most motes are faint and a few are bright
+  if(ty==0){ float d=uSizeMin*pow(uSizeMax/uSizeMin, pow(Vv.w,uSizeBias));
+    sigma=(d/40.)*(d/40.)*(1.+0.12*sin(6.2831853*(rate*uTime*1.3+h7)));
+    rs=0.5*d*1e-6*ppm; ang=6.2831853*h8+rate*uTime; sq=0.65+0.35*h9; }
+  else if(ty==1){ float d=30.*pow(8.,pow(Vv.w,2.2))*uFlakeScale;
+    float nl=abs(dot(ax,uL)), nv=abs(dot(ax,Vd));
+    sigma=(d*d/1600.)*(0.4*nl*(0.25+0.75*nv)+0.03);
+    rs=0.5*d*1e-6*ppm; sq=clamp(nv,0.1,1.); vec2 ns=(Rv*ax).xy; ang=atan(ns.y,ns.x+1e-6);
+    gph=uG*0.85; tcol=mix(vec3(1.04,1.,0.94),vec3(0.95,0.95,0.97),h7); }
+  else if(ty==2){ float ln=300.*pow(8.,pow(Vv.w,1.8))*uFiberScale; float th=8.+12.*h8;
+    vec3 bend=normalize(cross(ax, normalize(vec3(h7-0.5,h9-0.5,h6-0.5)+vec3(0.,0.,1e-3))));
+    float k=mix(0.06,0.4,h2);
+    A=(Rv*(-ax*ln*0.5e-6)).xy*ppm; B=(Rv*(ax*ln*0.5e-6)).xy*ppm; C=(Rv*(bend*ln*1e-6*k)).xy*ppm*2.;
+    rs=th*1e-6*ppm;
+    float tl=dot(ax,uL); sigma=(ln*th/1600.)*sqrt(max(1.-tl*tl,0.03))*0.5;
+    gph=uG*0.5;
+    tcol= h9<0.4?vec3(0.95,0.95,0.93): h9<0.58?vec3(0.5,0.58,0.82): h9<0.7?vec3(0.85,0.45,0.42): h9<0.84?vec3(0.36,0.34,0.32): vec3(0.82,0.74,0.55); }
+  else { float d=200.*pow(6.,pow(Vv.w,2.))*uFluffScale; sigma=(d*d/1600.)*0.07*uFluffBright; rs=0.5*d*1e-6*ppm; gph=uG*0.45; tcol=vec3(0.9,0.9,0.93); ang=6.2831853*h7+rate*uTime*0.5; }
+  float vis=sunVisSoft(p);
+  vec3 rad=uSunCol*uSunI*vis*hg(dot(-uL,Vd),gph);
+  if(ty==1 && uGlint>0. && vis>0.){ vec3 H=normalize(uL+Vd); float g=0.;
+    for(int i=0;i<4;i++){ float tt=uTime+(float(i)/3.-0.5)*uExpT; g+=pow(abs(dot(tumbleAxis(h4,h5,h6,rate,tt),H)),90.); }
+    rad+=uSunCol*uSunI*vis*g*0.25*8.*uGlint*(0.4+0.6*h2); }
+  vec3 Ei=uAmbE*uGI;
+  for(int i=0;i<${NVM};i++){ vec3 d=uVplP[i].xyz-p; float r2=dot(d,d)+0.12; vec3 l=d*inversesqrt(r2); Ei+=uVplF[i].rgb*max(dot(uVplN[i].xyz,-l),0.)/(PI*r2)*uGI; }
+  rad+=Ei*uAmbVis*1.5;
+  if(uFireOn>0.5){ vec3 q=uFireP-p; rad+=uFireCol/(dot(q,q)+0.05)*hg(dot(-normalize(q),Vd),gph); }
+  // a point's light lands in one pixel, so its pixel value scales with 1/(pixel solid angle) = (focal length in pixels)²
+  vec3 col=rad*uTint*tcol*(uBright*0.8*sigma/(dist*dist))*fade*(uFocalPx*uFocalPx)/(uFocalRef*uFocalRef);
+  if(uId==1){ vec3 ic= ty==0?vec3(1.,0.86,0.6): ty==1?vec3(0.35,0.8,1.): ty==2?vec3(1.,0.35,0.5): vec3(0.55,1.,0.45);
+    col=ic*0.4*sqrt(sigma)*(0.25+0.75*min(vis,1.))*fade/max(dist,0.3); }
+  float peak=max(col.r,max(col.g,col.b))/(PI*max(R*R,rs*rs)+1.);
+  if(peak<2e-5){ cull(); return; }
+  float ext = ty==2 ? min(max(length(A),max(length(B),length(C)*0.5)),80.)+rs+1. : min(rs*1.7,80.);
+  vec2 dir=L>1e-4?seg/(2.*L):vec2(1.,0.);
+  float rot=atan(dir.y,dir.x);
+  vCol=col; vDepth=depth;
+  vec2 fromC=(sm/uRes-0.5)*vec2(uRes.x/uRes.y,1.);
+  float rn=length(fromC)/(0.5*length(vec2(uRes.x/uRes.y,1.)));
+  vec2 cat=rn>1e-4?-normalize(fromC)*uCat*rn*0.55:vec2(0.);
+  vCat=loc(cat,dir);
+  vA=vec4(float(ty), rs, sq, ang-rot);
+  vB=vec4(loc(A,dir), loc(B,dir));
+  vC=vec4(loc(C,dir), fract(sd*7.77), rot);
+  vM=vec4(L, R, coc, rot-uBladeRot);
+  float pad=R<2.5?3.:1.5;
+  vec2 corner=vec2(float(gl_VertexID&1), float((gl_VertexID>>1)&1))*2.-1.;
+  vec2 lc=vec2(corner.x*(L+ext+R+pad), corner.y*(ext+R+pad));
+  vLocal=lc;
+  vec2 scr=(s0+s1)*0.5+dir*lc.x+vec2(-dir.y,dir.x)*lc.y;
+  gl_Position=vec4(scr/uRes*2.-1.,0.,1.);
+}`, MOTE_FS],
+
+flame: [FSQ_VS, HDR+NOISE+ELIFE+`
+uniform sampler2D uPosTex; uniform mat4 uInvVP; uniform vec3 uCam, uFwd, uFireP; uniform float uFlameH, uFlameR, uTime, uGain; uniform vec2 uRes, uFull; out vec4 o;
+void main(){
+  vec2 uv=gl_FragCoord.xy/uRes;
+  vec4 w=uInvVP*vec4(uv*2.-1.,1.,1.); vec3 rd=normalize(w.xyz/w.w-uCam);
+  float depth=texelFetch(uPosTex,ivec2(uv*uFull),0).w; float tmax=min(depth/max(dot(rd,uFwd),1e-3),40.);
+  vec3 ro=uCam-uFireP; float R=uFlameR*1.3;
+  float A=dot(rd.xz,rd.xz), B=dot(ro.xz,rd.xz), C=dot(ro.xz,ro.xz)-R*R, D=B*B-A*C;
+  if(D<=0.||A<1e-6){ o=vec4(0.); return; }
+  float sq=sqrt(D); float t0=(-B-sq)/A, t1=(-B+sq)/A;
+  float yb=-0.02, yt=uFlameH*1.4;
+  if(abs(rd.y)>1e-5){ float ta=(yb-ro.y)/rd.y, tb=(yt-ro.y)/rd.y; t0=max(t0,min(ta,tb)); t1=min(t1,max(ta,tb)); }
+  t0=max(t0,0.); t1=min(t1,tmax); if(t1<=t0){ o=vec4(0.); return; }
+  const int N=28; float dt=(t1-t0)/float(N); float j=ign(gl_FragCoord.xy);
+  vec3 em=vec3(0.);
+  for(int i=0;i<N;i++){ vec3 q=ro+rd*(t0+(float(i)+j)*dt);
+    float h=q.y/uFlameH;
+    vec2 xz=q.xz/uFlameR+vec2(sin(uTime*1.7+h*3.)*0.16, cos(uTime*1.3+h*2.5)*0.12)*h;
+    float warp=fbm3(vec3(q.x*4.,q.y*2.4-uTime*2.3,q.z*4.));
+    float n=fbm3(vec3(q.x*6.5+warp*1.6, q.y*3.3-uTime*3.2, q.z*6.5-warp*1.6));
+    float rr=length(xz), width=max(1.-h,0.)*0.95;
+    float cone=1.-smoothstep(width*0.25,width+0.06,rr);
+    float dens=cone*smoothstep(-0.05,0.06,h)*(n*1.75-0.54-h*0.7);
+    dens=max(dens,0.)*2.6;
+    if(dens>0.){ float T=mix(1250.,1900.,clamp(dens*1.6*(1.-h*0.4),0.,1.)); em+=planck(T)*dens; }
+  }
+  em*=dt*uGain; if(any(isnan(em))) em=vec3(0.); o=vec4(em,1.);
+}`],
+
+esim: [FSQ_VS, HDR+NOISE+ELIFE+`
+uniform sampler2D uPos, uVel; uniform float uDt, uT, uERad, uEHeight, uRise, uSpread, uTurb, uLifeScale, uBurst, uBurstSpeed, uBurstFrac; uniform vec3 uEmit, uWind; uniform int uBurstRow;
+layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
+${CURL}
+void spawn(inout vec4 P, inout vec4 V, ivec2 ip, bool burst){
+  float ns=fract(P.w*1.6180339+hash12(vec2(ip)+fract(uT*13.37)*91.7)*0.731+0.137); P.w=ns;
+  float a=hash11(ns*91.3)*6.2831853, r=sqrt(hash11(ns*17.9))*uERad;
+  P.xyz=uEmit+vec3(cos(a)*r, hash11(ns*53.1)*uEHeight, sin(a)*r);
+  if(burst){ float ca=hash11(ns*7.7)*6.2831853, el=mix(0.6,1.45,hash11(ns*3.3)); V.xyz=vec3(cos(ca)*cos(el),sin(el),sin(ca)*cos(el))*uBurstSpeed*mix(0.45,1.3,hash11(ns*5.1)); }
+  else V.xyz=vec3((hash11(ns*2.1)-0.5)*uSpread, uRise*mix(0.35,1.05,hash11(ns*4.4)), (hash11(ns*6.6)-0.5)*uSpread);
+  V.w=hash11(ns*8.8)*uDt; }
+void main(){
+  ivec2 ip=ivec2(gl_FragCoord.xy); vec4 P=texelFetch(uPos,ip,0), V=texelFetch(uVel,ip,0);
+  bool burst=ip.y>=uBurstRow;
+  if(burst && V.w<0.){ if(uBurst>0.5 && hash12(vec2(ip)*1.37+fract(uT)*57.)<uBurstFrac) spawn(P,V,ip,true); else { oP=P; oV=V; return; } }
+  float life=elife(P.w)*uLifeScale;
+  if(V.w>life){ if(burst){ V.w=-1.; oP=P; oV=V; return; } spawn(P,V,ip,false); }
+  // the air an ember rides in: a buoyant plume that widens and slows with height, entrainment near the base, turbulence, wind
+  vec3 rel=P.xyz-uEmit; float h=max(rel.y,0.), r=length(rel.xz);
+  float sig=uERad*0.9+0.08+h*0.22;
+  float gust=0.7+0.6*vnoise(vec3(uT*1.3, h*0.8-uT*1.1, 3.));
+  vec3 air=uWind*min(h*0.8+0.25,1.)+vec3(0., uRise*exp(-r*r/(2.*sig*sig))*gust/(1.+h*0.45), 0.);
+  air.xz-=rel.xz/(r+0.15)*0.08*exp(-h*2.)*uRise;
+  air+=curl(P.xyz*2.2+vec3(0.,-uT*0.9,uT*0.2))*uTurb*(0.25+min(h,2.)*0.5);
+  float sz=esize(P.w); air.y-=0.22*sz;
+  V.xyz=mix(V.xyz,air,1.-exp(-uDt/(0.07+0.25*sz)));
+  P.xyz+=V.xyz*uDt; V.w+=uDt;
+  oP=P; oV=V;
+}`],
+
+embers: [HDR+NOISE+COC+ELIFE+`
+uniform sampler2D uEPos, uEVel; uniform int uTexW, uBase, uId;
+uniform mat4 uVPo, uVPc, uVPm, uViewM; uniform vec3 uCam; uniform vec2 uRes;
+uniform float uShutter, uExpT, uMB, uMaxR, uCat, uBladeRot, uFocalPx, uFocalRef, uLifeScale, uTemp, uESize, uEGain, uTwinkle;
+out vec2 vLocal; flat out vec4 vA; flat out vec4 vB; flat out vec4 vC; flat out vec4 vM; flat out vec3 vCol; flat out float vDepth; flat out vec2 vCat;
+void cull(){ gl_Position=vec4(-9.,-9.,0.,1.); vA=vec4(0.); vB=vec4(0.); vC=vec4(0.); vM=vec4(0.); vCol=vec3(0.); vLocal=vec2(0.); vCat=vec2(0.); vDepth=0.; }
+vec2 loc(vec2 v, vec2 d){ return vec2(dot(v,d), dot(v,vec2(-d.y,d.x))); }
+void main(){
+  int id=gl_InstanceID+uBase; ivec2 tc=ivec2(id%uTexW, id/uTexW);
+  vec4 P=texelFetch(uEPos,tc,0), V=texelFetch(uEVel,tc,0);
+  float age=V.w; if(age<0.){ cull(); return; }
+  float sd=P.w, life=elife(sd)*uLifeScale, t=age/life; if(t>=1.){ cull(); return; }
+  float h2=hash11(sd*71.3+1.), h4=hash11(sd*53.9+3.), h5=hash11(sd*91.1+4.), h6=hash11(sd*29.7+5.), h7=hash11(sd*61.7+6.);
+  // radiative cooling: yellow-orange near the fire, dull red as it rises, gone below about 750 K
+  float T0=uTemp*(0.9+0.2*h2), T=650.+(T0-650.)*exp(-age/(life*0.95));
+  float env=smoothstep(0.,0.03,age)*(1.-smoothstep(0.82,1.,t));
+  float d=uESize*esize(sd);
+  float tw=0.; for(int i=0;i<3;i++){ float a=age+(float(i)-1.)*uExpT*0.5; tw+=1.+uTwinkle*0.6*sin(6.2831853*(a*mix(3.,14.,h4)+h5))*sin(6.2831853*(a*mix(0.8,4.,h6)+h7)); } tw/=3.;
+  vec3 p=P.xyz, v=V.xyz*uMB;
+  float depth=-(uViewM*vec4(p,1.)).z; if(depth<0.05){ cull(); return; }
+  vec4 cm=uVPm*vec4(p,1.); if(cm.w<0.05){ cull(); return; } vec2 sm=(cm.xy/cm.w*.5+.5)*uRes;
+  if(any(lessThan(sm,vec2(-uMaxR-150.)))||any(greaterThan(sm,uRes+uMaxR+150.))){ cull(); return; }
+  vec4 c0=uVPo*vec4(p-v*uShutter*0.5,1.), c1=uVPc*vec4(p+v*uShutter*0.5,1.);
+  if(c0.w<0.05||c1.w<0.05){ cull(); return; }
+  vec2 s0=(c0.xy/c0.w*.5+.5)*uRes, s1=(c1.xy/c1.w*.5+.5)*uRes;
+  float coc=cocPx(depth), R=clamp(abs(coc)*0.5,0.25,uMaxR);
+  vec2 seg=s1-s0; float L=min(length(seg)*0.5,140.);
+  float dist=length(uCam-p);
+  vec3 col=planck(T)*5e9*uEGain*tw*env*(d*d)/(dist*dist)*(uFocalPx*uFocalPx)/(uFocalRef*uFocalRef);
+  if(uId==1) col=vec3(1.,0.45,0.1)*0.06*env/max(dist,0.3);
+  if(max(col.r,max(col.g,col.b))/(PI*R*R+1.)<1e-5){ cull(); return; }
+  vec2 dir=L>1e-4?seg/(2.*L):vec2(1.,0.); float rot=atan(dir.y,dir.x);
+  vCol=col; vDepth=depth;
+  vec2 fromC=(sm/uRes-0.5)*vec2(uRes.x/uRes.y,1.); float rn=length(fromC)/(0.5*length(vec2(uRes.x/uRes.y,1.)));
+  vec2 cat=rn>1e-4?-normalize(fromC)*uCat*rn*0.55:vec2(0.); vCat=loc(cat,dir);
+  vA=vec4(0.,0.,1.,0.); vB=vec4(0.); vC=vec4(0.,0.,0.,rot); vM=vec4(L,R,coc,rot-uBladeRot);
+  float pad=R<2.5?3.:1.5;
+  vec2 corner=vec2(float(gl_VertexID&1), float((gl_VertexID>>1)&1))*2.-1.;
+  vec2 lc=vec2(corner.x*(L+R+pad), corner.y*(R+pad)); vLocal=lc;
+  vec2 scr=(s0+s1)*0.5+dir*lc.x+vec2(-dir.y,dir.x)*lc.y;
+  gl_Position=vec4(scr/uRes*2.-1.,0.,1.);
+}`, MOTE_FS],
+
 comp: [FSQ_VS, HDR+`
-uniform sampler2D uDof, uDust, uHazeTex, uPosTex; uniform int uMode; uniform vec2 uRes, uPlateRes; out vec4 o;
+uniform sampler2D uDof, uDust, uHazeTex, uPosTex, uFlame; uniform int uMode; uniform vec2 uRes, uPlateRes; uniform float uFlick, uFireScene, uFlameOn; out vec4 o;
 vec4 bilin(sampler2D t, vec2 uv){ ivec2 sz=textureSize(t,0); vec2 g=uv*vec2(sz)-0.5; ivec2 i=ivec2(floor(g)); vec2 f=fract(g); ivec2 m=sz-1;
   vec4 a=texelFetch(t,clamp(i,ivec2(0),m),0), b=texelFetch(t,clamp(i+ivec2(1,0),ivec2(0),m),0), c=texelFetch(t,clamp(i+ivec2(0,1),ivec2(0),m),0), d=texelFetch(t,clamp(i+ivec2(1,1),ivec2(0),m),0);
   return mix(mix(a,b,f.x),mix(c,d,f.x),f.y); }
 void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec2 uv=gl_FragCoord.xy/uRes;
   vec3 plate=bilin(uDof,uv).rgb, dust=texelFetch(uDust,ip,0).rgb; vec3 c;
+  if(uFireScene>0.5){ float geo=texelFetch(uPosTex,ivec2(uv*uPlateRes),0).w<1e3?1.:0.; plate*=mix(1.,uFlick,geo); }
+  plate+=texture(uFlame,uv).rgb*uFlameOn;
   if(uMode==0) c=plate+dust; else if(uMode==1||uMode==6) c=dust; else if(uMode==2) c=plate;
   else if(uMode==3) c=texture(uHazeTex,uv).rgb*2.5+dust*0.25;
   else { vec4 Pp=texelFetch(uPosTex,ivec2(uv*uPlateRes),0);
@@ -1053,7 +1288,9 @@ function mkMesh(arr){ const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,st,12);
   gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,3,gl.FLOAT,false,st,24);
   gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3,1,gl.FLOAT,false,st,36);
-  gl.bindVertexArray(null); return {vao, n:arr.length/10}; }
+  gl.bindVertexArray(null); return {vao, buf:b, n:arr.length/10}; }
+function freeMesh(m){ if(m){ gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.buf); } }
+function rebuildMeshes(){ freeMesh(meshMain); freeMesh(meshBlinds); freeMesh(meshSky); meshMain=mkMesh(GM); meshBlinds=mkMesh(GB); meshSky=mkMesh(GS); }
 let meshMain, meshBlinds, meshSky; const emptyVAO=gl.createVertexArray();
 function draw(m){ gl.bindVertexArray(m.vao); gl.drawArrays(gl.TRIANGLES,0,m.n); }
 function fsq(){ gl.bindVertexArray(emptyVAO); gl.drawArrays(gl.TRIANGLES,0,3); }
@@ -1071,8 +1308,33 @@ function makeShadow(){
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,shadowTex,0); gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE);
 }
 const TW=512, TH=256, MAXN=TW*TH;
+// embers: rows 0-47 are the steady stream, rows 48-63 are held back for pops (crackle bursts)
+const ETW=256, ETH=64, EBROW=48, ENORM=EBROW*ETW;
+let esim=null, eCur=0;
+function seedEmbers(){ const pd=new Float32Array(ETW*ETH*4), vd=new Float32Array(ETW*ETH*4);
+  for(let y=0;y<ETH;y++) for(let x=0;x<ETW;x++){ const i=(y*ETW+x)*4; pd[i]=S.emitX; pd[i+1]=S.emitY; pd[i+2]=S.emitZ; pd[i+3]=Math.random(); vd[i+3]= y>=EBROW ? -1 : 1e3; }
+  for(const e of esim){ gl.bindTexture(gl.TEXTURE_2D,e.p); gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,ETW,ETH,gl.RGBA,gl.FLOAT,pd);
+    gl.bindTexture(gl.TEXTURE_2D,e.v); gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,ETW,ETH,gl.RGBA,gl.FLOAT,vd); } }
+const eCount=()=>Math.min(ENORM, Math.round(S.eRate*1.38*S.eLife));
+function stepEmbers(dt,t,burst){
+  const rows=Math.max(1,Math.ceil(eCount()/ETW)), src=esim[eCur], dst=esim[1-eCur], dir=S.driftDir*Math.PI/180;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dst.fb); tex(2,src.p); tex(3,src.v);
+  const u={uPos:2,uVel:3,uDt:dt,uT:t,uERad:S.eRad,uEHeight:S.eHeight,uRise:S.eRise,uSpread:S.eSpread,uTurb:S.eTurb,uLifeScale:S.eLife,
+    uBurst:burst?1:0,uBurstSpeed:2.5+3*S.popSize,uBurstFrac:0.004+0.05*S.popSize,uEmit:[S.emitX,S.emitY,S.emitZ],uWind:[Math.cos(dir)*S.eWind,0,Math.sin(dir)*S.eWind],uBurstRow:EBROW};
+  use(P.esim,u);
+  gl.enable(gl.SCISSOR_TEST);
+  gl.viewport(0,0,ETW,ETH); gl.scissor(0,0,ETW,rows); fsq();
+  gl.scissor(0,EBROW,ETW,ETH-EBROW); fsq();
+  gl.disable(gl.SCISSOR_TEST);
+  // rows that were not simulated keep their state: copy them across so both buffers agree
+  if(rows<EBROW){ gl.bindFramebuffer(gl.READ_FRAMEBUFFER,src.fb); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,dst.fb);
+    for(let a=0;a<2;a++){ gl.readBuffer(gl.COLOR_ATTACHMENT0+a); gl.drawBuffers(a===0?[gl.COLOR_ATTACHMENT0,gl.NONE]:[gl.NONE,gl.COLOR_ATTACHMENT1]);
+      gl.blitFramebuffer(0,rows,ETW,EBROW,0,rows,ETW,EBROW,gl.COLOR_BUFFER_BIT,gl.NEAREST); }
+    gl.bindFramebuffer(gl.FRAMEBUFFER,dst.fb); gl.drawBuffers([gl.COLOR_ATTACHMENT0,gl.COLOR_ATTACHMENT1]); }
+  tex(2,null); tex(3,null); eCur=1-eCur; }
+function prewarmEmbers(){ if(!esim||!S.embers) return; gl.disable(gl.BLEND); let t=simTime-6; for(let i=0;i<180;i++){ stepEmbers(1/30,t,Math.random()<S.pops/30); t+=1/30; } }
 let sim=null, simCur=0;
-const BMIN=[-3.95,0.02,-5.95], BMAX=[3.95,3.56,3.45];
+let BMIN=[-3.95,0.02,-5.95], BMAX=[3.95,3.56,3.45];
 function seedSim(){ const pd=new Float32Array(MAXN*4), vd=new Float32Array(MAXN*4);
   for(let i=0;i<MAXN;i++){ for(let a=0;a<3;a++) pd[i*4+a]=BMIN[a]+Math.random()*(BMAX[a]-BMIN[a]); pd[i*4+3]=Math.random(); vd[i*4+3]=Math.random(); }
   for(const s of sim){ gl.bindTexture(gl.TEXTURE_2D,s.p); gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,TW,TH,gl.RGBA,gl.FLOAT,pd);
@@ -1089,6 +1351,7 @@ function allocTargets(){
   T.gi=[hf32(T.gw,T.gh),hf32(T.gw,T.gh)]; T.giFB=T.gi.map(t=>mkFB([t]));
   T.gf=[hf(T.gw,T.gh,gl.NEAREST),hf(T.gw,T.gh,gl.NEAREST)]; T.gfFB=T.gf.map(t=>mkFB([t]));
   T.haze=hf(T.gw,T.gh); T.hazeFB=mkFB([T.haze]);
+  T.flame=hf(T.gw,T.gh); T.flameFB=mkFB([T.flame]);
   T.plate=hf(W,H,gl.NEAREST); T.plateFB=mkFB([T.plate]);
   T.dofC=hf(W,H,gl.NEAREST); T.fg=hf(W,H,gl.NEAREST); T.dofFB=mkFB([T.dofC,T.fg]);
   T.acc=[hf32(W,H),hf32(W,H)]; T.accFB=T.acc.map(t=>mkFB([t]));
@@ -1107,7 +1370,7 @@ setCam(CAM_DEFAULT.E, CAM_DEFAULT.T);
 function camAt(t){
   let Tg=[...cam.T]; const cp=Math.cos(cam.pitch);
   let E=[Tg[0]+cam.dist*cp*Math.sin(cam.yaw), Tg[1]+cam.dist*Math.sin(cam.pitch), Tg[2]+cam.dist*cp*Math.cos(cam.yaw)];
-  E=[clamp(E[0],-3.85,3.85),clamp(E[1],0.15,3.25),clamp(E[2],-5.85,3.35)];
+  E=[0,1,2].map(k=>clamp(E[k],GEO.cmin[k],GEO.cmax[k]));
   const f=nrm(sub(Tg,E)), r=nrm(cross(f,[0,1,0])); let up=[0,1,0]; const a=S.moveAmt;
   if(S.move==='push'){ const o=0.7*a*Math.sin(2*Math.PI*t/14); E=add(E,scl(f,o)); Tg=add(Tg,scl(f,o)); }
   else if(S.move==='truck'){ const o=1.0*a*Math.sin(2*Math.PI*t/12); E=add(E,scl(r,o)); Tg=add(Tg,scl(r,o)); }
@@ -1138,18 +1401,20 @@ function rayHit(ro,rd){ let best=Infinity, n=null, alb=0.5;
   return {t:best,n,alb}; }
 
 /* =================== light =================== */
-let lightVP, sunL, sunCol, skyCol, lightDirty=true;
+let lightVP, sunL, sunCol, skyCol, fireCol=[0,0,0], coalCol=[0,0,0], lightDirty=true;
 const vplP=new Float32Array(NVM*4), vplN=new Float32Array(NVM*4), vplF=new Float32Array(NVM*4); let ambE=[0,0,0];
 function updateLight(){
   const az=S.sunAz*Math.PI/180, el=S.sunEl*Math.PI/180;
   sunL=[-Math.cos(az)*Math.cos(el), Math.sin(el), -Math.sin(az)*Math.cos(el)];
-  const C=[0,1.6,-1.5]; lightVP=mul(ortho(-8.5,8.5,-8.5,8.5,1,50), lookAt(add(C,scl(sunL,25)),C,[0,1,0]));
+  const C=GEO.lightC; lightVP=mul(ortho(-8.5,8.5,-8.5,8.5,1,50), lookAt(add(C,scl(sunL,25)),C,[0,1,0]));
   sunCol=kelvin(S.sunK);
   const skyI=S.sunI*0.45; skyCol=[0.66*skyI,0.76*skyI,0.95*skyI];
+  fireCol=scl(kelvin(1850),3.2*S.fireI); coalCol=scl(kelvin(1250),5*S.fireI);
   lightDirty=true;
 }
 // a coarse bounce estimate for lighting the motes themselves (the room uses the path tracer)
 function bakeMoteFill(){
+  if(S.scene==='fire'){ vplP.fill(0); vplN.fill(0); vplF.fill(0); ambE=[0.006*S.fill,0.008*S.fill,0.013*S.fill]; return; }
   const travel=scl(sunL,-1), E=S.sunI, ck=S.cookie===1?0.45:S.cookie===2?0.5:1, cosW=Math.max(-sunL[0],0), cells=new Map(); let tot=[0,0,0];
   const NZ=20, NY=26;
   for(const [z0,z1] of WINS){ const dA=((z1-z0)/NZ)*((WY1-WY0)/NY);
@@ -1169,12 +1434,14 @@ function bakeMoteFill(){
 
 /* =================== state =================== */
 const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-let playing=!reduce, simTime=0, frameNo=0, last=performance.now(), started=false;
+let playing=!reduce, simTime=0, frameNo=0, last=performance.now(), started=false, switching=false, placing=false;
 let focusCur=S.focus, focusAnim=null, puff=null;
 let resetGI=true, resetDOF=true, prevVP=null, posIdx=0, giIdx=0, accIdx=0, giN=0, accN=0, camMoving=false, lastCamKey='';
 function rackFocus(d){ d=clamp(d,0.3,20); focusAnim={from:focusCur,to:d,t0:performance.now(),dur:550}; S.focus=d; syncKnob('focus'); drawRing(); }
 function puffAt(p){ puff={p,t0:simTime}; }
-function shaftPoint(){ return add([-4.0,2.2,-1.7], scl(sunL,-2.2)); }
+function shaftPoint(){ return S.scene==='fire' ? [S.emitX,S.emitY+0.9,S.emitZ] : add([-4.0,2.2,-1.7], scl(sunL,-2.2)); }
+function fnoise(t){ const i=Math.floor(t), f=t-i, h=n=>{ const x=Math.sin(n*127.1)*43758.5453; return x-Math.floor(x); }; const u=f*f*(3-2*f); return h(i)*(1-u)+h(i+1)*u; }
+function fireFlicker(t){ return Math.max(0.35, 1+S.flick*(0.12*Math.sin(t*7.3)+0.08*Math.sin(t*13.7+1.3)+0.06*Math.sin(t*23.1+0.4)+0.3*(fnoise(t*3.1)-0.5)+0.18*(fnoise(t*9.7+5.)-0.5))); }
 
 /* =================== render =================== */
 function cocPxJS(d){ const s2=Math.max(d,0.02)*1000, s1=focusCur*1000, f=S.focal; const c=(f/S.fstop)*f*(s2-s1)/(s2*Math.max(s1-f,1)); return c/film()*W*(S.dof?1:0); }
@@ -1187,6 +1454,7 @@ function renderShadow(){
 }
 function render(now){
   if(failed) return;
+  if(switching){ last=now; requestAnimationFrame(render); return; }
   const dt=Math.min((now-last)/1000,0.05); last=now;
   if(playing) simTime+=dt*S.speed;
   frameNo++;
@@ -1216,19 +1484,25 @@ function render(now){
     gl.bindFramebuffer(gl.FRAMEBUFFER,dst.fb); gl.viewport(0,0,TW,rows);
     tex(2,src.p); tex(3,src.v);
     const dir=S.driftDir*Math.PI/180;
-    use(P.sim,{...shadowU,...typeU,uPos:2,uVel:3,uDt:dt*S.speed,uT:simTime,uWind:[Math.cos(dir)*S.drift*0.01,0,Math.sin(dir)*S.drift*0.01],
+    use(P.sim,{...shadowU,...typeU,uPos:2,uVel:3,uDt:dt*S.speed,uT:simTime,uWind:[Math.cos(dir)*S.drift*0.01,S.lift*0.01,Math.sin(dir)*S.drift*0.01],
       uTurb:S.turb*0.01,uScale:S.eddy,uMicro:S.micro*0.01,uThermal:S.thermal*0.01,uSettle:S.settle*0.01,
       uBMin:BMIN,uBMax:BMAX,uPuff:puff?[...puff.p,0.75]:[0,0,0,1],uPuffAmp:puffAmp,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias});
     fsq(); simCur=1-simCur; tex(2,null); tex(3,null);
   }
   const st=sim[simCur];
+  const fireOn=S.fireI>0?1:0, fireScene=S.scene==='fire', fl=fireOn?fireFlicker(simTime):1;
+  const fireP=[S.emitX,S.emitY+0.22,S.emitZ];
+  if(S.embers && playing && dt>0){ gl.disable(gl.BLEND); stepEmbers(dt*S.speed, simTime, Math.random()<S.pops*dt*S.speed); }
+  let skyLo,skyHi,skyGnd,giGround;
+  if(fireScene){ skyLo=scl([0.011,0.014,0.024],S.fill); skyHi=scl([0.004,0.006,0.014],S.fill); skyGnd=[0.004,0.004,0.005]; giGround=[0.002,0.002,0.003]; }
+  else { const si=S.sunI*0.45*S.fill; skyLo=[0.94*si,0.94*si,0.94*si]; skyHi=[0.8*si,0.84*si,0.9*si]; skyGnd=[0.62*si,0.62*si,0.62*si]; giGround=null; }
   const posC=T.pos[posIdx], posP=T.pos[1-posIdx];
 
   // 1. raster: direct light + G-buffer, with a sub-pixel jitter that the accumulation turns into anti-aliasing
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.rFB[posIdx]); gl.viewport(0,0,W,H);
   gl.clearBufferfv(gl.COLOR,0,[0,0,0,0]); gl.clearBufferfv(gl.COLOR,1,[0,0,0,1e4]); gl.clearBufferfv(gl.COLOR,2,[0,0,0,0]); gl.depthMask(true); gl.clearBufferfv(gl.DEPTH,0,[1]);
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS);
-  use(P.raster,{...shadowU,uVP:cm.vpJ,uView:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uSunI:S.sunI,uSkyI:S.sunI*0.45,uFill:S.fill});
+  use(P.raster,{...shadowU,uVP:cm.vpJ,uView:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uSunI:S.sunI,uSkyI:S.sunI*0.45,uFill:S.fill,uSkyLo:skyLo,uSkyHi:skyHi,uSkyGnd:skyGnd,uCoal:coalCol});
   drawScene(true); gl.disable(gl.DEPTH_TEST);
 
   // 2. path-traced bounce light (half res), reprojected and accumulated
@@ -1238,7 +1512,8 @@ function render(now){
   tex(1,posC); tex(2,T.nrm); tex(3,T.gi[giIdx]); tex(4,posP);
   const giMax=foliage?24:(camMoving?48:1024);
   use(P.gi,{...shadowU,uPosTex:1,uNrmTex:2,uHist:3,uPrevPos:4,uVox:6,uVoxMin:VMIN,uVoxS:VS,uVoxDim:VDIM,uL:sunL,uSunCol:sunCol,uSunI:S.sunI,
-    uSkyRad:[S.sunI*0.45*S.fill,S.sunI*0.45*S.fill,S.sunI*0.45*S.fill],uGround:[groundE*sunCol[0],groundE*sunCol[1],groundE*sunCol[2]],uTail:scl(ambE,0.5),
+    uSkyLo:skyLo,uSkyHi:skyHi,uGround:giGround||[groundE*sunCol[0],groundE*sunCol[1],groundE*sunCol[2]],uTail:scl(ambE,0.5),
+    uFireOn:fireOn,uFireP:fireP,uFireCol:fireCol,uFireR:Math.max(S.eRad*0.6,0.08),
     uRes:[T.gw,T.gh],uFull:[W,H],uSeed:frameNo,uPrevVP:prevVP||cm.vp,uMaxN:giMax,uReset:(resetGI||!prevVP)?1:0,uStatic:camMoving?0:1});
   fsq(); giIdx=1-giIdx; giN=(resetGI||!prevVP)?1:Math.min(giN+1,giMax);
   tex(3,null); tex(4,null);
@@ -1249,8 +1524,10 @@ function render(now){
   // 3. atmosphere
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.hazeFB); gl.viewport(0,0,T.gw,T.gh);
   tex(1,posC);
-  use(P.haze,{...shadowU,uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uL:sunL,uSunCol:sunCol,uAmbE:ambE,uSunI:S.sunI,uHaze:S.haze,uHazeVar:S.hazeVar,uG:S.g,uFill:S.gi,uFrame:frameNo%997,uRes:[T.gw,T.gh],uFull:[W,H]});
+  use(P.haze,{...shadowU,uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uL:sunL,uSunCol:sunCol,uAmbE:ambE,uSunI:S.sunI,uHaze:S.haze,uHazeVar:S.hazeVar,uG:S.g,uFill:S.gi,uFrame:frameNo%997,uRes:[T.gw,T.gh],uFull:[W,H],uRoom:fireScene?0:1,uFireOn:fireOn,uFireP:fireP,uFireCol:fireCol});
   fsq();
+  if(S.flames){ gl.bindFramebuffer(gl.FRAMEBUFFER,T.flameFB);
+    use(P.flame,{uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uFireP:[S.emitX,S.emitY,S.emitZ],uFlameH:S.flameH*(0.9+0.1*fl),uFlameR:Math.max(S.eRad*0.95,0.05),uTime:simTime,uGain:5e6*Math.max(S.fireI,0.25)*(0.7+0.3*fl),uRes:[T.gw,T.gh],uFull:[W,H]}); fsq(); }
 
   // 4. plate
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.plateFB); gl.viewport(0,0,W,H);
@@ -1280,20 +1557,26 @@ function render(now){
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
   tex(2,st.p); tex(3,st.v); tex(4,T.dofC); tex(5,T.fg);
   use(P.motes,{...shadowU,...cocD,...typeU,uPos:2,uVel:3,uPosTex:1,uFgCol:4,uFgDepth:5,uTexW:TW,uId:viewMode===6?1:0,
-    uVPo:co.vp,uVPc:cc.vp,uVPm:cm.vp,uViewM:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uTint:TINTS[S.tint],uAmbE:ambE,uBMin:BMIN,uBMax:BMAX,
+    uVPo:co.vp,uVPc:cc.vp,uVPm:cm.vp,uViewM:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uTint:tintRGB(),uAmbE:ambE,uBMin:BMIN,uBMax:BMAX,
     uVplP:vplP,uVplN:vplN,uVplF:vplF,
     uRes:[DW,DH],uShutter:shutterT,uExpT:expT,uMB:S.mb?1:0,uSunI:S.sunI,uGI:S.gi,uBright:S.bright,uG:S.g,uGlint:S.glint,uTumble:S.tumble,
-    uFlakeScale:S.flakeScale,uFiberScale:S.fiberScale,uAmbVis:S.ambVis,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias,uMaxR:110*dScale+2,uCat:S.cat,
+    uFlakeScale:S.flakeScale,uFiberScale:S.fiberScale,uFluffScale:S.fluffScale,uFluffBright:S.fluffBright,uFireOn:fireOn,uFireP:fireP,uFireCol:scl(fireCol,fl),uAmbVis:S.ambVis,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias,uMaxR:110*dScale+2,uCat:S.cat,
     uBladeRot:S.bladeRot*Math.PI/180,uBlades:S.blades,uRound:S.round,uRing:S.ring,uHold:S.hold?1:0,uHoldScale:W/DW,uFocalPx:S.focal/film()*DW,uFocalRef:1100});
   gl.bindVertexArray(emptyVAO); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,count);
+  if(S.embers){ const ec=eCount(); tex(2,esim[eCur].p); tex(3,esim[eCur].v);
+    const eu={...cocD,uEPos:2,uEVel:3,uPosTex:1,uFgCol:4,uFgDepth:5,uTexW:ETW,uId:viewMode===6?1:0,uVPo:co.vp,uVPc:cc.vp,uVPm:cm.vp,uViewM:cm.view,uCam:cm.E,uRes:[DW,DH],
+      uShutter:shutterT,uExpT:expT,uMB:S.mb?1:0,uMaxR:110*dScale+2,uCat:S.cat,uBladeRot:S.bladeRot*Math.PI/180,uFocalPx:S.focal/film()*DW,uFocalRef:1100,
+      uLifeScale:S.eLife,uTemp:S.eTemp,uESize:S.eSize,uEGain:S.eGain,uTwinkle:S.eTwinkle,uBlades:S.blades,uRound:S.round,uRing:S.ring,uHold:S.hold?1:0,uHoldScale:W/DW};
+    use(P.embers,{...eu,uBase:0}); gl.bindVertexArray(emptyVAO); if(ec>0) gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,ec);
+    use(P.embers,{...eu,uBase:ENORM}); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,ETW*ETH-ENORM); }
   gl.disable(gl.BLEND);
   for(let i=2;i<6;i++) tex(i,null);
 
   // 8. composite, glare, display
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.hdrFB);
-  tex(2,T.acc[accIdx]); tex(3,T.dust); tex(4,T.haze);
-  use(P.comp,{uDof:2,uDust:3,uHazeTex:4,uPosTex:1,uMode:viewMode,uRes:[DW,DH],uPlateRes:[W,H]}); fsq();
-  for(let i=1;i<5;i++) tex(i,null);
+  tex(2,T.acc[accIdx]); tex(3,T.dust); tex(4,T.haze); tex(5,T.flame);
+  use(P.comp,{uDof:2,uDust:3,uHazeTex:4,uPosTex:1,uFlame:5,uMode:viewMode,uRes:[DW,DH],uPlateRes:[W,H],uFlick:fl,uFireScene:fireScene?1:0,uFlameOn:S.flames?1:0}); fsq();
+  for(let i=1;i<6;i++) tex(i,null);
   for(let i=0;i<BL;i++){ const [w,h]=T.bs[i]; gl.bindFramebuffer(gl.FRAMEBUFFER,T.bdFB[i]); gl.viewport(0,0,w,h);
     tex(1,i===0?T.hdr:T.bd[i-1]); use(P.down,{uTex:1,uSrc:i===0?[DW,DH]:T.bs[i-1],uRes:[w,h],uClampV:i===0?5:1e4}); fsq(); tex(1,null); }
   for(let i=BL-2;i>=0;i--){ const [w,h]=T.bs[i]; gl.bindFramebuffer(gl.FRAMEBUFFER,T.buFB[i]); gl.viewport(0,0,w,h);
@@ -1307,7 +1590,7 @@ function render(now){
 
   prevVP=cm.vp; posIdx=1-posIdx;
   if(loupeOn && loupePos) drawLoupe();
-  lastCam=cm;
+  lastCam=cm; drawGizmo();
   counter.n++; if(now-counter.t>500){ counter.fps=counter.n*1000/(now-counter.t); counter.n=0; counter.t=now; hud(count); watchSpeed(); }
   if(focusAnim) drawRing();
   requestAnimationFrame(render);
@@ -1317,6 +1600,25 @@ function watchSpeed(){
   counter.slow = counter.fps<14 ? counter.slow+1 : 0;
   if(counter.slow>=5){ autoProxied=true; S.proxy=true; syncKnob('proxy'); layout(); $('#readout').textContent='Running slowly, so the viewer switched to proxy (½ res). Turn it off in Output.'; }
 }
+
+/* =================== emitter gizmo =================== */
+const gz=$('#gizmo'), gctx=gz.getContext('2d'); let gzOn=false;
+function drawGizmo(){
+  const want=S.embers && S.showEmitter && (curTab==='embers'||placing) && lastCam;
+  const r=gz.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  if(gz.width!==Math.round(r.width*dpr)){ gz.width=Math.round(r.width*dpr); gz.height=Math.round(r.height*dpr); }
+  if(!want){ if(gzOn){ gctx.clearRect(0,0,gz.width,gz.height); gzOn=false; } return; }
+  gzOn=true; gctx.setTransform(dpr,0,0,dpr,0,0); gctx.clearRect(0,0,r.width,r.height);
+  const proj=p=>{ const q=xf(lastCam.vp,[p[0],p[1],p[2],1]); if(q[3]<0.05) return null; return [(q[0]/q[3]*0.5+0.5)*r.width,(0.5-q[1]/q[3]*0.5)*r.height]; };
+  const ring=(y,dash)=>{ gctx.setLineDash(dash); gctx.beginPath(); let st=false;
+    for(let i=0;i<=64;i++){ const a=i/64*2*Math.PI; const q=proj([S.emitX+Math.cos(a)*S.eRad,y,S.emitZ+Math.sin(a)*S.eRad]); if(!q){ st=false; continue; } if(!st){ gctx.moveTo(q[0],q[1]); st=true; } else gctx.lineTo(q[0],q[1]); }
+    gctx.stroke(); };
+  gctx.strokeStyle='rgba(228,186,107,0.9)'; gctx.lineWidth=1.25; ring(S.emitY,[]);
+  if(S.eHeight>0.005){ gctx.strokeStyle='rgba(228,186,107,0.5)'; ring(S.emitY+S.eHeight,[4,4]); }
+  const c=proj([S.emitX,S.emitY,S.emitZ]), up=proj([S.emitX,S.emitY+0.35,S.emitZ]);
+  gctx.setLineDash([]); if(c&&up){ gctx.strokeStyle='rgba(228,186,107,0.8)'; gctx.beginPath(); gctx.moveTo(c[0],c[1]); gctx.lineTo(up[0],up[1]); gctx.stroke(); gctx.fillStyle='#e4ba6b'; gctx.beginPath(); gctx.arc(c[0],c[1],2.5,0,Math.PI*2); gctx.fill(); }
+}
+function setPlacing(on){ placing=on; const b=$('#placeBtn'); if(b) b.setAttribute('aria-pressed',on); if(on) $('#readout').textContent='Click a surface in the viewer to put the ember emitter there'; }
 
 /* =================== loupe =================== */
 const loupe=$('#loupe'), lctx=loupe.getContext('2d');
@@ -1348,6 +1650,7 @@ canvas.addEventListener('pointermove',e=>{
 canvas.addEventListener('pointerleave',()=>{ if(!drag) loupePos=null; });
 canvas.addEventListener('pointerup',e=>{ if(!drag) return; const wasDrag=drag.moved; drag=null; if(wasDrag||!lastCam) return;
   const {ro,rd,sx,sy}=rayFromEvent(e); const t=rayHit(ro,rd).t;
+  if(placing){ if(isFinite(t)){ const p=add(ro,scl(rd,t)); S.emitX=+p[0].toFixed(3); S.emitY=+p[1].toFixed(3); S.emitZ=+p[2].toFixed(3); onParam('emitX'); prewarmEmbers(); showReticle(sx,sy,true); $('#readout').textContent='Emitter placed'; } setPlacing(false); return; }
   if(e.shiftKey||e.altKey){ const tt=isFinite(t)?Math.max(t-0.35,0.5):3; puffAt(add(ro,scl(rd,Math.min(tt,6)))); showReticle(sx,sy,true); }
   else { rackFocus(isFinite(t)?t*dot(rd,lastCam.f):20); showReticle(sx,sy,false); } });
 canvas.addEventListener('pointercancel',()=>{drag=null;});
@@ -1389,6 +1692,7 @@ const TABS=[
    {k:'sizeBias',label:'Fine-grit bias',min:0.5,max:4,step:0.05,dec:2},
    {k:'flakeScale',label:'Flake size',min:0.3,max:3,step:0.01,unit:'×',dec:2,log:true},
    {k:'fiberScale',label:'Fibre length',min:0.3,max:3,step:0.01,unit:'×',dec:2,log:true},
+   {k:'fluffScale',label:'Fluff size',min:0.15,max:2,step:0.01,unit:'×',dec:2,log:true},
   ]],
   ['Scattering',[
    {k:'bright',label:'Scatter gain',min:0,max:4,step:0.01,unit:'×',dec:2},
@@ -1396,7 +1700,9 @@ const TABS=[
    {k:'ambVis',label:'Shadow-side fill',min:0,max:1,step:0.01,dec:2},
    {k:'glint',label:'Flake glints',min:0,max:1,step:0.01,dec:2},
    {k:'tumble',label:'Tumble rate',min:0,max:3,step:0.01,unit:'×',dec:2},
-   {t:'seg',k:'tint',label:'Mote colour',opts:[['neutral','Neutral'],['warm','Warm'],['pollen','Pollen'],['ash','Ash']]},
+   {k:'fluffBright',label:'Fluff brightness',min:0,max:2,step:0.01,unit:'×',dec:2},
+   {t:'seg',k:'tint',label:'Mote colour',opts:[['neutral','Neutral'],['warm','Warm'],['pollen','Pollen'],['ash','Ash'],['custom','Custom']]},
+   {t:'color',k:'tintCustom',label:'Custom colour'},
   ]],
   ['',[{t:'note',text:'At real size, almost every mote is smaller than a pixel, so in focus it reads as a point of light and out of focus it takes the shape of the lens aperture. Only large lint and fluff that is close and in focus shows its own shape; press L for a pixel loupe.'},{t:'btn',label:'Reseed motes',act:()=>seedSim()}]]
  ]},
@@ -1405,6 +1711,7 @@ const TABS=[
    {k:'speed',label:'Playback speed',min:0,max:3,step:0.01,unit:'×',dec:2},
    {k:'drift',label:'Drift',min:0,max:20,step:0.1,unit:'cm/s',dec:1},
    {k:'driftDir',label:'Drift heading',min:0,max:360,step:1,unit:'°',dec:0},
+   {k:'lift',label:'Vertical drift',min:-20,max:20,step:0.1,unit:'cm/s',dec:1},
    {k:'turb',label:'Eddies',min:0,max:15,step:0.1,unit:'cm/s',dec:1},
    {k:'eddy',label:'Eddy size',min:0.2,max:4,step:0.05,unit:'m',dec:2,log:true},
    {k:'micro',label:'Micro-turbulence',min:0,max:5,step:0.05,unit:'cm/s',dec:2},
@@ -1417,6 +1724,39 @@ const TABS=[
    {k:'puffAmt',label:'Puff strength',min:0.2,max:3,step:0.05,unit:'m/s',dec:2},
    {t:'btn',label:'Puff through the shaft',act:()=>puffAt(shaftPoint())},
    {t:'note',text:'Shift-click anywhere in the viewer to puff air at that point. Grit settles; lint and fluff hang in the air.'}
+  ]]
+ ]},
+ {id:'embers',label:'Embers',groups:[
+  ['Emitter',[
+   {t:'toggle',k:'embers',label:'Embers'},
+   {t:'btn',label:'Place emitter in viewer',id:'placeBtn',act:()=>setPlacing(!placing)},
+   {t:'toggle',k:'showEmitter',label:'Show emitter'},
+   {k:'eRad',label:'Emitter radius',min:0.02,max:2,step:0.01,unit:'m',dec:2,log:true},
+   {k:'eHeight',label:'Emitter height',min:0,max:1.5,step:0.01,unit:'m',dec:2},
+   {k:'eRate',label:'Ember rate',min:0,max:1500,step:1,unit:'/s',dec:0},
+  ]],
+  ['Embers',[
+   {k:'eLife',label:'Lifetime',min:0.2,max:4,step:0.01,unit:'×',dec:2,log:true},
+   {k:'eTemp',label:'Start temperature',min:900,max:1700,step:10,unit:'K',dec:0},
+   {k:'eSize',label:'Ember size',min:0.1,max:3,step:0.01,unit:'mm',dec:2,log:true},
+   {k:'eGain',label:'Brightness',min:0,max:4,step:0.01,unit:'×',dec:2},
+   {k:'eTwinkle',label:'Twinkle',min:0,max:1,step:0.01,dec:2},
+  ]],
+  ['Motion',[
+   {k:'eRise',label:'Plume speed',min:0,max:6,step:0.05,unit:'m/s',dec:2},
+   {k:'eSpread',label:'Launch spread',min:0,max:2,step:0.01,unit:'m/s',dec:2},
+   {k:'eTurb',label:'Turbulence',min:0,max:3,step:0.01,dec:2},
+   {k:'eWind',label:'Wind',min:0,max:6,step:0.05,unit:'m/s',dec:2},
+   {k:'pops',label:'Pops',min:0,max:4,step:0.01,unit:'/s',dec:2},
+   {k:'popSize',label:'Pop size',min:0,max:1,step:0.01,dec:2},
+   {t:'note',text:'Wind blows along the drift heading set in the Motion tab. Pops are the crackle of burning wood: short bursts of fast sparks.'}
+  ]],
+  ['Fire',[
+   {t:'toggle',k:'flames',label:'Flames'},
+   {k:'flameH',label:'Flame height',min:0.1,max:1.6,step:0.01,unit:'m',dec:2},
+   {k:'fireI',label:'Fire light',min:0,max:3,step:0.01,unit:'×',dec:2},
+   {k:'flick',label:'Flicker',min:0,max:1.5,step:0.01,dec:2},
+   {t:'note',text:'Embers glow by their own heat, so their colour comes from temperature as they cool. The fire light is path traced from the emitter with soft shadows.'}
   ]]
  ]},
  {id:'light',label:'Light',groups:[
@@ -1488,7 +1828,9 @@ function sliderPos(it,v){ return it.log ? Math.log(v/it.min)/Math.log(it.max/it.
 function sliderVal(it,p){ let v=it.log ? it.min*Math.pow(it.max/it.min,p) : it.min+p*(it.max-it.min); return Math.round(v/it.step)*it.step; }
 const fmtVal=(it,v)=>it.fmt?it.fmt(v):Number(v).toFixed(it.dec??2);
 function onParam(k){
-  if(['sunAz','sunEl','sunI','sunK','cookie'].includes(k)) updateLight();
+  if(['sunAz','sunEl','sunI','sunK','cookie','fireI'].includes(k)) updateLight();
+  if(k==='embers' && S.embers) prewarmEmbers();
+  if(k==='embers'||k==='showEmitter') drawGizmo();
   if(LIGHT_KEYS.has(k)) resetGI=true;
   if(PLATE_KEYS.has(k)) resetDOF=true;
   if(k==='format'||k==='proxy') layout();
@@ -1510,7 +1852,10 @@ function buildKnobs(){
       if(it.t==='legend'){ const d=document.createElement('div'); d.className='legend'; d.innerHTML='<span><i style="background:#ffdb99"></i>grit</span><span><i style="background:#59ccff"></i>flakes</span><span><i style="background:#ff5980"></i>lint</span><span><i style="background:#8cff73"></i>fluff</span><span>· ID channel colours</span>'; g.appendChild(d); continue; }
       if(it.t==='ring'){ const d=document.createElement('div'); d.className='ring'; d.innerHTML='<canvas id="ringc" aria-label="Focus ring with depth of field scale"></canvas><div class="rd"><span id="ringFocus"></span><span id="ringDof"></span></div>'; g.appendChild(d); continue; }
       const row=document.createElement('div'); row.className='knob';
-      if(it.t==='btn'){ const b=document.createElement('button'); b.className='kbtn'; b.textContent=it.label; b.onclick=()=>{ if(started) it.act(); }; row.appendChild(b); g.appendChild(row); continue; }
+      if(it.t==='btn'){ const b=document.createElement('button'); b.className='kbtn'; b.textContent=it.label; if(it.id){ b.id=it.id; b.setAttribute('aria-pressed',it.id==='placeBtn'&&placing); } b.onclick=()=>{ if(started) it.act(); }; row.appendChild(b); g.appendChild(row); continue; }
+      if(it.t==='color'){ row.classList.add('wide'); const l=document.createElement('label'); l.htmlFor='k-'+it.k; l.textContent=it.label; row.appendChild(l);
+        const c=document.createElement('input'); c.type='color'; c.id='k-'+it.k; c.className='kcolor'; c.value=S[it.k];
+        c.oninput=()=>{ S[it.k]=c.value; S.tint='custom'; syncKnob('tint'); markPreset(null); }; row.appendChild(c); knobEls[it.k]={it,row,col:c}; g.appendChild(row); continue; }
       const id='k-'+it.k;
       if(it.t==='seg'){ row.classList.add('wide'); const l=document.createElement('span'); l.className='lbl'; l.textContent=it.label; l.id=id+'-l'; row.appendChild(l);
         const s=document.createElement('div'); s.className='seg'; s.setAttribute('role','group'); s.setAttribute('aria-labelledby',id+'-l');
@@ -1583,12 +1928,28 @@ window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,selec
   else if((e.key==='p'||e.key==='P')&&started) puffAt(shaftPoint());
   else if(e.key==='l'||e.key==='L') setLoupe(!loupeOn); });
 
-const presetEl=$('#presets');
+const presetEl=$('#presets'), sceneSeg=$('#sceneseg');
 function markPreset(id){ [...presetEl.querySelectorAll('.chip')].forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id)); }
-for(const pr of PRESETS){ const b=document.createElement('button'); b.className='chip'; b.dataset.id=pr.id; b.textContent=pr.label;
-  b.onclick=()=>{ const keepProxy=S.proxy; Object.assign(S,DEF,pr.p); S.proxy=keepProxy; setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus; updateLight(); resetGI=true; resetDOF=true; layout(); buildKnobs(); markPreset(pr.id); if(pr.puff&&started) setTimeout(()=>puffAt(shaftPoint()),300); };
-  presetEl.appendChild(b); }
-
+function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; Object.assign(S,DEF,SCENES[S.scene].def,pr.p,keep); setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
+  updateLight(); resetGI=true; resetDOF=true; layout(); buildKnobs(); markPreset(pr.id); if(started){ prewarmEmbers(); if(pr.puff) setTimeout(()=>puffAt(shaftPoint()),300); } }
+function buildPresets(){ presetEl.querySelectorAll('.chip').forEach(c=>c.remove());
+  for(const pr of PRESETS[S.scene]){ const b=document.createElement('button'); b.className='chip'; b.dataset.id=pr.id; b.textContent=pr.label; b.onclick=()=>applyLook(pr); presetEl.appendChild(b); } }
+function buildSceneSeg(){ sceneSeg.innerHTML=''; for(const k in SCENES){ const b=document.createElement('button'); b.textContent=SCENES[k].label; b.setAttribute('aria-pressed',S.scene===k); b.onclick=()=>switchScene(k); sceneSeg.appendChild(b); } }
+async function switchScene(name){
+  if(!started||switching||name===S.scene) return; switching=true; setPlacing(false);
+  const ld=$('#loader'); ld.classList.remove('done'); progress(0.05,'Building the '+SCENES[name].label.toLowerCase()+' scene'); await nextFrame();
+  const keepProxy=S.proxy; Object.assign(S,DEF,SCENES[name].def); S.proxy=keepProxy;
+  buildScene(); progress(0.3,'Uploading geometry'); await nextFrame();
+  rebuildMeshes(); progress(0.45,'Voxelising for the path tracer'); await nextFrame();
+  voxelize(); progress(0.8,'Seeding particles'); await nextFrame();
+  seedSim(); seedEmbers();
+  const first=PRESETS[name][0]; setCam(first.cam.E,first.cam.T); focusCur=S.focus;
+  updateLight(); resetGI=true; resetDOF=true; prevVP=null;
+  buildSceneSeg(); buildPresets(); buildKnobs(); markPreset(first.id); layout();
+  progress(0.92,'Warming up the embers'); await nextFrame(); prewarmEmbers();
+  progress(1,'Ready'); ld.classList.add('done'); switching=false;
+}
+buildSceneSeg(); buildPresets();
 buildTabs(); buildKnobs(); markPreset('loft'); layout();
 
 /* =================== boot with a progress bar =================== */
@@ -1607,6 +1968,8 @@ buildTabs(); buildKnobs(); markPreset('loft'); layout();
     progress(0.82,`Seeding ${MAXN.toLocaleString()} motes`); await nextFrame();
     sim=[0,1].map(()=>{ const p=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST), v=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST); return {p,v,fb:mkFB([p,v])}; });
     seedSim();
+    esim=[0,1].map(()=>{ const p=mkTex(ETW,ETH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST), v=mkTex(ETW,ETH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST); return {p,v,fb:mkFB([p,v])}; });
+    seedEmbers();
     progress(0.88,'Rendering the sun shadow'); await nextFrame();
     updateLight();
     progress(0.94,'Starting the path tracer'); await nextFrame();
@@ -1615,7 +1978,7 @@ buildTabs(); buildKnobs(); markPreset('loft'); layout();
     progress(1,'Ready'); $('#loader').classList.add('done');
   }catch(err){ if(!failed){ console.error(err); fail('Loading stopped: '+(err&&err.message||err)); } }
 })();
-window.__mf={S,setView,puffAt,shaftPoint,setCam};
+window.__mf={S,setView,puffAt,shaftPoint,setCam,switchScene,applyLook,PRESETS};
 })();
 
 </script>

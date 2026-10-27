@@ -13,6 +13,8 @@ The node would read the shot camera, a P / depth pass and the key light's depth 
 - Depth holdouts, including soft holdouts behind out-of-focus foreground
 - Curl-noise air, drift, thermal lift in the shaft, size-dependent settling, puffs of air
 
+Campfire scene: an ember emitter you can place and size, with embers that ride a buoyant plume, cool along real black-body colour, pop in bursts, and get the same motion blur, bokeh and holdouts as the dust. The fire light is path traced with soft shadows.
+
 Controls: click to focus, shift-click to puff, drag to orbit, scroll to dolly, `L` for a pixel loupe, `1`–`7` for viewer channels.
 
 Single self-contained `index.html`; needs a browser with WebGL 2.
