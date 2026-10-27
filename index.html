@@ -200,7 +200,8 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
         <div class="seg" id="viewseg" role="group" aria-label="Viewer channel"></div>
         <div class="vbar-r">
           <button class="tbtn tog" id="btnLoupe" aria-pressed="false" title="Magnify the pixels under the cursor">Loupe <kbd>L</kbd></button>
-          <button class="tbtn" id="btnPuff" title="Push a puff of air through the light shaft">Puff air <kbd>P</kbd></button>
+          <button class="tbtn" id="btnGust" title="Fire the placed gust of wind">Gust <kbd>G</kbd></button>
+          <button class="tbtn" id="btnRun" title="Run the placed moving object along its path">Run object <kbd>R</kbd></button>
           <button class="tbtn" id="btnPlay" aria-pressed="true">Pause <kbd>Space</kbd></button>
         </div>
       </div>
@@ -226,12 +227,12 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
       </div>
       <div class="status">
         <span id="readout">Hover the viewer to read P and depth under the cursor</span>
-        <span class="hints">Click focus · Shift-click puff · Drag orbit · Scroll dolly · L loupe</span>
+        <span class="hints">Click focus · Drag orbit · Scroll dolly · G gust · R run object · L loupe</span>
       </div>
     </section>
 
     <aside class="props" aria-label="MoteField properties">
-      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.7</span></div>
+      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.8</span></div>
       <div class="tabs" role="tablist" id="tabs"></div>
       <div class="knobs" id="knobs" role="tabpanel"></div>
     </aside>
@@ -310,7 +311,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div class="row"><dt>Motion blur</dt><dd><h3>Shutter-accurate, from the mote and the camera</h3>Each mote is projected at shutter open and shutter close using its velocity and the camera's matrices at both times, then swept between them. Glints are integrated across the shutter too, so they sparkle without strobing.</dd></div>
     <div class="row"><dt>Holdouts</dt><dd><h3>Per-pixel depth from the P pass</h3>Motes behind geometry are held out using scene depth. Where the foreground is out of focus, a defocused coverage layer is used instead, so held-out edges match a ZDefocus'd plate rather than cutting a sharp line through soft geometry.</dd></div>
     <div class="row"><dt>Embers</dt><dd><h3>A second emitter for fire</h3>The same node can emit embers from an area you place in the shot and size to the fire. Embers ride a buoyant plume that widens and slows with height, swirl in turbulence and wind, and cool as they rise, so their colour follows real black-body temperature from yellow-orange to dull red before they wink out. Pops of the wood throw short bursts of fast sparks. They get the same lens and shutter treatment as dust: streaks from motion blur, bokeh when out of focus, and depth holdouts. Try the Campfire scene.</dd></div>
-    <div class="row"><dt>Movement</dt><dd><h3>Air, not noise</h3>Curl-noise eddies at a chosen scale, slow drift, micro-turbulence, thermal lift inside the warm shaft and size-dependent settling: grit sinks, fluff and lint hang. A puff injects a real velocity field, for a door slam or a character walking through.</dd></div>
+    <div class="row"><dt>Movement</dt><dd><h3>Air, not noise</h3>Curl-noise eddies at a chosen scale, slow drift, micro-turbulence, thermal lift inside the warm shaft and size-dependent settling: grit sinks, fluff and lint hang. Artists can rough in what disturbs the air: a gust from a door or window that travels, slows and curls, or a stand-in object on a path, sized like the character, that pushes dust aside and leaves a lingering wake.</dd></div>
   </dl>
 
   <div class="build">
@@ -318,7 +319,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div><span class="ph">PHASE 2</span><h4>Deterministic sim cache</h4><p>Seeded per shot and frame-addressable, so scrubbing, the farm and the artist's viewer all see the same motes. Motion vectors out for re-blur.</p></div>
     <div><span class="ph">PHASE 3</span><h4>NDK node + presets</h4><p>C++ node with show presets (dusty attic, cathedral, exterior pollen), multi-light support and deep output for deep comps.</p></div>
   </div>
-  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, shift-click to puff air through the shaft, press L for a pixel loupe, and try the Looks along the top. Switch the Scene to Campfire for the ember tool. The ID channel colours each mote by type.</p>
+  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, press G for a gust and R to run the moving object, press L for a pixel loupe, and try the Looks along the top. Switch the Scene to Campfire for the ember tool. The ID channel colours each mote by type.</p>
 </section>
 
 <script>
@@ -345,18 +346,22 @@ const DEF = {
   bright:1.0, g:0.65, ambVis:0.35, glint:0.4, tumble:1, tint:'neutral', tintCustom:'#d9b88f',
   speed:1, drift:1.2, driftDir:200, lift:0, turb:3.0, eddy:1.4, micro:0.8, thermal:1.5, settle:0.5, puffAmt:1.2,
   sunAz:30, sunEl:30, sunI:6, sunK:5000, cookie:0, atmos:true, haze:0.3, hazeVar:0.5, gi:1, fill:1,
-  focal:32, film:'s35', format:'2.39', move:'static', moveAmt:0.6,
+  focal:32, film:'s35', format:'2.39', move:'static', moveAmt:0,
   fstop:4, focus:4.5, blades:9, bladeRot:14, round:0.6, ring:0, cat:0.3, dof:true,
   shutter:180, fps:24, mb:true, ev:0, expLink:false, bloom:0.35, halation:0.15, grain:0.25, vig:0.5, hold:true, proxy:false,
   // embers + fire
   embers:false, showEmitter:true, emitX:-1.2, emitY:0.0, emitZ:-2.0, eRad:0.3, eHeight:0.15,
   eRate:120, eLife:1, eTemp:1300, eSize:0.6, eGain:1, eTwinkle:0.6,
   eRise:2.2, eSpread:0.4, eTurb:0.9, eWind:0.3, pops:0.5, popSize:0.4,
-  flames:false, flameH:0.65, fireI:0, flick:0.5
+  flames:false, flameH:0.65, fireI:0, flick:0.5,
+  // air influencers (dust only)
+  showInfl:true,
+  gustX:-3.75, gustY:1.85, gustZ:-1.7, gustDX:0.97, gustDY:-0.12, gustDZ:0.2, gustStr:3, gustWidth:0.9, gustReach:4, gustDur:0.35, gustTurb:1, gustRepeat:0,
+  movAX:1.6, movAY:0, movAZ:-1.2, movBX:-3.2, movBY:0, movBZ:-1.0, movH:1.7, movR:0.25, movSpeed:3.5, movMode:'once'
 };
 // the campfire scene starts from the same defaults with these changes
 const FIRE_DEF = {
-  scene:'fire', density:30, sunI:0.16, sunK:8200, sunEl:38, sunAz:-55, haze:0.35, hazeVar:0.45, fill:1, ambVis:0.5,
+  scene:'fire', density:0, sunI:0.16, sunK:8200, sunEl:38, sunAz:-55, haze:0.35, hazeVar:0.45, fill:1, ambVis:0.5,
   focal:32, fstop:2.8, focus:4.4, ev:-2.4, bloom:0.45, halation:0.35, eRate:200,
   embers:true, emitX:0, emitY:0.06, emitZ:0, eRad:0.3, eHeight:0.15, flames:true, flameH:0.65, fireI:1, flick:0.5
 };
@@ -381,17 +386,14 @@ const PRESETS = {
   {id:'cathedral', label:'Cathedral hush', p:{sunEl:46, sunAz:24, haze:0.55, hazeVar:0.65, density:150, turb:1.6, drift:0.6, micro:0.4, focal:40, fstop:4, focus:5.6, bright:1.3, sunK:5600, fill:0.6, speed:0.8}, cam:{E:[2.7,1.1,2.9], T:[-2.2,2.0,-3.3]}},
   {id:'blinds', label:'Venetian blinds', p:{cookie:1, sunEl:26, sunAz:38, density:220, haze:0.4, focal:35, fstop:4, focus:4.2, sunK:4700}, cam:{E:[2.1,1.4,1.6], T:[-2.2,1.35,-2.6]}},
   {id:'dappled', label:'Dappled leaves', p:{cookie:2, sunEl:34, haze:0.35, hazeVar:0.4, sunK:4500, density:200, turb:2.4, focal:32, fstop:4, focus:5.0}, cam:CAM_DEFAULT},
-  {id:'disturbed', label:'Door slam', p:{density:320, turb:8, micro:2.6, drift:3.5, thermal:1.0, move:'handheld', moveAmt:0.7, fibers:3, fluff:1, flakes:26}, cam:CAM_DEFAULT, puff:true},
-  {id:'closeup', label:'Close-up', p:{focal:50, fstop:2.8, focus:1.3, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:{E:[-1.6,1.15,1.0], T:[-3.0,1.5,-3.5]}},
-  {id:'truck', label:'Truck move', p:{move:'truck', moveAmt:1, shutter:180, focal:32, fstop:2.8, focus:3.0, density:240}, cam:{E:[1.2,1.2,0.8], T:[-1.6,1.2,-4.6]}}
+  {id:'closeup', label:'Close-up', p:{focal:50, fstop:2.8, focus:1.3, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:{E:[-1.6,1.15,1.0], T:[-3.0,1.5,-3.5]}}
  ],
  fire:[
   {id:'campfire', label:'Campfire', p:{}, cam:CAM_FIRE},
   {id:'roaring', label:'Roaring fire', p:{ev:-2.9, focus:4.8, eRate:420, flameH:1.0, fireI:1.6, pops:1.6, popSize:0.7, eRise:3.0, eTurb:1.2, eRad:0.38, haze:0.45}, cam:{E:[0.9,0.8,3.6], T:[0,1.0,0]}},
   {id:'dying', label:'Dying embers', p:{flames:false, eRate:22, eTemp:1060, fireI:0.3, flick:0.3, pops:0.08, eRise:0.9, eTurb:0.5, ev:-1.2, focus:3.1}, cam:{E:[0.9,0.7,3.0], T:[0,0.3,0]}},
   {id:'windy', label:'Windy night', p:{focus:4.6, eWind:2.2, driftDir:15, eTurb:1.6, eRate:260, flameH:0.75, flick:0.8}, cam:{E:[0.2,0.75,3.4], T:[0.5,0.95,0]}},
-  {id:'bokeh', label:'Ember bokeh', p:{focal:75, fstop:1.6, focus:6.0, eRate:380, eRise:2.4, eTemp:1420, eSize:0.9, eGain:1.6, ev:-1.6}, cam:{E:[0.25,0.85,1.45], T:[-0.2,1.15,-5.0]}},
-  {id:'firemove', label:'Handheld', p:{move:'handheld', moveAmt:0.8, eRate:200}, cam:CAM_FIRE}
+  {id:'bokeh', label:'Ember bokeh', p:{focal:75, fstop:1.6, focus:6.0, eRate:380, eRise:2.4, eTemp:1420, eSize:0.9, eGain:1.6, ev:-1.6}, cam:{E:[0.25,0.85,1.45], T:[-0.2,1.15,-5.0]}}
  ]
 };
 
@@ -977,6 +979,7 @@ void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec3 c=texelFetch(uCur,ip,0).rgb; 
 sim: [FSQ_VS, HDR+NOISE+SHADOW+MOTETYPE+`
 uniform sampler2D uPos, uVel; uniform float uDt, uT, uTurb, uScale, uMicro, uThermal, uSettle, uPuffAmp, uSizeMin, uSizeMax, uSizeBias;
 uniform vec3 uWind, uBMin, uBMax; uniform vec4 uPuff;
+uniform vec4 uBlobP[24], uBlobV[24]; uniform int uBlobN; uniform float uBodyOn, uBodyH, uBodyR; uniform vec3 uBodyP, uBodyV;
 layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
 ${CURL}
 void main(){
@@ -990,11 +993,22 @@ void main(){
   if(ty==0){ float sz=uSizeMin*pow(uSizeMax/uSizeMin, pow(Vv.w,uSizeBias)); sf=0.15+min((sz/50.)*(sz/50.),4.); }
   else if(ty==1) sf=0.5; else if(ty==2) sf=0.22; else sf=0.12;
   tgt.y-=uSettle*sf;
-  if(uPuffAmp>1e-3){ vec3 d=p-uPuff.xyz; float r2=dot(d,d); float gf=exp(-r2/(uPuff.w*uPuff.w)); vec3 nd=d/max(sqrt(r2),1e-3);
-    tgt+=uPuffAmp*gf*(nd+vec3(0.,0.35,0.)+cross(nd,vec3(0.,1.,0.))*0.6); }
+  // moving pockets of air: each carries a velocity, curls around its direction of travel, and stirs up turbulence
+  float turbAmt=0.;
+  for(int i=0;i<24;i++){ if(i>=uBlobN) break;
+    vec4 bp=uBlobP[i], bv=uBlobV[i]; vec3 d=p-bp.xyz; float q=dot(d,d)/(bp.w*bp.w); if(q>9.) continue;
+    float g=exp(-q); float sp=length(bv.xyz); tgt+=bv.xyz*g;
+    if(sp>1e-3){ vec3 ax=bv.xyz/sp; tgt+=cross(ax,d)/bp.w*g*sp*0.6*bv.w; }
+    turbAmt+=g*sp*bv.w; }
+  if(turbAmt>1e-3) tgt+=curl(p*2.6+vec3(uT*0.8,-uT*0.5,uT*0.6))*turbAmt*0.45;
+  // a moving body (a character, a door edge): air flows around it like around a cylinder, and it shoves dust out of its way
+  if(uBodyOn>0.5){ float yc=clamp(p.y,uBodyP.y+uBodyR,uBodyP.y+uBodyH-uBodyR); vec3 c=vec3(uBodyP.x,yc,uBodyP.z); vec3 d=p-c; float r=length(d);
+    if(r>uBodyR){ vec3 n=d/r; float k=uBodyR*uBodyR/(r*r); tgt+=k*(2.*dot(uBodyV,n)*n-uBodyV); } }
   float k=1.-exp(-uDt/(ty>=2?0.22:0.35));
   vec3 v=mix(Vv.xyz,tgt,k);
   p+=v*uDt;
+  if(uBodyOn>0.5){ float yc=clamp(p.y,uBodyP.y+uBodyR,uBodyP.y+uBodyH-uBodyR); vec3 c=vec3(uBodyP.x,yc,uBodyP.z); vec3 d=p-c; float r=length(d);
+    if(r<uBodyR){ vec3 n=r>1e-4?d/r:vec3(1.,0.,0.); p=c+n*uBodyR*1.02; float vn=dot(v-uBodyV,n); if(vn<0.) v-=vn*n; } }
   vec3 ext=uBMax-uBMin; p=uBMin+mod(p-uBMin,ext);
   oP=vec4(p,Pp.w); oV=vec4(v,Vv.w);
 }`],
@@ -1434,11 +1448,42 @@ function bakeMoteFill(){
 
 /* =================== state =================== */
 const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-let playing=!reduce, simTime=0, frameNo=0, last=performance.now(), started=false, switching=false, placing=false;
+let playing=!reduce, simTime=0, frameNo=0, last=performance.now(), started=false, switching=false, placing=null;
 let focusCur=S.focus, focusAnim=null, puff=null;
 let resetGI=true, resetDOF=true, prevVP=null, posIdx=0, giIdx=0, accIdx=0, giN=0, accN=0, camMoving=false, lastCamKey='';
 function rackFocus(d){ d=clamp(d,0.3,20); focusAnim={from:focusCur,to:d,t0:performance.now(),dur:550}; S.focus=d; syncKnob('focus'); drawRing(); }
 function puffAt(p){ puff={p,t0:simTime}; }
+/* ---- air influencers: gusts and a moving object ---- */
+const blobs=[]; let gust=null, mover=null, gustTimer=0;
+const MAXBLOB=24, blobP=new Float32Array(MAXBLOB*4), blobV=new Float32Array(MAXBLOB*4);
+function addBlob(b){ blobs.push(b); while(blobs.length>MAXBLOB) blobs.shift(); }
+function gustDir(){ return nrm([S.gustDX,S.gustDY,S.gustDZ]); }
+function fireGust(){ if(S.scene!=='room') return; gust={t:0,next:0}; }
+function moverPos(){ if(!mover) return null; const A=[S.movAX,S.movAY,S.movAZ], B=[S.movBX,S.movBY,S.movBZ], L=Math.max(len(sub(B,A)),1e-3);
+  let u=mover.d/L; if(S.movMode==='pingpong'){ u=u%2; if(u>1) u=2-u; } else if(S.movMode==='loop') u=u%1; else u=Math.min(u,1);
+  return add(A,scl(sub(B,A),u)); }
+function runMover(){ if(S.scene!=='room') return; mover={d:0,prev:null,v:[0,0,0],wake:0,done:false}; }
+function stepInfluence(dt){
+  if(gust){ const dur=S.gustDur, dir=gustDir(), o=[S.gustX,S.gustY,S.gustZ];
+    while(gust.next<=gust.t && gust.t<dur){ const env=Math.sin(Math.PI*Math.min(gust.next/dur,1))*0.5+0.5;
+      const tau=Math.max(S.gustReach/S.gustStr,0.2)*0.55;
+      addBlob({p:add(o,scl(dir,0.05)),v:scl(dir,S.gustStr*env),r:S.gustWidth*0.5,grow:0.22*S.gustWidth+0.18,tau,fade:tau*1.6,life:tau*4+1,sw:0.5*S.gustTurb,adv:0.8,age:0});
+      gust.next+=0.035; }
+    gust.t+=dt; if(gust.t>=dur) gust=null; }
+  if(S.gustRepeat>0){ gustTimer+=dt; if(gustTimer>=S.gustRepeat){ gustTimer=0; fireGust(); } }
+  if(mover&&!mover.done){ const A=[S.movAX,S.movAY,S.movAZ], B=[S.movBX,S.movBY,S.movBZ], L=len(sub(B,A));
+    // ease in over the first half metre so a run starts like a run
+    const sp=S.movSpeed*Math.min(1,0.35+mover.d/0.5); mover.d+=sp*dt;
+    const p=moverPos(); if(mover.prev) mover.v=scl(sub(p,mover.prev),1/Math.max(dt,1e-4)); mover.prev=p;
+    if(S.movMode==='once' && mover.d>=L){ mover.done=true; mover.v=[0,0,0]; }
+    mover.wake-=dt; const spd=len(mover.v);
+    if(spd>0.2 && mover.wake<=0){ mover.wake=0.12;
+      for(const f of [0.4,0.78]) addBlob({p:add(p,[0,S.movH*f,0]),v:scl(mover.v,0.5),r:S.movR*2.2+0.12,grow:0.35,tau:0.9,fade:1.1,life:2.6,sw:0.7,adv:0.45,age:0}); } }
+  for(let i=blobs.length-1;i>=0;i--){ const b=blobs[i]; b.age+=dt; if(b.age>b.life){ blobs.splice(i,1); continue; }
+    b.p=add(b.p,scl(b.v,dt*b.adv)); b.v=scl(b.v,Math.exp(-dt/b.tau)); b.r+=b.grow*dt; }
+  blobP.fill(0); blobV.fill(0);
+  blobs.forEach((b,i)=>{ const f=Math.exp(-b.age/b.fade)*Math.min(1,b.age/0.04+0.2); blobP.set([...b.p,b.r],i*4); blobV.set([b.v[0]*f,b.v[1]*f,b.v[2]*f,b.sw],i*4); });
+}
 function shaftPoint(){ return S.scene==='fire' ? [S.emitX,S.emitY+0.9,S.emitZ] : add([-4.0,2.2,-1.7], scl(sunL,-2.2)); }
 function fnoise(t){ const i=Math.floor(t), f=t-i, h=n=>{ const x=Math.sin(n*127.1)*43758.5453; return x-Math.floor(x); }; const u=f*f*(3-2*f); return h(i)*(1-u)+h(i+1)*u; }
 function fireFlicker(t){ return Math.max(0.35, 1+S.flick*(0.12*Math.sin(t*7.3)+0.08*Math.sin(t*13.7+1.3)+0.06*Math.sin(t*23.1+0.4)+0.3*(fnoise(t*3.1)-0.5)+0.18*(fnoise(t*9.7+5.)-0.5))); }
@@ -1470,7 +1515,7 @@ function render(now){
   const coc={uF:S.focal,uN:S.fstop,uFocus:focusCur,uFilmW:film(),uResX:W,uDofOn:S.dof?1:0};
   const shadowU={uShadow:0,uLightVP:lightVP,uCookie:S.cookie,uTime:simTime};
   const typeU={uFlake:S.flakes/100,uFiber:S.fibers/100,uFluff:S.fluff/100};
-  const count=Math.min(MAXN, Math.round(S.density*(BMAX[0]-BMIN[0])*(BMAX[1]-BMIN[1])*(BMAX[2]-BMIN[2])));
+  const count=S.scene==='room'?Math.min(MAXN, Math.round(S.density*(BMAX[0]-BMIN[0])*(BMAX[1]-BMIN[1])*(BMAX[2]-BMIN[2]))):0;
   const foliage=S.cookie===2;
   gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
   for(let i=0;i<7;i++) tex(i,null);
@@ -1479,14 +1524,15 @@ function render(now){
   if(lightDirty){ renderShadow(); bakeMoteFill(); lightDirty=false; resetGI=true; resetDOF=true; }
   tex(0,shadowTex);
 
-  if(playing && dt>0){
+  if(playing && dt>0 && count>0){
     const rows=Math.ceil(count/TW); const src=sim[simCur], dst=sim[1-simCur];
     gl.bindFramebuffer(gl.FRAMEBUFFER,dst.fb); gl.viewport(0,0,TW,rows);
     tex(2,src.p); tex(3,src.v);
     const dir=S.driftDir*Math.PI/180;
-    use(P.sim,{...shadowU,...typeU,uPos:2,uVel:3,uDt:dt*S.speed,uT:simTime,uWind:[Math.cos(dir)*S.drift*0.01,S.lift*0.01,Math.sin(dir)*S.drift*0.01],
+    stepInfluence(dt*S.speed); const mp=moverPos(), bodyOn=mover&&!mover.done&&mp?1:0;
+    use(P.sim,{...shadowU,...typeU,uBlobP:blobP,uBlobV:blobV,uBlobN:blobs.length,uBodyOn:bodyOn,uBodyP:mp||[0,-9,0],uBodyV:mover?mover.v:[0,0,0],uBodyH:S.movH,uBodyR:S.movR,uPos:2,uVel:3,uDt:dt*S.speed,uT:simTime,uWind:[Math.cos(dir)*S.drift*0.01,S.lift*0.01,Math.sin(dir)*S.drift*0.01],
       uTurb:S.turb*0.01,uScale:S.eddy,uMicro:S.micro*0.01,uThermal:S.thermal*0.01,uSettle:S.settle*0.01,
-      uBMin:BMIN,uBMax:BMAX,uPuff:puff?[...puff.p,0.75]:[0,0,0,1],uPuffAmp:puffAmp,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias});
+      uBMin:BMIN,uBMax:BMAX,uPuff:[0,0,0,1],uPuffAmp:0,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias});
     fsq(); simCur=1-simCur; tex(2,null); tex(3,null);
   }
   const st=sim[simCur];
@@ -1562,7 +1608,7 @@ function render(now){
     uRes:[DW,DH],uShutter:shutterT,uExpT:expT,uMB:S.mb?1:0,uSunI:S.sunI,uGI:S.gi,uBright:S.bright,uG:S.g,uGlint:S.glint,uTumble:S.tumble,
     uFlakeScale:S.flakeScale,uFiberScale:S.fiberScale,uFluffScale:S.fluffScale,uFluffBright:S.fluffBright,uFireOn:fireOn,uFireP:fireP,uFireCol:scl(fireCol,fl),uAmbVis:S.ambVis,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias,uMaxR:110*dScale+2,uCat:S.cat,
     uBladeRot:S.bladeRot*Math.PI/180,uBlades:S.blades,uRound:S.round,uRing:S.ring,uHold:S.hold?1:0,uHoldScale:W/DW,uFocalPx:S.focal/film()*DW,uFocalRef:1100});
-  gl.bindVertexArray(emptyVAO); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,count);
+  gl.bindVertexArray(emptyVAO); if(count>0) gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,count);
   if(S.embers){ const ec=eCount(); tex(2,esim[eCur].p); tex(3,esim[eCur].v);
     const eu={...cocD,uEPos:2,uEVel:3,uPosTex:1,uFgCol:4,uFgDepth:5,uTexW:ETW,uId:viewMode===6?1:0,uVPo:co.vp,uVPc:cc.vp,uVPm:cm.vp,uViewM:cm.view,uCam:cm.E,uRes:[DW,DH],
       uShutter:shutterT,uExpT:expT,uMB:S.mb?1:0,uMaxR:110*dScale+2,uCat:S.cat,uBladeRot:S.bladeRot*Math.PI/180,uFocalPx:S.focal/film()*DW,uFocalRef:1100,
@@ -1604,21 +1650,52 @@ function watchSpeed(){
 /* =================== emitter gizmo =================== */
 const gz=$('#gizmo'), gctx=gz.getContext('2d'); let gzOn=false;
 function drawGizmo(){
-  const want=S.embers && S.showEmitter && (curTab==='embers'||placing) && lastCam;
+  const fire=S.scene==='fire';
+  const showE=fire && S.embers && S.showEmitter && (curTab==='embers'||placing==='emitter');
+  const showI=!fire && (S.showInfl || curTab==='influence' || (placing&&placing!=='emitter'));
+  const want=(showE||showI) && lastCam;
   const r=gz.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
   if(gz.width!==Math.round(r.width*dpr)){ gz.width=Math.round(r.width*dpr); gz.height=Math.round(r.height*dpr); }
   if(!want){ if(gzOn){ gctx.clearRect(0,0,gz.width,gz.height); gzOn=false; } return; }
   gzOn=true; gctx.setTransform(dpr,0,0,dpr,0,0); gctx.clearRect(0,0,r.width,r.height);
   const proj=p=>{ const q=xf(lastCam.vp,[p[0],p[1],p[2],1]); if(q[3]<0.05) return null; return [(q[0]/q[3]*0.5+0.5)*r.width,(0.5-q[1]/q[3]*0.5)*r.height]; };
-  const ring=(y,dash)=>{ gctx.setLineDash(dash); gctx.beginPath(); let st=false;
-    for(let i=0;i<=64;i++){ const a=i/64*2*Math.PI; const q=proj([S.emitX+Math.cos(a)*S.eRad,y,S.emitZ+Math.sin(a)*S.eRad]); if(!q){ st=false; continue; } if(!st){ gctx.moveTo(q[0],q[1]); st=true; } else gctx.lineTo(q[0],q[1]); }
-    gctx.stroke(); };
-  gctx.strokeStyle='rgba(228,186,107,0.9)'; gctx.lineWidth=1.25; ring(S.emitY,[]);
-  if(S.eHeight>0.005){ gctx.strokeStyle='rgba(228,186,107,0.5)'; ring(S.emitY+S.eHeight,[4,4]); }
-  const c=proj([S.emitX,S.emitY,S.emitZ]), up=proj([S.emitX,S.emitY+0.35,S.emitZ]);
-  gctx.setLineDash([]); if(c&&up){ gctx.strokeStyle='rgba(228,186,107,0.8)'; gctx.beginPath(); gctx.moveTo(c[0],c[1]); gctx.lineTo(up[0],up[1]); gctx.stroke(); gctx.fillStyle='#e4ba6b'; gctx.beginPath(); gctx.arc(c[0],c[1],2.5,0,Math.PI*2); gctx.fill(); }
+  const poly=(pts,dash)=>{ gctx.setLineDash(dash||[]); gctx.beginPath(); let st=false; for(const p of pts){ const q=proj(p); if(!q){ st=false; continue; } if(!st){ gctx.moveTo(q[0],q[1]); st=true; } else gctx.lineTo(q[0],q[1]); } gctx.stroke(); };
+  const circle=(c,ax,rad,dash)=>{ const t=nrm(Math.abs(ax[1])<0.95?cross(ax,[0,1,0]):cross(ax,[1,0,0])), b=cross(ax,t), pts=[]; for(let i=0;i<=48;i++){ const a=i/48*2*Math.PI; pts.push(add(c,add(scl(t,Math.cos(a)*rad),scl(b,Math.sin(a)*rad)))); } poly(pts,dash); };
+  const pt=(p,rad)=>{ const q=proj(p); if(q){ gctx.beginPath(); gctx.arc(q[0],q[1],rad,0,Math.PI*2); gctx.fill(); } };
+  gctx.lineWidth=1.25;
+  if(showE){
+    gctx.strokeStyle='rgba(228,186,107,0.9)'; circle([S.emitX,S.emitY,S.emitZ],[0,1,0],S.eRad);
+    if(S.eHeight>0.005){ gctx.strokeStyle='rgba(228,186,107,0.5)'; circle([S.emitX,S.emitY+S.eHeight,S.emitZ],[0,1,0],S.eRad,[4,4]); }
+    gctx.strokeStyle='rgba(228,186,107,0.8)'; poly([[S.emitX,S.emitY,S.emitZ],[S.emitX,S.emitY+0.35,S.emitZ]]); gctx.fillStyle='#e4ba6b'; pt([S.emitX,S.emitY,S.emitZ],2.5);
+  }
+  if(showI){
+    // gust: source disc, direction and reach
+    const o=[S.gustX,S.gustY,S.gustZ], d=gustDir(), tip=add(o,scl(d,Math.min(S.gustReach,3)*0.5));
+    gctx.strokeStyle=gust?'rgba(147,178,204,1)':'rgba(147,178,204,0.85)'; circle(o,d,S.gustWidth*0.5);
+    poly([o,tip]); const t=nrm(Math.abs(d[1])<0.95?cross(d,[0,1,0]):cross(d,[1,0,0]));
+    poly([add(tip,add(scl(d,-0.18),scl(t,0.1))),tip,add(tip,add(scl(d,-0.18),scl(t,-0.1)))]);
+    gctx.strokeStyle='rgba(147,178,204,0.35)'; poly([o,add(o,scl(d,S.gustReach))],[3,5]);
+    gctx.fillStyle='#93b2cc'; pt(o,2.5);
+    // moving object: path and a capsule standing in for the character
+    const A=[S.movAX,S.movAY,S.movAZ], B=[S.movBX,S.movBY,S.movBZ];
+    gctx.strokeStyle='rgba(228,186,107,0.6)'; poly([A,B],[5,4]); gctx.fillStyle='#e4ba6b'; pt(A,3); pt(B,3);
+    const P0=moverPos()||A; gctx.strokeStyle=mover&&!mover.done?'rgba(228,186,107,1)':'rgba(228,186,107,0.75)';
+    circle(add(P0,[0,S.movR*0.3,0]),[0,1,0],S.movR); circle(add(P0,[0,S.movH-S.movR*0.3,0]),[0,1,0],S.movR);
+    for(const a of [0,Math.PI/2,Math.PI,Math.PI*1.5]){ const off=[Math.cos(a)*S.movR,0,Math.sin(a)*S.movR]; poly([add(P0,add(off,[0,S.movR*0.3,0])),add(P0,add(off,[0,S.movH-S.movR*0.3,0]))]); }
+  }
 }
-function setPlacing(on){ placing=on; const b=$('#placeBtn'); if(b) b.setAttribute('aria-pressed',on); if(on) $('#readout').textContent='Click a surface in the viewer to put the ember emitter there'; }
+const PLACE_TEXT={emitter:'Click a surface to put the ember emitter there', gust:'Click a wall, door or opening to put the gust source there; it blows out of the surface', gustAim:'Click where the gust should blow toward', moverA:'Click the floor where the moving object starts', moverB:'Click the floor where the moving object ends'};
+const PLACE_BTN={emitter:'placeBtn', gust:'placeGust', gustAim:'aimGust', moverA:'placeA', moverB:'placeB'};
+function setPlacing(mode){ placing=mode||null; for(const k in PLACE_BTN){ const b=$('#'+PLACE_BTN[k]); if(b) b.setAttribute('aria-pressed',placing===k); } if(placing) $('#readout').textContent=PLACE_TEXT[placing]; drawGizmo(); }
+function placeAt(p,n){
+  const f=v=>+v.toFixed(3);
+  if(placing==='emitter'){ S.emitX=f(p[0]); S.emitY=f(p[1]); S.emitZ=f(p[2]); onParam('emitX'); prewarmEmbers(); }
+  else if(placing==='gust'){ const o=add(p,scl(n||[0,1,0],0.2)); S.gustX=f(o[0]); S.gustY=f(o[1]); S.gustZ=f(o[2]); if(n){ S.gustDX=f(n[0]); S.gustDY=f(n[1]); S.gustDZ=f(n[2]); } }
+  else if(placing==='gustAim'){ const d=nrm(sub(p,[S.gustX,S.gustY,S.gustZ])); S.gustDX=f(d[0]); S.gustDY=f(d[1]); S.gustDZ=f(d[2]); }
+  else if(placing==='moverA'){ S.movAX=f(p[0]); S.movAY=f(p[1]); S.movAZ=f(p[2]); mover=null; }
+  else if(placing==='moverB'){ S.movBX=f(p[0]); S.movBY=f(p[1]); S.movBZ=f(p[2]); mover=null; }
+  markPreset(null);
+}
 
 /* =================== loupe =================== */
 const loupe=$('#loupe'), lctx=loupe.getContext('2d');
@@ -1650,9 +1727,8 @@ canvas.addEventListener('pointermove',e=>{
 canvas.addEventListener('pointerleave',()=>{ if(!drag) loupePos=null; });
 canvas.addEventListener('pointerup',e=>{ if(!drag) return; const wasDrag=drag.moved; drag=null; if(wasDrag||!lastCam) return;
   const {ro,rd,sx,sy}=rayFromEvent(e); const t=rayHit(ro,rd).t;
-  if(placing){ if(isFinite(t)){ const p=add(ro,scl(rd,t)); S.emitX=+p[0].toFixed(3); S.emitY=+p[1].toFixed(3); S.emitZ=+p[2].toFixed(3); onParam('emitX'); prewarmEmbers(); showReticle(sx,sy,true); $('#readout').textContent='Emitter placed'; } setPlacing(false); return; }
-  if(e.shiftKey||e.altKey){ const tt=isFinite(t)?Math.max(t-0.35,0.5):3; puffAt(add(ro,scl(rd,Math.min(tt,6)))); showReticle(sx,sy,true); }
-  else { rackFocus(isFinite(t)?t*dot(rd,lastCam.f):20); showReticle(sx,sy,false); } });
+  if(placing){ const h=rayHit(ro,rd); if(isFinite(h.t)){ placeAt(add(ro,scl(rd,h.t)),h.n); showReticle(sx,sy,true); $('#readout').textContent='Placed'; } setPlacing(null); return; }
+  { rackFocus(isFinite(t)?t*dot(rd,lastCam.f):20); showReticle(sx,sy,false); } });
 canvas.addEventListener('pointercancel',()=>{drag=null;});
 canvas.addEventListener('wheel',e=>{ e.preventDefault(); cam.dist=clamp(cam.dist*Math.exp(e.deltaY*0.0012),0.4,9); },{passive:false});
 
@@ -1678,7 +1754,7 @@ new ResizeObserver(()=>layout()).observe(vpEl);
 
 /* =================== UI =================== */
 const TABS=[
- {id:'dust',label:'Dust',groups:[
+ {id:'dust',label:'Dust',scenes:['room'],groups:[
   ['Population',[
    {k:'density',label:'Density',min:20,max:500,step:1,unit:'/m³',log:true,dec:0},
    {k:'flakes',label:'Skin & paper flakes',min:0,max:60,step:0.5,unit:'%',dec:1},
@@ -1706,7 +1782,7 @@ const TABS=[
   ]],
   ['',[{t:'note',text:'At real size, almost every mote is smaller than a pixel, so in focus it reads as a point of light and out of focus it takes the shape of the lens aperture. Only large lint and fluff that is close and in focus shows its own shape; press L for a pixel loupe.'},{t:'btn',label:'Reseed motes',act:()=>seedSim()}]]
  ]},
- {id:'motion',label:'Motion',groups:[
+ {id:'motion',label:'Motion',scenes:['room'],groups:[
   ['Air',[
    {k:'speed',label:'Playback speed',min:0,max:3,step:0.01,unit:'×',dec:2},
    {k:'drift',label:'Drift',min:0,max:20,step:0.1,unit:'cm/s',dec:1},
@@ -1720,16 +1796,37 @@ const TABS=[
    {k:'thermal',label:'Thermal lift in sun',min:0,max:6,step:0.05,unit:'cm/s',dec:2},
    {k:'settle',label:'Settling (50 µm)',min:0,max:4,step:0.05,unit:'cm/s',dec:2},
   ]],
-  ['Disturbance',[
-   {k:'puffAmt',label:'Puff strength',min:0.2,max:3,step:0.05,unit:'m/s',dec:2},
-   {t:'btn',label:'Puff through the shaft',act:()=>puffAt(shaftPoint())},
-   {t:'note',text:'Shift-click anywhere in the viewer to puff air at that point. Grit settles; lint and fluff hang in the air.'}
-  ]]
+  ['',[{t:'note',text:'Grit settles; lint and fluff hang in the air. For gusts and things moving through the dust, use the Influence tab.'}]]
  ]},
- {id:'embers',label:'Embers',groups:[
+ {id:'influence',label:'Influence',scenes:['room'],groups:[
+  ['Gust of wind',[
+   {t:'btn',label:'Place gust source',id:'placeGust',act:()=>setPlacing(placing==='gust'?null:'gust')},
+   {t:'btn',label:'Aim gust at a point',id:'aimGust',act:()=>setPlacing(placing==='gustAim'?null:'gustAim')},
+   {k:'gustStr',label:'Strength',min:0.2,max:8,step:0.05,unit:'m/s',dec:2},
+   {k:'gustWidth',label:'Opening size',min:0.1,max:2.5,step:0.01,unit:'m',dec:2},
+   {k:'gustReach',label:'Reach',min:0.5,max:8,step:0.05,unit:'m',dec:2},
+   {k:'gustDur',label:'Duration',min:0.05,max:2,step:0.01,unit:'s',dec:2},
+   {k:'gustTurb',label:'Turbulence',min:0,max:2,step:0.01,dec:2},
+   {k:'gustRepeat',label:'Repeat every',min:0,max:10,step:0.1,unit:'s',dec:1,fmt:v=>v<=0?'off':v.toFixed(1)},
+   {t:'btn',label:'Fire gust  ·  G',act:()=>fireGust()},
+   {t:'note',text:'A gust is a short burst of air from an opening, like a door swinging. It travels, slows, spreads and curls, and keeps stirring the dust for a few seconds after it stops.'}
+  ]],
+  ['Moving object',[
+   {t:'btn',label:'Place path start',id:'placeA',act:()=>setPlacing(placing==='moverA'?null:'moverA')},
+   {t:'btn',label:'Place path end',id:'placeB',act:()=>setPlacing(placing==='moverB'?null:'moverB')},
+   {k:'movH',label:'Height',min:0.2,max:2.5,step:0.01,unit:'m',dec:2},
+   {k:'movR',label:'Width (radius)',min:0.05,max:1,step:0.01,unit:'m',dec:2},
+   {k:'movSpeed',label:'Speed',min:0.3,max:8,step:0.05,unit:'m/s',dec:2},
+   {t:'seg',k:'movMode',label:'Playback',opts:[['once','Once'],['pingpong','Back & forth'],['loop','Loop']]},
+   {t:'btn',label:'Run object  ·  R',act:()=>runMover()},
+   {t:'note',text:'A rough stand-in for a character or anything passing through. Air flows around it, dust is pushed aside, and it leaves a turbulent wake that lingers.'}
+  ]],
+  ['',[{t:'toggle',k:'showInfl',label:'Show in viewer'}]]
+ ]},
+ {id:'embers',label:'Embers',scenes:['fire'],groups:[
   ['Emitter',[
    {t:'toggle',k:'embers',label:'Embers'},
-   {t:'btn',label:'Place emitter in viewer',id:'placeBtn',act:()=>setPlacing(!placing)},
+   {t:'btn',label:'Place emitter in viewer',id:'placeBtn',act:()=>setPlacing(placing==='emitter'?null:'emitter')},
    {t:'toggle',k:'showEmitter',label:'Show emitter'},
    {k:'eRad',label:'Emitter radius',min:0.02,max:2,step:0.01,unit:'m',dec:2,log:true},
    {k:'eHeight',label:'Emitter height',min:0,max:1.5,step:0.01,unit:'m',dec:2},
@@ -1749,7 +1846,8 @@ const TABS=[
    {k:'eWind',label:'Wind',min:0,max:6,step:0.05,unit:'m/s',dec:2},
    {k:'pops',label:'Pops',min:0,max:4,step:0.01,unit:'/s',dec:2},
    {k:'popSize',label:'Pop size',min:0,max:1,step:0.01,dec:2},
-   {t:'note',text:'Wind blows along the drift heading set in the Motion tab. Pops are the crackle of burning wood: short bursts of fast sparks.'}
+   {k:'driftDir',label:'Wind heading',min:0,max:360,step:1,unit:'°',dec:0},
+   {t:'note',text:'Pops are the crackle of burning wood: short bursts of fast sparks.'}
   ]],
   ['Fire',[
    {t:'toggle',k:'flames',label:'Flames'},
@@ -1784,11 +1882,9 @@ const TABS=[
    {t:'seg',k:'film',label:'Film back',opts:[['s35','S35'],['a35','A35'],['ff','FF'],['lf','LF']]},
    {t:'seg',k:'format',label:'Format',opts:[['2.39','2.39'],['1.85','1.85'],['16:9','16:9']]},
   ]],
-  ['Move',[
-   {t:'seg',k:'move',label:'Camera move',opts:[['static','Static'],['push','Push'],['truck','Truck'],['handheld','Handheld']]},
-   {k:'moveAmt',label:'Move amount',min:0,max:1.5,step:0.01,dec:2},
-   {t:'btn',label:'Reset camera',act:()=>{ setCam(CAM_DEFAULT.E,CAM_DEFAULT.T); }},
-   {t:'note',text:'Moves are evaluated at shutter open and close, so camera motion blur on the motes is exact. Drag in the viewer to orbit, scroll to dolly.'}
+  ['View',[
+   {t:'btn',label:'Reset camera',act:()=>{ const c=PRESETS[S.scene][0].cam; setCam(c.E,c.T); }},
+   {t:'note',text:'Drag in the viewer to orbit, scroll to dolly. Motion blur uses the camera at shutter open and close, so a moving shot camera would blur the motes exactly.'}
   ]]
  ]},
  {id:'lens',label:'Lens',groups:[
@@ -1838,9 +1934,11 @@ function onParam(k){
   if(k==='focus') focusAnim=null;
   markPreset(null);
 }
+const visTabs=()=>TABS.filter(t=>!t.scenes||t.scenes.includes(S.scene));
 function buildTabs(){
   tabsEl.innerHTML='';
-  for(const t of TABS){ const b=document.createElement('button'); b.role='tab'; b.id='tab-'+t.id; b.textContent=t.label; b.setAttribute('aria-selected',t.id===curTab); b.onclick=()=>{curTab=t.id;buildTabs();buildKnobs();}; tabsEl.appendChild(b); }
+  if(!visTabs().some(t=>t.id===curTab)) curTab=visTabs()[0].id;
+  for(const t of visTabs()){ const b=document.createElement('button'); b.role='tab'; b.id='tab-'+t.id; b.textContent=t.label; b.setAttribute('aria-selected',t.id===curTab); b.onclick=()=>{curTab=t.id;buildTabs();buildKnobs();drawGizmo();}; tabsEl.appendChild(b); }
 }
 function buildKnobs(){
   knobsEl.innerHTML=''; for(const k in knobEls) delete knobEls[k];
@@ -1852,7 +1950,7 @@ function buildKnobs(){
       if(it.t==='legend'){ const d=document.createElement('div'); d.className='legend'; d.innerHTML='<span><i style="background:#ffdb99"></i>grit</span><span><i style="background:#59ccff"></i>flakes</span><span><i style="background:#ff5980"></i>lint</span><span><i style="background:#8cff73"></i>fluff</span><span>· ID channel colours</span>'; g.appendChild(d); continue; }
       if(it.t==='ring'){ const d=document.createElement('div'); d.className='ring'; d.innerHTML='<canvas id="ringc" aria-label="Focus ring with depth of field scale"></canvas><div class="rd"><span id="ringFocus"></span><span id="ringDof"></span></div>'; g.appendChild(d); continue; }
       const row=document.createElement('div'); row.className='knob';
-      if(it.t==='btn'){ const b=document.createElement('button'); b.className='kbtn'; b.textContent=it.label; if(it.id){ b.id=it.id; b.setAttribute('aria-pressed',it.id==='placeBtn'&&placing); } b.onclick=()=>{ if(started) it.act(); }; row.appendChild(b); g.appendChild(row); continue; }
+      if(it.t==='btn'){ const b=document.createElement('button'); b.className='kbtn'; b.textContent=it.label; if(it.id){ b.id=it.id; b.setAttribute('aria-pressed',PLACE_BTN[placing]===it.id); } b.onclick=()=>{ if(started) it.act(); }; row.appendChild(b); g.appendChild(row); continue; }
       if(it.t==='color'){ row.classList.add('wide'); const l=document.createElement('label'); l.htmlFor='k-'+it.k; l.textContent=it.label; row.appendChild(l);
         const c=document.createElement('input'); c.type='color'; c.id='k-'+it.k; c.className='kcolor'; c.value=S[it.k];
         c.oninput=()=>{ S[it.k]=c.value; S.tint='custom'; syncKnob('tint'); markPreset(null); }; row.appendChild(c); knobEls[it.k]={it,row,col:c}; g.appendChild(row); continue; }
@@ -1920,18 +2018,23 @@ function setView(i){ viewMode=i; [...viewSeg.children].forEach((c,j)=>c.setAttri
 const playBtn=$('#btnPlay');
 function setPlay(p){ playing=p; playBtn.setAttribute('aria-pressed',p); playBtn.innerHTML=(p?'Pause':'Play')+' <kbd>Space</kbd>'; }
 playBtn.onclick=()=>setPlay(!playing); setPlay(playing);
-$('#btnPuff').onclick=()=>{ if(started) puffAt(shaftPoint()); };
+$('#btnGust').onclick=()=>{ if(started) fireGust(); };
+$('#btnRun').onclick=()=>{ if(started) runMover(); };
+function syncSceneUI(){ const room=S.scene==='room'; $('#btnGust').hidden=!room; $('#btnRun').hidden=!room;
+  $('.hints').textContent=room?'Click focus · Drag orbit · Scroll dolly · G gust · R run object · L loupe':'Click focus · Drag orbit · Scroll dolly · L loupe'; }
 $('#btnLoupe').onclick=()=>setLoupe(!loupeOn);
 window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,select')) return;
   if(e.code==='Space'){ e.preventDefault(); setPlay(!playing); }
   else if(e.key>='1'&&e.key<='7') setView(+e.key-1);
-  else if((e.key==='p'||e.key==='P')&&started) puffAt(shaftPoint());
+  else if((e.key==='g'||e.key==='G')&&started) fireGust();
+  else if((e.key==='r'||e.key==='R')&&started) runMover();
+  else if(e.key==='Escape') setPlacing(null);
   else if(e.key==='l'||e.key==='L') setLoupe(!loupeOn); });
 
 const presetEl=$('#presets'), sceneSeg=$('#sceneseg');
 function markPreset(id){ [...presetEl.querySelectorAll('.chip')].forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id)); }
-function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; Object.assign(S,DEF,SCENES[S.scene].def,pr.p,keep); setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
-  updateLight(); resetGI=true; resetDOF=true; layout(); buildKnobs(); markPreset(pr.id); if(started){ prewarmEmbers(); if(pr.puff) setTimeout(()=>puffAt(shaftPoint()),300); } }
+function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; const inf={}; for(const k in S) if(/^(gust|mov)/.test(k)) inf[k]=S[k]; Object.assign(S,DEF,SCENES[S.scene].def,pr.p,keep,inf); setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
+  updateLight(); resetGI=true; resetDOF=true; layout(); buildKnobs(); markPreset(pr.id); mover=null; gust=null; blobs.length=0; if(started) prewarmEmbers(); }
 function buildPresets(){ presetEl.querySelectorAll('.chip').forEach(c=>c.remove());
   for(const pr of PRESETS[S.scene]){ const b=document.createElement('button'); b.className='chip'; b.dataset.id=pr.id; b.textContent=pr.label; b.onclick=()=>applyLook(pr); presetEl.appendChild(b); } }
 function buildSceneSeg(){ sceneSeg.innerHTML=''; for(const k in SCENES){ const b=document.createElement('button'); b.textContent=SCENES[k].label; b.setAttribute('aria-pressed',S.scene===k); b.onclick=()=>switchScene(k); sceneSeg.appendChild(b); } }
@@ -1945,12 +2048,13 @@ async function switchScene(name){
   seedSim(); seedEmbers();
   const first=PRESETS[name][0]; setCam(first.cam.E,first.cam.T); focusCur=S.focus;
   updateLight(); resetGI=true; resetDOF=true; prevVP=null;
-  buildSceneSeg(); buildPresets(); buildKnobs(); markPreset(first.id); layout();
+  mover=null; gust=null; blobs.length=0; curTab=visTabs()[0].id;
+  buildSceneSeg(); buildPresets(); buildTabs(); buildKnobs(); syncSceneUI(); markPreset(first.id); layout();
   progress(0.92,'Warming up the embers'); await nextFrame(); prewarmEmbers();
   progress(1,'Ready'); ld.classList.add('done'); switching=false;
 }
 buildSceneSeg(); buildPresets();
-buildTabs(); buildKnobs(); markPreset('loft'); layout();
+buildTabs(); buildKnobs(); syncSceneUI(); markPreset('loft'); layout();
 
 /* =================== boot with a progress bar =================== */
 (async function boot(){
@@ -1978,7 +2082,7 @@ buildTabs(); buildKnobs(); markPreset('loft'); layout();
     progress(1,'Ready'); $('#loader').classList.add('done');
   }catch(err){ if(!failed){ console.error(err); fail('Loading stopped: '+(err&&err.message||err)); } }
 })();
-window.__mf={S,setView,puffAt,shaftPoint,setCam,switchScene,applyLook,PRESETS};
+window.__mf={S,setView,setCam,switchScene,applyLook,PRESETS,fireGust,runMover};
 })();
 
 </script>
