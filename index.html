@@ -232,7 +232,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     </section>
 
     <aside class="props" aria-label="MoteField properties">
-      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.8</span></div>
+      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.9</span></div>
       <div class="tabs" role="tablist" id="tabs"></div>
       <div class="knobs" id="knobs" role="tabpanel"></div>
     </aside>
@@ -352,7 +352,7 @@ const DEF = {
   // embers + fire
   embers:false, showEmitter:true, emitX:-1.2, emitY:0.0, emitZ:-2.0, eRad:0.3, eHeight:0.15,
   eRate:120, eLife:1, eTemp:1300, eSize:0.6, eGain:1, eTwinkle:0.6,
-  eRise:2.2, eSpread:0.4, eTurb:0.9, eWind:0.3, pops:0.5, popSize:0.4,
+  eRise:2.2, eSpread:1.0, eTurb:0.9, eFlutter:1, eWind:0.3, pops:0.6, popSize:0.45,
   flames:false, flameH:0.65, fireI:0, flick:0.5,
   // air influencers (dust only)
   showInfl:true,
@@ -363,7 +363,7 @@ const DEF = {
 const FIRE_DEF = {
   scene:'fire', density:0, sunI:0.16, sunK:8200, sunEl:38, sunAz:-55, haze:0.35, hazeVar:0.45, fill:1, ambVis:0.5,
   focal:32, fstop:2.8, focus:4.4, ev:-2.4, bloom:0.45, halation:0.35, eRate:200,
-  embers:true, emitX:0, emitY:0.06, emitZ:0, eRad:0.3, eHeight:0.15, flames:true, flameH:0.65, fireI:1, flick:0.5
+  embers:true, emitX:0, emitY:0.06, emitZ:0, eRad:0.3, eHeight:0.55, flames:true, flameH:0.85, fireI:1, flick:0.5
 };
 const S = {...DEF};
 const FILMS = {s35:{w:24.89,label:'Super 35'}, a35:{w:27.99,label:'ALEXA 35'}, ff:{w:36.0,label:'Full frame'}, lf:{w:36.70,label:'ALEXA LF'}};
@@ -1117,32 +1117,39 @@ void main(){
   float yb=-0.02, yt=uFlameH*1.4;
   if(abs(rd.y)>1e-5){ float ta=(yb-ro.y)/rd.y, tb=(yt-ro.y)/rd.y; t0=max(t0,min(ta,tb)); t1=min(t1,max(ta,tb)); }
   t0=max(t0,0.); t1=min(t1,tmax); if(t1<=t0){ o=vec4(0.); return; }
-  const int N=28; float dt=(t1-t0)/float(N); float j=ign(gl_FragCoord.xy);
+  const int N=22; float dt=(t1-t0)/float(N); float j=ign(gl_FragCoord.xy);
   vec3 em=vec3(0.);
   for(int i=0;i<N;i++){ vec3 q=ro+rd*(t0+(float(i)+j)*dt);
-    float h=q.y/uFlameH;
-    vec2 xz=q.xz/uFlameR+vec2(sin(uTime*1.7+h*3.)*0.16, cos(uTime*1.3+h*2.5)*0.12)*h;
-    float warp=fbm3(vec3(q.x*4.,q.y*2.4-uTime*2.3,q.z*4.));
-    float n=fbm3(vec3(q.x*6.5+warp*1.6, q.y*3.3-uTime*3.2, q.z*6.5-warp*1.6));
-    float rr=length(xz), width=max(1.-h,0.)*0.95;
-    float cone=1.-smoothstep(width*0.25,width+0.06,rr);
-    float dens=cone*smoothstep(-0.05,0.06,h)*(n*1.75-0.54-h*0.7);
-    dens=max(dens,0.)*2.6;
-    if(dens>0.){ float T=mix(1250.,1900.,clamp(dens*1.6*(1.-h*0.4),0.,1.)); em+=planck(T)*dens; }
+    float hq=q.y; vec2 xz=q.xz;
+    float n=fbm3(vec3(q.x*6.,q.y*3.2-uTime*3.,q.z*6.));
+    // four tongues: each sways, rises and falls on its own rhythm, and tapers to a tip
+    float dens=0.;
+    for(int k=0;k<4;k++){ float fk=float(k), th=fk*1.7+0.6;
+      float Hk=uFlameH*(0.45+0.55*vnoise(vec3(uTime*1.6+fk*7.3,fk*3.1,0.)));
+      float hk=hq/Hk; if(hk>1.2) continue;
+      vec2 ck=vec2(cos(th),sin(th))*uFlameR*0.35+vec2(sin(uTime*2.3+fk*2.1+hq*4.),cos(uTime*1.9+fk*1.3+hq*3.5))*0.18*uFlameR*hq/uFlameH;
+      float wk=uFlameR*0.55*max(1.-hk,0.)+0.01;
+      float d=length(xz-ck)+(n-0.45)*0.12;
+      dens+=(1.-smoothstep(wk*0.35,wk,d))*(1.-smoothstep(0.8,1.15,hk+(n-0.45)*0.6)); }
+    float core=(1.-smoothstep(0.,0.35*uFlameH,hq))*(1.-smoothstep(uFlameR*0.5,uFlameR*0.95,length(xz)));
+    dens=(dens*0.8+core*0.6)*(0.5+n)*smoothstep(-0.03,0.03,hq);
+    if(dens>0.){ float T=mix(1300.,1900.,clamp(dens*1.2*(1.-0.35*hq/uFlameH),0.,1.)); em+=planck(T)*dens; }
   }
   em*=dt*uGain; if(any(isnan(em))) em=vec3(0.); o=vec4(em,1.);
 }`],
 
 esim: [FSQ_VS, HDR+NOISE+ELIFE+`
-uniform sampler2D uPos, uVel; uniform float uDt, uT, uERad, uEHeight, uRise, uSpread, uTurb, uLifeScale, uBurst, uBurstSpeed, uBurstFrac; uniform vec3 uEmit, uWind; uniform int uBurstRow;
+uniform sampler2D uPos, uVel; uniform float uDt, uT, uERad, uEHeight, uRise, uSpread, uTurb, uFlutter, uLifeScale, uBurst, uBurstSpeed, uBurstFrac; uniform vec3 uEmit, uWind; uniform int uBurstRow;
 layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
 ${CURL}
 void spawn(inout vec4 P, inout vec4 V, ivec2 ip, bool burst){
   float ns=fract(P.w*1.6180339+hash12(vec2(ip)+fract(uT*13.37)*91.7)*0.731+0.137); P.w=ns;
-  float a=hash11(ns*91.3)*6.2831853, r=sqrt(hash11(ns*17.9))*uERad;
-  P.xyz=uEmit+vec3(cos(a)*r, hash11(ns*53.1)*uEHeight, sin(a)*r);
-  if(burst){ float ca=hash11(ns*7.7)*6.2831853, el=mix(0.6,1.45,hash11(ns*3.3)); V.xyz=vec3(cos(ca)*cos(el),sin(el),sin(ca)*cos(el))*uBurstSpeed*mix(0.45,1.3,hash11(ns*5.1)); }
-  else V.xyz=vec3((hash11(ns*2.1)-0.5)*uSpread, uRise*mix(0.35,1.05,hash11(ns*4.4)), (hash11(ns*6.6)-0.5)*uSpread);
+  // born inside the flames, more often near the tips; the flame narrows with height
+  float hh=pow(hash11(ns*53.1),0.7), a=hash11(ns*91.3)*6.2831853, r=sqrt(hash11(ns*17.9))*uERad*(1.-0.6*hh);
+  P.xyz=uEmit+vec3(cos(a)*r, hh*uEHeight, sin(a)*r);
+  if(burst){ float ca=hash11(ns*7.7)*6.2831853, el=mix(0.45,1.4,hash11(ns*3.3)); V.xyz=vec3(cos(ca)*cos(el),sin(el),sin(ca)*cos(el))*uBurstSpeed*mix(0.45,1.3,hash11(ns*5.1)); }
+  else { float ca=hash11(ns*2.1)*6.2831853, cone=uSpread*0.6*sqrt(hash11(ns*6.6)), sp=uRise*mix(0.5,1.35,hash11(ns*4.4));
+    V.xyz=vec3(sin(cone)*cos(ca), cos(cone), sin(cone)*sin(ca))*sp; }
   V.w=hash11(ns*8.8)*uDt; }
 void main(){
   ivec2 ip=ivec2(gl_FragCoord.xy); vec4 P=texelFetch(uPos,ip,0), V=texelFetch(uVel,ip,0);
@@ -1152,13 +1159,20 @@ void main(){
   if(V.w>life){ if(burst){ V.w=-1.; oP=P; oV=V; return; } spawn(P,V,ip,false); }
   // the air an ember rides in: a buoyant plume that widens and slows with height, entrainment near the base, turbulence, wind
   vec3 rel=P.xyz-uEmit; float h=max(rel.y,0.), r=length(rel.xz);
-  float sig=uERad*0.9+0.08+h*0.22;
+  float sig=uERad*0.9+0.08+h*0.18;
   float gust=0.7+0.6*vnoise(vec3(uT*1.3, h*0.8-uT*1.1, 3.));
-  vec3 air=uWind*min(h*0.8+0.25,1.)+vec3(0., uRise*exp(-r*r/(2.*sig*sig))*gust/(1.+h*0.45), 0.);
-  air.xz-=rel.xz/(r+0.15)*0.08*exp(-h*2.)*uRise;
+  vec3 air=uWind*min(h*0.8+0.25,1.)+vec3(0., 0.75*uRise*exp(-r*r/(2.*sig*sig))*gust/(1.+h*0.25), 0.);
+  air.xz-=rel.xz/(r+0.15)*0.06*exp(-h*2.)*uRise;
   air+=curl(P.xyz*2.2+vec3(0.,-uT*0.9,uT*0.2))*uTurb*(0.25+min(h,2.)*0.5);
-  float sz=esize(P.w); air.y-=0.22*sz;
-  V.xyz=mix(V.xyz,air,1.-exp(-uDt/(0.07+0.25*sz)));
+  air+=curl(P.xyz*7.+vec3(0.,-uT*2.,uT))*uTurb*0.16*min(0.3+h,1.5);
+  // flutter: a spinning flake of ash generates lift that swings it around a small helix, so paths squiggle and sometimes loop
+  float fa=uFlutter*mix(0.08,0.42,hash11(P.w*41.7)), fw=6.2831853*mix(1.5,6.,hash11(P.w*13.9)), ph=hash11(P.w*77.7)*6.2831853, sg=hash11(P.w*5.3)<0.5?-1.:1.;
+  float tt=V.w*fw+ph; air+=vec3(cos(tt), 0.35*sin(tt*1.7+ph), sg*sin(tt))*fa;
+  float sz=esize(P.w);
+  // pop sparks are heavier and faster: they keep their momentum and arc back down
+  float tau=burst?0.35+0.6*sz:0.12+0.35*sz;
+  air.y-=burst?0.8+2.5*sz:0.22*sz;
+  V.xyz=mix(V.xyz,air,1.-exp(-uDt/tau));
   P.xyz+=V.xyz*uDt; V.w+=uDt;
   oP=P; oV=V;
 }`],
@@ -1334,7 +1348,7 @@ function stepEmbers(dt,t,burst){
   const rows=Math.max(1,Math.ceil(eCount()/ETW)), src=esim[eCur], dst=esim[1-eCur], dir=S.driftDir*Math.PI/180;
   gl.bindFramebuffer(gl.FRAMEBUFFER,dst.fb); tex(2,src.p); tex(3,src.v);
   const u={uPos:2,uVel:3,uDt:dt,uT:t,uERad:S.eRad,uEHeight:S.eHeight,uRise:S.eRise,uSpread:S.eSpread,uTurb:S.eTurb,uLifeScale:S.eLife,
-    uBurst:burst?1:0,uBurstSpeed:2.5+3*S.popSize,uBurstFrac:0.004+0.05*S.popSize,uEmit:[S.emitX,S.emitY,S.emitZ],uWind:[Math.cos(dir)*S.eWind,0,Math.sin(dir)*S.eWind],uBurstRow:EBROW};
+    uFlutter:S.eFlutter,uBurst:burst?1:0,uBurstSpeed:2.5+3*S.popSize,uBurstFrac:0.004+0.05*S.popSize,uEmit:[S.emitX,S.emitY,S.emitZ],uWind:[Math.cos(dir)*S.eWind,0,Math.sin(dir)*S.eWind],uBurstRow:EBROW};
   use(P.esim,u);
   gl.enable(gl.SCISSOR_TEST);
   gl.viewport(0,0,ETW,ETH); gl.scissor(0,0,ETW,rows); fsq();
@@ -1365,7 +1379,7 @@ function allocTargets(){
   T.gi=[hf32(T.gw,T.gh),hf32(T.gw,T.gh)]; T.giFB=T.gi.map(t=>mkFB([t]));
   T.gf=[hf(T.gw,T.gh,gl.NEAREST),hf(T.gw,T.gh,gl.NEAREST)]; T.gfFB=T.gf.map(t=>mkFB([t]));
   T.haze=hf(T.gw,T.gh); T.hazeFB=mkFB([T.haze]);
-  T.flame=hf(T.gw,T.gh); T.flameFB=mkFB([T.flame]);
+  T.flame=hf(W,H); T.flameFB=mkFB([T.flame]);
   T.plate=hf(W,H,gl.NEAREST); T.plateFB=mkFB([T.plate]);
   T.dofC=hf(W,H,gl.NEAREST); T.fg=hf(W,H,gl.NEAREST); T.dofFB=mkFB([T.dofC,T.fg]);
   T.acc=[hf32(W,H),hf32(W,H)]; T.accFB=T.acc.map(t=>mkFB([t]));
@@ -1572,8 +1586,8 @@ function render(now){
   tex(1,posC);
   use(P.haze,{...shadowU,uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uL:sunL,uSunCol:sunCol,uAmbE:ambE,uSunI:S.sunI,uHaze:S.haze,uHazeVar:S.hazeVar,uG:S.g,uFill:S.gi,uFrame:frameNo%997,uRes:[T.gw,T.gh],uFull:[W,H],uRoom:fireScene?0:1,uFireOn:fireOn,uFireP:fireP,uFireCol:fireCol});
   fsq();
-  if(S.flames){ gl.bindFramebuffer(gl.FRAMEBUFFER,T.flameFB);
-    use(P.flame,{uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uFireP:[S.emitX,S.emitY,S.emitZ],uFlameH:S.flameH*(0.9+0.1*fl),uFlameR:Math.max(S.eRad*0.95,0.05),uTime:simTime,uGain:5e6*Math.max(S.fireI,0.25)*(0.7+0.3*fl),uRes:[T.gw,T.gh],uFull:[W,H]}); fsq(); }
+  if(S.flames){ gl.bindFramebuffer(gl.FRAMEBUFFER,T.flameFB); gl.viewport(0,0,W,H);
+    use(P.flame,{uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uFireP:[S.emitX,S.emitY,S.emitZ],uFlameH:S.flameH*(0.9+0.1*fl),uFlameR:Math.max(S.eRad*0.95,0.05),uTime:simTime,uGain:4e6*Math.max(S.fireI,0.25)*(0.75+0.25*fl),uRes:[W,H],uFull:[W,H]}); fsq(); }
 
   // 4. plate
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.plateFB); gl.viewport(0,0,W,H);
@@ -1829,7 +1843,7 @@ const TABS=[
    {t:'btn',label:'Place emitter in viewer',id:'placeBtn',act:()=>setPlacing(placing==='emitter'?null:'emitter')},
    {t:'toggle',k:'showEmitter',label:'Show emitter'},
    {k:'eRad',label:'Emitter radius',min:0.02,max:2,step:0.01,unit:'m',dec:2,log:true},
-   {k:'eHeight',label:'Emitter height',min:0,max:1.5,step:0.01,unit:'m',dec:2},
+   {k:'eHeight',label:'Emission height',min:0,max:1.5,step:0.01,unit:'m',dec:2},
    {k:'eRate',label:'Ember rate',min:0,max:1500,step:1,unit:'/s',dec:0},
   ]],
   ['Embers',[
@@ -1841,7 +1855,8 @@ const TABS=[
   ]],
   ['Motion',[
    {k:'eRise',label:'Plume speed',min:0,max:6,step:0.05,unit:'m/s',dec:2},
-   {k:'eSpread',label:'Launch spread',min:0,max:2,step:0.01,unit:'m/s',dec:2},
+   {k:'eSpread',label:'Launch spread',min:0,max:2,step:0.01,dec:2},
+   {k:'eFlutter',label:'Flutter',min:0,max:2,step:0.01,dec:2},
    {k:'eTurb',label:'Turbulence',min:0,max:3,step:0.01,dec:2},
    {k:'eWind',label:'Wind',min:0,max:6,step:0.05,unit:'m/s',dec:2},
    {k:'pops',label:'Pops',min:0,max:4,step:0.01,unit:'/s',dec:2},
