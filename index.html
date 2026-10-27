@@ -221,7 +221,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     </section>
 
     <aside class="props" aria-label="MoteField properties">
-      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.5</span></div>
+      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.6</span></div>
       <div class="tabs" role="tablist" id="tabs"></div>
       <div class="knobs" id="knobs" role="tabpanel"></div>
     </aside>
@@ -799,7 +799,7 @@ motes: [HDR+NOISE+SHADOW+COC+MOTETYPE+`
 uniform sampler2D uPos, uVel; uniform int uTexW, uId;
 uniform mat4 uVPo, uVPc, uVPm, uViewM; uniform vec3 uCam, uL, uSunCol, uTint, uAmbE, uBMin, uBMax;
 uniform vec4 uVplP[${NVM}], uVplN[${NVM}], uVplF[${NVM}];
-uniform vec2 uRes; uniform float uShutter, uExpT, uMB, uSunI, uGI, uBright, uG, uGlint, uTumble, uFlakeScale, uFiberScale, uAmbVis, uSizeMin, uSizeMax, uSizeBias, uMaxR, uCat, uBladeRot, uFocalPx;
+uniform vec2 uRes; uniform float uShutter, uExpT, uMB, uSunI, uGI, uBright, uG, uGlint, uTumble, uFlakeScale, uFiberScale, uAmbVis, uSizeMin, uSizeMax, uSizeBias, uMaxR, uCat, uBladeRot, uFocalPx, uFocalRef;
 out vec2 vLocal; flat out vec4 vA; flat out vec4 vB; flat out vec4 vC; flat out vec4 vM; flat out vec3 vCol; flat out float vDepth; flat out vec2 vCat;
 void cull(){ gl_Position=vec4(-9.,-9.,0.,1.); vA=vec4(0.); vB=vec4(0.); vC=vec4(0.); vM=vec4(0.); vCol=vec3(0.); vLocal=vec2(0.); vCat=vec2(0.); vDepth=0.; }
 vec2 loc(vec2 v, vec2 d){ return vec2(dot(v,d), dot(v,vec2(-d.y,d.x))); }
@@ -824,7 +824,7 @@ void main(){
   vec4 c0=uVPo*vec4(p0,1.), c1=uVPc*vec4(p1,1.);
   if(c0.w<0.05||c1.w<0.05){ cull(); return; }
   vec2 s0=(c0.xy/c0.w*.5+.5)*uRes, s1=(c1.xy/c1.w*.5+.5)*uRes;
-  float coc=cocPx(depth); float R=clamp(abs(coc)*0.5,0.55,uMaxR);
+  float coc=cocPx(depth); float R=clamp(abs(coc)*0.5,0.25,uMaxR);
   vec2 seg=s1-s0; float L=min(length(seg)*0.5,120.);
   vec3 Vd=normalize(uCam-p); float dist=length(uCam-p);
   float ppm=uFocalPx/depth;
@@ -858,7 +858,8 @@ void main(){
   vec3 Ei=uAmbE*uGI;
   for(int i=0;i<${NVM};i++){ vec3 d=uVplP[i].xyz-p; float r2=dot(d,d)+0.12; vec3 l=d*inversesqrt(r2); Ei+=uVplF[i].rgb*max(dot(uVplN[i].xyz,-l),0.)/(PI*r2)*uGI; }
   rad+=Ei*uAmbVis*1.5;
-  vec3 col=rad*uTint*tcol*(uBright*0.8*sigma/(dist*dist))*fade;
+  // a point's light lands in one pixel, so its pixel value scales with 1/(pixel solid angle) = (focal length in pixels)²
+  vec3 col=rad*uTint*tcol*(uBright*0.8*sigma/(dist*dist))*fade*(uFocalPx*uFocalPx)/(uFocalRef*uFocalRef);
   if(uId==1){ vec3 ic= ty==0?vec3(1.,0.86,0.6): ty==1?vec3(0.35,0.8,1.): ty==2?vec3(1.,0.35,0.5): vec3(0.55,1.,0.45);
     col=ic*0.4*sqrt(sigma)*(0.25+0.75*min(vis,1.))*fade/max(dist,0.3); }
   float peak=max(col.r,max(col.g,col.b))/(PI*max(R*R,rs*rs)+1.);
@@ -873,7 +874,7 @@ void main(){
   vCat=loc(cat,dir);
   vA=vec4(float(ty), rs, sq, ang-rot);
   vB=vec4(loc(A,dir), loc(B,dir));
-  vC=vec4(loc(C,dir), fract(sd*7.77), 0.);
+  vC=vec4(loc(C,dir), fract(sd*7.77), rot);
   vM=vec4(L, R, coc, rot-uBladeRot);
   float pad=R<2.5?3.:1.5;
   vec2 corner=vec2(float(gl_VertexID&1), float((gl_VertexID>>1)&1))*2.-1.;
@@ -883,7 +884,7 @@ void main(){
   gl_Position=vec4(scr/uRes*2.-1.,0.,1.);
 }`, HDR+COC+`
 in vec2 vLocal; flat in vec4 vA; flat in vec4 vB; flat in vec4 vC; flat in vec4 vM; flat in vec3 vCol; flat in float vDepth; flat in vec2 vCat;
-uniform sampler2D uPosTex, uFgCol, uFgDepth; uniform float uBlades, uRound, uRing, uHold;
+uniform sampler2D uPosTex, uFgCol, uFgDepth; uniform float uBlades, uRound, uRing, uHold, uHoldScale;
 out vec4 o;
 const float PI=3.14159265;
 float erfA(float x){ float s=sign(x); x=abs(x); float t=1./(1.+0.3275911*x);
@@ -896,15 +897,18 @@ float aperture(vec2 q,float R){ vec2 qn=q/R; float aa=clamp(1.5/R,0.06,0.5); flo
   float e=(1.-smoothstep(1.-aa,1.+aa,m))*(1.-smoothstep(1.-aa,1.+aa,length(qn-vCat)));
   return e*(1.+uRing*(smoothstep(0.55,1.,m)*1.6-0.45))*(1.08-0.16*m*m)/(PI*R*R); }
 float gaussN(vec2 q,float s2){ return exp(-dot(q,q)/(2.*s2))/(2.*PI*s2); }
-float psf2(float R){ return R*R*0.25+0.09; }
+float psf2(float R){ return R*R*0.25+0.03; }
+// gaussian integrated over a whole pixel square, so a sub-pixel point keeps the same total energy wherever it sits
+float boxG(vec2 q,float s2){ float k=0.70710678/sqrt(s2); return 0.25*(erfA((q.x+0.5)*k)-erfA((q.x-0.5)*k))*(erfA((q.y+0.5)*k)-erfA((q.y-0.5)*k)); }
+vec2 toScreen(vec2 q){ float c=cos(vC.w), s=sin(vC.w); return vec2(c*q.x-s*q.y, s*q.x+c*q.y); }
 float pointD(vec2 q,float R){ float g=smoothstep(1.4,2.6,R); float v=0.;
-  if(g<1.) v+=gaussN(q,psf2(R))*(1.-g); if(g>0.) v+=aperture(q,R)*g; return v; }
-float gaussSegN(vec2 q,float L,float R){ float s2=psf2(R), s=sqrt(s2);
+  if(g<1.) v+=boxG(toScreen(q),psf2(R))*(1.-g); if(g>0.) v+=aperture(q,R)*g; return v; }
+float gaussSegN(vec2 q,float L,float R){ float s2=psf2(R)+0.083, s=sqrt(s2);
   if(L<0.05) return gaussN(q,s2);
   float py=exp(-q.y*q.y/(2.*s2))/(s*2.5066283);
   return py*0.5*(erfA((q.x+L)/(s*1.4142136))-erfA((q.x-L)/(s*1.4142136)))/(2.*L); }
 float pointMB(vec2 q,float L,float R){ float g=smoothstep(1.4,2.6,R), v=0.;
-  if(g<1.) v+=gaussSegN(q,L,R)*(1.-g);
+  if(g<1.) v+=(L<0.6 ? boxG(toScreen(q),psf2(R)) : gaussSegN(q,L,R))*(1.-g);
   if(g>0.){ if(L<0.3) v+=aperture(q,R)*g; else { float acc=0.; int n=int(clamp(ceil(2.*L/(R*0.5)),2.,12.));
       for(int i=0;i<12;i++){ if(i>=n) break; acc+=aperture(q-vec2(((float(i)+0.5)/float(n)*2.-1.)*L,0.),R); } v+=acc/float(n)*g; } }
   return v; }
@@ -947,7 +951,7 @@ void main(){
   else if(L<0.5) val=dens(vLocal,R);
   else val=(dens(vLocal+vec2(0.75*L,0.),R)+dens(vLocal+vec2(0.25*L,0.),R)+dens(vLocal-vec2(0.25*L,0.),R)+dens(vLocal-vec2(0.75*L,0.),R))*0.25;
   float hold=1.;
-  if(uHold>0.5){ ivec2 ip=ivec2(gl_FragCoord.xy);
+  if(uHold>0.5){ ivec2 ip=ivec2(gl_FragCoord.xy*uHoldScale);
     float sdp=texelFetch(uPosTex,ip,0).w;
     if(cocPx(sdp)>-1.5) hold*=smoothstep(-0.02,0.05,sdp-vDepth);
     float fa=texelFetch(uFgCol,ip,0).a, fd=texelFetch(uFgDepth,ip,0).r;
@@ -956,12 +960,15 @@ void main(){
 }`],
 
 comp: [FSQ_VS, HDR+`
-uniform sampler2D uDof, uDust, uHazeTex, uPosTex; uniform int uMode; uniform vec2 uRes; out vec4 o;
+uniform sampler2D uDof, uDust, uHazeTex, uPosTex; uniform int uMode; uniform vec2 uRes, uPlateRes; out vec4 o;
+vec4 bilin(sampler2D t, vec2 uv){ ivec2 sz=textureSize(t,0); vec2 g=uv*vec2(sz)-0.5; ivec2 i=ivec2(floor(g)); vec2 f=fract(g); ivec2 m=sz-1;
+  vec4 a=texelFetch(t,clamp(i,ivec2(0),m),0), b=texelFetch(t,clamp(i+ivec2(1,0),ivec2(0),m),0), c=texelFetch(t,clamp(i+ivec2(0,1),ivec2(0),m),0), d=texelFetch(t,clamp(i+ivec2(1,1),ivec2(0),m),0);
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y); }
 void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec2 uv=gl_FragCoord.xy/uRes;
-  vec3 plate=texelFetch(uDof,ip,0).rgb, dust=texelFetch(uDust,ip,0).rgb; vec3 c;
+  vec3 plate=bilin(uDof,uv).rgb, dust=texelFetch(uDust,ip,0).rgb; vec3 c;
   if(uMode==0) c=plate+dust; else if(uMode==1||uMode==6) c=dust; else if(uMode==2) c=plate;
   else if(uMode==3) c=texture(uHazeTex,uv).rgb*2.5+dust*0.25;
-  else { vec4 Pp=texelFetch(uPosTex,ip,0);
+  else { vec4 Pp=texelFetch(uPosTex,ivec2(uv*uPlateRes),0);
     if(uMode==4) c=clamp((Pp.xyz-vec3(-4.,0.,-6.))/vec3(8.,3.6,9.5),0.,1.);
     else c=vec3(clamp(1.-Pp.w/12.,0.,1.)); }
   o=vec4(c,1.); }`],
@@ -1071,7 +1078,7 @@ function seedSim(){ const pd=new Float32Array(MAXN*4), vd=new Float32Array(MAXN*
   for(const s of sim){ gl.bindTexture(gl.TEXTURE_2D,s.p); gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,TW,TH,gl.RGBA,gl.FLOAT,pd);
     gl.bindTexture(gl.TEXTURE_2D,s.v); gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,TW,TH,gl.RGBA,gl.FLOAT,vd); } }
 
-let W=0,H=0,T={}; const BL=5;
+let W=0,H=0,DW=0,DH=0,T={}; const BL=5;
 function freeT(){ const del=o=>{ if(o instanceof WebGLTexture) gl.deleteTexture(o); else if(o instanceof WebGLFramebuffer) gl.deleteFramebuffer(o); else if(o instanceof WebGLRenderbuffer) gl.deleteRenderbuffer(o); else if(Array.isArray(o)) o.forEach(del); };
   for(const k in T) del(T[k]); T={}; }
 function allocTargets(){
@@ -1085,10 +1092,10 @@ function allocTargets(){
   T.plate=hf(W,H,gl.NEAREST); T.plateFB=mkFB([T.plate]);
   T.dofC=hf(W,H,gl.NEAREST); T.fg=hf(W,H,gl.NEAREST); T.dofFB=mkFB([T.dofC,T.fg]);
   T.acc=[hf32(W,H),hf32(W,H)]; T.accFB=T.acc.map(t=>mkFB([t]));
-  T.dust=hf(W,H,gl.NEAREST); T.dustFB=mkFB([T.dust]);
-  T.hdr=hf(W,H); T.hdrFB=mkFB([T.hdr]);
+  T.dust=hf(DW,DH,gl.NEAREST); T.dustFB=mkFB([T.dust]);
+  T.hdr=hf(DW,DH); T.hdrFB=mkFB([T.hdr]);
   T.bs=[]; T.bd=[]; T.bdFB=[]; T.bu=[]; T.buFB=[];
-  for(let i=0;i<BL;i++){ const w=Math.max(1,Math.ceil(W/Math.pow(2,i+1))), h=Math.max(1,Math.ceil(H/Math.pow(2,i+1))); T.bs.push([w,h]);
+  for(let i=0;i<BL;i++){ const w=Math.max(1,Math.ceil(DW/Math.pow(2,i+1))), h=Math.max(1,Math.ceil(DH/Math.pow(2,i+1))); T.bs.push([w,h]);
     const d=hf(w,h); T.bd.push(d); T.bdFB.push(mkFB([d])); const u=hf(w,h); T.bu.push(u); T.buFB.push(mkFB([u])); }
   resetGI=true; resetDOF=true; prevVP=null;
 }
@@ -1268,15 +1275,16 @@ function render(now){
   resetGI=false; resetDOF=false;
 
   // 7. motes
-  gl.bindFramebuffer(gl.FRAMEBUFFER,T.dustFB); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,T.dustFB); gl.viewport(0,0,DW,DH); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+  const cocD={...coc,uResX:DW}, dScale=DW/1600;
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
   tex(2,st.p); tex(3,st.v); tex(4,T.dofC); tex(5,T.fg);
-  use(P.motes,{...shadowU,...coc,...typeU,uPos:2,uVel:3,uPosTex:1,uFgCol:4,uFgDepth:5,uTexW:TW,uId:viewMode===6?1:0,
+  use(P.motes,{...shadowU,...cocD,...typeU,uPos:2,uVel:3,uPosTex:1,uFgCol:4,uFgDepth:5,uTexW:TW,uId:viewMode===6?1:0,
     uVPo:co.vp,uVPc:cc.vp,uVPm:cm.vp,uViewM:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uTint:TINTS[S.tint],uAmbE:ambE,uBMin:BMIN,uBMax:BMAX,
     uVplP:vplP,uVplN:vplN,uVplF:vplF,
-    uRes:[W,H],uShutter:shutterT,uExpT:expT,uMB:S.mb?1:0,uSunI:S.sunI,uGI:S.gi,uBright:S.bright,uG:S.g,uGlint:S.glint,uTumble:S.tumble,
-    uFlakeScale:S.flakeScale,uFiberScale:S.fiberScale,uAmbVis:S.ambVis,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias,uMaxR:110*resScale+2,uCat:S.cat,
-    uBladeRot:S.bladeRot*Math.PI/180,uBlades:S.blades,uRound:S.round,uRing:S.ring,uHold:S.hold?1:0,uFocalPx:S.focal/film()*W});
+    uRes:[DW,DH],uShutter:shutterT,uExpT:expT,uMB:S.mb?1:0,uSunI:S.sunI,uGI:S.gi,uBright:S.bright,uG:S.g,uGlint:S.glint,uTumble:S.tumble,
+    uFlakeScale:S.flakeScale,uFiberScale:S.fiberScale,uAmbVis:S.ambVis,uSizeMin:S.sizeMin,uSizeMax:S.sizeMax,uSizeBias:S.sizeBias,uMaxR:110*dScale+2,uCat:S.cat,
+    uBladeRot:S.bladeRot*Math.PI/180,uBlades:S.blades,uRound:S.round,uRing:S.ring,uHold:S.hold?1:0,uHoldScale:W/DW,uFocalPx:S.focal/film()*DW,uFocalRef:1100});
   gl.bindVertexArray(emptyVAO); gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,count);
   gl.disable(gl.BLEND);
   for(let i=2;i<6;i++) tex(i,null);
@@ -1284,16 +1292,16 @@ function render(now){
   // 8. composite, glare, display
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.hdrFB);
   tex(2,T.acc[accIdx]); tex(3,T.dust); tex(4,T.haze);
-  use(P.comp,{uDof:2,uDust:3,uHazeTex:4,uPosTex:1,uMode:viewMode,uRes:[W,H]}); fsq();
+  use(P.comp,{uDof:2,uDust:3,uHazeTex:4,uPosTex:1,uMode:viewMode,uRes:[DW,DH],uPlateRes:[W,H]}); fsq();
   for(let i=1;i<5;i++) tex(i,null);
   for(let i=0;i<BL;i++){ const [w,h]=T.bs[i]; gl.bindFramebuffer(gl.FRAMEBUFFER,T.bdFB[i]); gl.viewport(0,0,w,h);
-    tex(1,i===0?T.hdr:T.bd[i-1]); use(P.down,{uTex:1,uSrc:i===0?[W,H]:T.bs[i-1],uRes:[w,h],uClampV:i===0?5:1e4}); fsq(); tex(1,null); }
+    tex(1,i===0?T.hdr:T.bd[i-1]); use(P.down,{uTex:1,uSrc:i===0?[DW,DH]:T.bs[i-1],uRes:[w,h],uClampV:i===0?5:1e4}); fsq(); tex(1,null); }
   for(let i=BL-2;i>=0;i--){ const [w,h]=T.bs[i]; gl.bindFramebuffer(gl.FRAMEBUFFER,T.buFB[i]); gl.viewport(0,0,w,h);
     tex(1,i===BL-2?T.bd[BL-1]:T.bu[i+1]); tex(2,T.bd[i]); use(P.up,{uLow:1,uCur:2,uLowRes:T.bs[i+1],uRes:[w,h]}); fsq(); tex(1,null); tex(2,null); }
-  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,H);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,DW,DH);
   tex(1,T.hdr); tex(2,T.bu[0]); tex(3,T.bd[1]);
   const expo=Math.pow(2,S.ev)*(S.expLink?Math.pow(4.0/S.fstop,2)*(S.shutter/180)*(24/S.fps):1);
-  use(P.final,{uHdr:1,uBloom:2,uHal:3,uMode:viewMode,uRes:[W,H],uExp:expo*1.25,uBloomAmt:S.bloom*0.06/BL,uHalAmt:S.halation,uGrain:S.grain,uVig:S.vig,uTanH:Math.tan(hfov()/2),uFrame:playing?frameNo%997:0});
+  use(P.final,{uHdr:1,uBloom:2,uHal:3,uMode:viewMode,uRes:[DW,DH],uExp:expo*1.25,uBloomAmt:S.bloom*0.06/BL,uHalAmt:S.halation,uGrain:S.grain,uVig:S.vig,uTanH:Math.tan(hfov()/2),uFrame:playing?frameNo%997:0});
   fsq();
   for(let i=1;i<4;i++) tex(i,null);
 
@@ -1312,7 +1320,7 @@ function watchSpeed(){
 
 /* =================== loupe =================== */
 const loupe=$('#loupe'), lctx=loupe.getContext('2d');
-function drawLoupe(){ const r=canvas.getBoundingClientRect(); const sx=loupePos.x/r.width*W, sy=loupePos.y/r.height*H; const z=6, n=192/z;
+function drawLoupe(){ const r=canvas.getBoundingClientRect(); const sx=loupePos.x/r.width*DW, sy=loupePos.y/r.height*DH; const z=6, n=192/z;
   lctx.imageSmoothingEnabled=false; lctx.fillStyle='#000'; lctx.fillRect(0,0,192,192);
   lctx.drawImage(canvas, sx-n/2, sy-n/2, n, n, 0, 0, 192, 192);
   lctx.strokeStyle='rgba(228,186,107,0.5)'; lctx.strokeRect(96-z/2,96-z/2,z,z); }
@@ -1348,7 +1356,7 @@ canvas.addEventListener('wheel',e=>{ e.preventDefault(); cam.dist=clamp(cam.dist
 function hud(count){
   $('#ovTL').innerHTML=`MoteField1 › Viewer1 · <b>${VIEWS[viewMode].toLowerCase()}</b> · bounce ${giN} spp`;
   $('#ovTR').textContent=`${count.toLocaleString()} motes · ${counter.fps.toFixed(0)} fps`;
-  $('#ovBL').textContent=`f ${String(Math.floor(simTime*S.fps)+1001).padStart(4,'0')} · ${W} × ${H} · ${S.format}${S.proxy?' · proxy':''}`;
+  $('#ovBL').textContent=`f ${String(Math.floor(simTime*S.fps)+1001).padStart(4,'0')} · ${DW} × ${DH}${W<DW?' (room '+W+')':''} · ${S.format}${S.proxy?' · proxy':''}`;
   $('#ovBR').textContent=`${Math.round(S.focal)}mm  T${S.fstop.toFixed(1)}  ${focusCur.toFixed(2)} m  ${Math.round(S.shutter)}°  ${S.fps}fps  ${FILMS[S.film].label}`;
 }
 function layout(){
@@ -1358,9 +1366,10 @@ function layout(){
   if(cw/ch>ar) cw=ch*ar; else ch=cw/ar;
   frameEl.style.width=cw+'px'; frameEl.style.height=ch+'px';
   if(!started) return;
-  const dpr=Math.min(window.devicePixelRatio||1,1.25);
-  let w=Math.round(cw*dpr*(S.proxy?0.5:1)); if(w>1920) w=1920; w=Math.max(w,160); const h=Math.round(w/ar);
-  if(w!==W||h!==H){ W=w; H=h; canvas.width=W; canvas.height=H; allocTargets(); }
+  const dprAll=window.devicePixelRatio||1;
+  let dw=Math.round(cw*Math.min(dprAll,2)); if(dw>2560) dw=2560; dw=Math.max(dw,160); const dh=Math.round(dw/ar);
+  let w=Math.round(cw*Math.min(dprAll,1.25)*(S.proxy?0.5:1)); if(w>1920) w=1920; w=Math.max(Math.min(w,dw),160); const h=Math.round(w/ar);
+  if(w!==W||h!==H||dw!==DW||dh!==DH){ W=w; H=h; DW=dw; DH=dh; canvas.width=DW; canvas.height=DH; allocTargets(); }
 }
 new ResizeObserver(()=>layout()).observe(vpEl);
 
