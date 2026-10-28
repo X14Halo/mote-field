@@ -40,6 +40,7 @@ button{font:inherit;color:inherit}
 .mark i{width:7px;height:7px;border-radius:50%;background:var(--dust);box-shadow:0 0 10px 2px rgba(228,186,107,.55);display:inline-block}
 .sub{color:var(--mute);font-family:var(--f-cond);font-size:13px;letter-spacing:.02em}
 .shotpick{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.topbar .seg button{padding:5px 10px;font-size:13px}
 .shotpick .plabel{margin:0 0 0 6px}
 .sel{background:var(--bin-2);color:var(--text);border:1px solid var(--rule);border-radius:3px;padding:5px 8px;font-family:var(--f-num);font-size:13px;cursor:pointer}
 .sel:hover{border-color:var(--dust)}
@@ -187,7 +188,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 }
 @media (prefers-reduced-motion:reduce){ .reticle,.loader,.lbar i{transition:none} }
 </style>
-<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust and ember node. Pick a sequence and shot, it rebuilds a rough 3D scene from that shot's utility pass, then adds physically based dust motes and embers with real bokeh, shutter motion blur and depth holdouts.">
+<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust and ember node. A full 3D dining room, a campfire, and a scene loader that rebuilds a rough 3D scene from a shot's utility pass, with physically based dust motes and embers, real bokeh, shutter motion blur and depth holdouts.">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
 </head>
 <body>
@@ -196,11 +197,12 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 <div class="app" id="app">
   <header class="topbar">
     <span class="mark"><i aria-hidden="true"></i>MOTEFIELD</span>
-    <div class="shotpick" role="group" aria-label="Shot">
+    <div class="seg" id="sceneseg" role="group" aria-label="Scene"></div>
+    <div class="shotpick" id="shotpick" role="group" aria-label="Shot" hidden>
       <label class="plabel" for="seqSel">SEQUENCE</label><select id="seqSel" class="sel"></select>
       <label class="plabel" for="shotSel">SHOT</label><select id="shotSel" class="sel"></select>
     </div>
-    <span class="phtag">Placeholder</span>
+    <span class="phtag" id="phtag" hidden>Placeholder</span>
     <span class="shotnote" id="shotNote"></span>
   </header>
   <div class="subbar">
@@ -243,7 +245,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
       </div>
       <div class="status">
         <span id="readout">Hover the viewer to read P and depth under the cursor</span>
-        <span class="hints">Click focus · Drag orbit · Scroll dolly · G gust · R run object · L loupe</span>
+        <span class="hints">Click/scroll focus · LMB orbit · MMB move · RMB dolly · G gust · R run · L loupe</span>
       </div>
     </section>
 
@@ -322,7 +324,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
   </div>
 
   <dl class="spec">
-    <div class="row"><dt>Scene from passes</dt><dd><h3>The shot rebuilds itself from its utility pass</h3>Pick a sequence and shot and MoteField finds that shot's utility pass in the pipeline, then turns world position into a rough 3D model of the shot: every pixel or few becomes a vertex, neighbours join into triangles, and the surface breaks wherever depth jumps, so a chair stays separate from the wall behind it. Normals and surface colour shade it, and a voxel copy feeds the bounce light. The camera comes from the EXR header, or is solved from the position pass when the header has none; depth alone also works when the header has a camera. Units and up axis are detected. Orbit around the rebuilt scene to place the dust volume, gusts and moving objects, then snap back to the shot camera. It only knows the surfaces the camera saw, which is enough for placement and holdouts; shadows come from each light's own depth pass. In this mockup the shots are placeholders: each one's utility pass is rendered in the browser from a stand-in set (an attic, a loft), and the tool only ever reads the pass.</dd></div>
+    <div class="row"><dt>Scene from passes</dt><dd><h3>The shot rebuilds itself from its utility pass</h3>Pick a sequence and shot and MoteField finds that shot's utility pass in the pipeline, then turns world position into a rough 3D model of the shot: every pixel or few becomes a vertex, neighbours join into triangles, and the surface breaks wherever depth jumps, so a chair stays separate from the wall behind it. Normals and surface colour shade it, and a voxel copy feeds the bounce light. The camera comes from the EXR header, or is solved from the position pass when the header has none; depth alone also works when the header has a camera. Units and up axis are detected. Orbit around the rebuilt scene to place the dust volume, gusts and moving objects, then snap back to the shot camera. On its own it only knows the surfaces the camera saw, so light could pour in where nothing was seen. Two things close that gap: each light's own depth pass for shadows, and a cheap 360° utility pass rendered from the shot camera's position (P only, six 90° faces), which closes the scene around the camera and records which directions are open sky, so sunlight only enters through real openings even when the light is moved. Toggle the coverage pass in the Shot tab to see the difference. In this mockup the shots are placeholders: each one's utility pass is rendered in the browser from a stand-in set (an attic, a loft), and the tool only ever reads the pass.</dd></div>
     <div class="row"><dt>What dust is</dt><dd><h3>Four kinds of mote, not one sphere</h3>Household dust is mostly fine mineral grit, flakes of skin and paper, textile lint and small clumps of fluff. Each type has its own size range, shape, scattering and drag. Grit is a sub-pixel point of light at most distances. Flakes tumble, change brightness with their angle to the sun and throw brief glints. Lint is a curling strand, millimetres long, often dyed. Fluff is a loose, wispy clump. Shapes only resolve when a mote is large, close and in focus, exactly as in a real plate. Use the Loupe or the Close-up look to see them.</dd></div>
     <div class="row"><dt>Light selection</dt><dd><h3>Choose which lights the dust appears in</h3>Because each light brings its own depth pass, every light becomes a checkbox on the node: dust in the key sun's shaft, not in the window fill, glowing near a practical lamp. Each light gets its own strength and tint. Turning a light off removes its beam from the dust instantly, with no new render. Distant lights such as the sun are the simplest case: their depth pass is a flat, parallel projection, exactly what this mockup uses. For a quicker setup without the extra passes, a per-light-group volume render or a hand-placed beam shape can stand in, with less accuracy in depth.</dd></div>
     <div class="row"><dt>Defocus</dt><dd><h3>Every mote renders its own bokeh</h3>Circle of confusion comes from focal length, T-stop, focus distance and film back. Each mote's shape is spread through the lens aperture, with blade count, rotation and cat's eye toward the frame edge. A defocused lint fibre becomes a soft streak, not a disc. Energy is conserved, so an out-of-focus mote gets larger and dimmer, never brighter.</dd></div>
@@ -337,7 +339,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div><span class="ph">PHASE 2</span><h4>Deterministic sim cache</h4><p>Seeded per shot and frame-addressable, so scrubbing, the farm and the artist's viewer all see the same motes. Motion vectors out for re-blur.</p></div>
     <div><span class="ph">PHASE 3</span><h4>NDK node + presets</h4><p>C++ node with show presets (dusty attic, cathedral, exterior pollen), multi-light support and deep output for deep comps.</p></div>
   </div>
-  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, press G for a gust and R to run the moving object, press L for a pixel loupe, and try the Looks along the top. Pick the Campfire sequence for the ember tool. Pick a sequence and shot at the top to rebuild a different shot (placeholders for now). The ID channel colours each mote by type.</p>
+  <p class="foot">The mockup renders in WebGL in the browser. Click or scroll in the viewer to rack focus, drag to orbit, middle-drag to move the camera, right-drag to dolly, press G for a gust and R to run the moving object, press L for a pixel loupe, and try the Looks along the top. Pick the Campfire sequence for the ember tool. Pick a sequence and shot at the top to rebuild a different shot (placeholders for now). The ID channel colours each mote by type.</p>
 </section>
 
 <script>
@@ -359,9 +361,9 @@ canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); failed=tr
 
 /* =================== parameters =================== */
 const DEF = {
-  scene:'shot',
+  scene:'room',
   // rebuilding the shot from its utility pass
-  meshStep:0, edgeBreak:0.03, shell:0.25, dustFar:0, shade:'color', upAxis:'y', enclosed:true,
+  meshStep:0, edgeBreak:0.03, shell:0.25, dustFar:0, shade:'color', upAxis:'y', enclosed:true, cover:true,
   density:180, sizeMin:4, sizeMax:60, sizeBias:2.4, flakes:18, fibers:1.2, fluff:0.4, flakeScale:1, fiberScale:1, fluffScale:0.6, fluffBright:0.5,
   bright:1.0, g:0.65, ambVis:0.35, glint:0.4, tumble:1, tint:'neutral', tintCustom:'#d9b88f',
   speed:1, drift:1.2, driftDir:200, lift:0, turb:3.0, eddy:1.4, micro:0.8, thermal:1.5, settle:0.5, puffAmt:1.2,
@@ -394,13 +396,17 @@ function tintRGB(){ let c=S.tint==='custom'?hexRGB(S.tintCustom):TINTS[S.tint]; 
 const VIEWS = ['Comp','Dust','Plate','Shafts','P','Z','ID'];
 let viewMode = 0;
 // parameters that change the plate (room image) and so restart its accumulation
-const PLATE_KEYS = new Set(['enclosed','sunAz','sunEl','sunI','sunK','cookie','atmos','haze','hazeVar','gi','fill','focal','film','format','focus','fstop','dof','blades','bladeRot','round','cat','proxy','fireI','emitX','emitY','emitZ']);
+const PLATE_KEYS = new Set(['cover','enclosed','sunAz','sunEl','sunI','sunK','cookie','atmos','haze','hazeVar','gi','fill','focal','film','format','focus','fstop','dof','blades','bladeRot','round','cat','proxy','fireI','emitX','emitY','emitZ']);
 const LIGHT_KEYS = new Set(['enclosed','sunAz','sunEl','sunI','sunK','cookie','fill','fireI','emitX','emitY','emitZ']);
 
 const CAM_DEFAULT = {E:[2.4,1.55,2.6], T:[-1.2,1.25,-3.0]};
 const CAM_FIRE = {E:[1.15,0.95,4.3], T:[0,0.78,0]};
-const SCENES = {shot:{label:'Dust shot', def:{format:'plate', fill:0.7}}, fire:{label:'Campfire', def:FIRE_DEF}};
+const SCENES = {room:{label:'Dining room', def:{}}, fire:{label:'Campfire', def:FIRE_DEF}, shot:{label:'Scene loader', def:{format:'plate', fill:0.7}}};
 const PRESETS = {
+ room:[
+  {id:'loft', label:'Sunlit loft', p:{}, cam:CAM_DEFAULT},
+  {id:'closeup', label:'Close-up', p:{focal:50, fstop:2.8, focus:1.3, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:{E:[-1.6,1.15,1.0], T:[-3.0,1.5,-3.5]}}
+ ],
  shot:[
   {id:'default', label:'Shot default', p:{}, cam:null},
   {id:'closeup', label:'Close-up', p:{fstop:2.8, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:'closeup'}
@@ -602,7 +608,7 @@ function buildFire(){
   box(GS,[-80,-2,-80],[80,80,80],[1,1,1],6,false,false);
 }
 const SCENE_GEO = {
-  room:{vmin:[-4.3,-0.06,-6.3], vsize:[8.6,3.96,10.1], bmin:[-3.95,0.02,-5.95], bmax:[3.95,3.56,3.45], cmin:[-3.85,0.15,-5.85], cmax:[3.85,3.25,3.35], lightC:[0,1.6,-1.5]},
+  room:{vmin:[-4.3,-0.06,-6.3], vsize:[8.6,3.96,10.1], bmin:[-3.95,0.02,-5.95], bmax:[3.95,3.56,3.45], cmin:[-3.85,0.15,-5.85], cmax:[3.85,3.25,3.35], lightC:[0,1.6,-1.5], hmin:[-4.0,-0.1,-6.0], hmax:[4.0,3.6,3.5]},
   fire:{vmin:[-7,-0.06,-9.5], vsize:[14,4.06,14], bmin:[-4,0.02,-4], bmax:[4,3.6,4], cmin:[-9,0.12,-9], cmax:[9,4,9], lightC:[0,1.2,0]}
 };
 let GEO=SCENE_GEO.room;
@@ -671,10 +677,18 @@ float leaves(vec2 uv){
 vec3 lightUV(vec3 p){ return (uLightVP*vec4(p,1.)).xyz*0.5+0.5; }
 bool outL(vec3 s){ return s.x<0.||s.y<0.||s.x>1.||s.y>1.; }
 // a rebuilt interior only knows the surfaces the camera saw, so sunlight may only come in through openings the camera saw as sky
-uniform sampler2D uSkyMask; uniform mat4 uShotVP; uniform float uOpenOnly; uniform vec3 uSunDir, uBoxLo, uBoxHi;
+uniform sampler2D uSkyMask, uCovMask; uniform mat4 uShotVP; uniform float uOpenOnly, uCovOn; uniform vec3 uSunDir, uBoxLo, uBoxHi, uCovPos;
+// the 360° coverage pass's sky mask: is the direction from the camera to q open sky? (six faces in one atlas)
+float covSky(vec3 q){ vec3 d=normalize(q-uCovPos), a=abs(d); float face; vec3 f, u=vec3(0.,1.,0.);
+  if(a.x>=a.y&&a.x>=a.z){ face=d.x>0.?0.:1.; f=vec3(sign(d.x),0.,0.); }
+  else if(a.z>=a.y){ face=d.z>0.?2.:3.; f=vec3(0.,0.,sign(d.z)); }
+  else { face=d.y>0.?4.:5.; f=vec3(0.,sign(d.y),0.); u=vec3(0.,0.,d.y>0.?-1.:1.); }
+  vec3 z=-f, x=normalize(cross(u,z)), y=cross(z,x); vec2 n=vec2(dot(d,x),dot(d,y))/max(-dot(d,z),1e-4)/tan(0.7853982*1.08);
+  vec2 uv=clamp(n*0.5+0.5,0.002,0.998); return texture(uCovMask,vec2((face+uv.x)/6.,1.-uv.y)).r; }
+float boxExit(vec3 p, vec3 dir){ vec3 d=vec3(abs(dir.x)<1e-5?1e-5:dir.x, abs(dir.y)<1e-5?1e-5:dir.y, abs(dir.z)<1e-5?1e-5:dir.z);
+  vec3 tb=(mix(uBoxLo,uBoxHi,step(0.,d))-p)/d; return max(min(tb.x,min(tb.y,tb.z)),0.); }
 float openVis(vec3 p){ if(uOpenOnly<0.5) return 1.;
-  vec3 d=vec3(abs(uSunDir.x)<1e-5?1e-5:uSunDir.x, abs(uSunDir.y)<1e-5?1e-5:uSunDir.y, abs(uSunDir.z)<1e-5?1e-5:uSunDir.z);
-  vec3 tb=(mix(uBoxLo,uBoxHi,step(0.,d))-p)/d; float te=max(min(tb.x,min(tb.y,tb.z)),0.);
+  float te=boxExit(p,uSunDir); if(uCovOn>0.5) return covSky(p+uSunDir*(te+0.05));
   vec4 c=uShotVP*vec4(p+uSunDir*te,1.); if(c.w<=0.) return 0.; vec2 uv=c.xy/c.w*0.5+0.5;
   if(uv.x<=0.||uv.y<=0.||uv.x>=1.||uv.y>=1.) return 0.; return texture(uSkyMask,vec2(uv.x,1.-uv.y)).r; }
 float sunVis(vec3 p){ vec3 s=lightUV(p); float o=openVis(p); if(outL(s)) return o;
@@ -829,6 +843,7 @@ void main(){
   if(vMat==6){ vec3 d=-V; vec3 c=mix(uSkyLo,uSkyHi,smoothstep(0.,0.6,d.y)); if(d.y<0.02) c=uSkyGnd;
     oDirect=vec4(c,0.); oNrm=vec4(0.); oAlb=vec4(0.); return; }
   vec3 N=dot(vN,vN)>1e-10?normalize(vN):vec3(0.,1.,0.); if(vMat==21 && uHideSkirt>0.5) discard;
+  if(vMat>=20 && uHideSkirt>0.5 && dot(vN,uCam-vP)<0.) discard;
   if((vMat==9||vMat==10||vMat>=20) && dot(N,V)<0.) N=-N;
   float nl=dot(N,uL); float vis=nl>0.?pcf(vP+N*0.02):0.;
   vec3 E=uSunCol*uSunI*max(nl,0.)*vis;
@@ -866,6 +881,7 @@ vec3 outside(vec3 d){ return d.y>0.02 ? mix(uSkyLo,uSkyHi,smoothstep(0.,0.6,d.y)
 uniform float uShotOn, uEnclosed; uniform vec3 uUnseen;
 // a ray that leaves the rebuilt scene: open sky if the shot camera saw sky that way, otherwise unseen surroundings
 vec3 env(vec3 p, vec3 d){ vec3 o=outside(d); if(uShotOn<0.5) return o; vec3 alt=uEnclosed>0.5?uUnseen:o;
+  if(uCovOn>0.5) return mix(uUnseen,o,covSky(p+d*(boxExit(p,d)+0.05)));
   vec3 dd=vec3(abs(d.x)<1e-5?1e-5:d.x, abs(d.y)<1e-5?1e-5:d.y, abs(d.z)<1e-5?1e-5:d.z);
   vec3 bmx=uVoxMin+vec3(uVoxDim)*uVoxS; vec3 tb=(mix(uVoxMin,bmx,step(0.,dd))-p)/dd; float te=max(min(tb.x,min(tb.y,tb.z)),0.);
   vec4 c=uShotVP*vec4(p+d*te,1.); if(c.w>0.){ vec2 uv=c.xy/c.w*0.5+0.5;
@@ -1519,11 +1535,11 @@ const blobs=[]; let gust=null, mover=null, gustTimer=0;
 const MAXBLOB=24, blobP=new Float32Array(MAXBLOB*4), blobV=new Float32Array(MAXBLOB*4);
 function addBlob(b){ blobs.push(b); while(blobs.length>MAXBLOB) blobs.shift(); }
 function gustDir(){ return nrm([S.gustDX,S.gustDY,S.gustDZ]); }
-function fireGust(){ if(S.scene!=='shot') return; gust={t:0,next:0}; }
+function fireGust(){ if(S.scene==='fire') return; gust={t:0,next:0}; }
 function moverPos(){ if(!mover) return null; const A=[S.movAX,S.movAY,S.movAZ], B=[S.movBX,S.movBY,S.movBZ], L=Math.max(len(sub(B,A)),1e-3);
   let u=mover.d/L; if(S.movMode==='pingpong'){ u=u%2; if(u>1) u=2-u; } else if(S.movMode==='loop') u=u%1; else u=Math.min(u,1);
   return add(A,scl(sub(B,A),u)); }
-function runMover(){ if(S.scene!=='shot') return; mover={d:0,prev:null,v:[0,0,0],wake:0,done:false}; }
+function runMover(){ if(S.scene==='fire') return; mover={d:0,prev:null,v:[0,0,0],wake:0,done:false}; }
 function stepInfluence(dt){
   if(gust){ const dur=S.gustDur, dir=gustDir(), o=[S.gustX,S.gustY,S.gustZ];
     while(gust.next<=gust.t && gust.t<dur){ const env=Math.sin(Math.PI*Math.min(gust.next/dur,1))*0.5+0.5;
@@ -1555,7 +1571,7 @@ let counter={t:performance.now(),n:0,fps:0,slow:0}, lastCam=null, loupeOn=false,
 function renderShadow(){
   gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFB); gl.viewport(0,0,SH,SH); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.clear(gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0);
-  use(P.depth,{uVP:lightVP}); drawScene(false);
+  use(P.depth,{uVP:lightVP}); drawScene(false); if(S.scene==='shot'&&S.cover&&meshCover) draw(meshCover);
   gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST);
 }
 function render(now){
@@ -1579,14 +1595,14 @@ function render(now){
     if(onLightPass){ lightVP=lp.vp; curShadow=lp.tex; } else { renderShadow(); curShadow=shadowTex; }
     if(was&&lp&&!onLightPass&&started) $('#readout').textContent='The key light moved off its depth pass, so shadows now come from the rebuilt geometry (surfaces the camera saw).';
     bakeMoteFill(); lightDirty=false; resetGI=true; resetDOF=true; }
-  const shotOn=S.scene==='shot'&&!!skyMaskTex, vmax=[0,1,2].map(k=>VMIN[k]+VDIM[k]*VS);
-  const shadowU={uShadow:0,uLightVP:lightVP,uCookie:S.cookie,uTime:simTime,uSkyMask:7,uShotVP:shotVP||IDENT,uOpenOnly:shotOn&&S.enclosed&&!onLightPass?1:0,uSunDir:sunL,uBoxLo:VMIN,uBoxHi:vmax};
+  const shotOn=S.scene==='shot'&&!!skyMaskTex, coverOn=shotOn&&S.cover&&!!meshCover, vmax=[0,1,2].map(k=>VMIN[k]+VDIM[k]*VS);
+  const shadowU={uShadow:0,uLightVP:lightVP,uCookie:S.cookie,uTime:simTime,uSkyMask:7,uShotVP:shotVP||IDENT,uOpenOnly:shotOn&&!onLightPass&&(coverOn||S.enclosed)?1:0,uCovOn:coverOn?1:0,uCovMask:8,uCovPos:SHOT?SHOT.cam.pos:[0,0,0],uSunDir:sunL,uBoxLo:VMIN,uBoxHi:vmax};
   const typeU={uFlake:S.flakes/100,uFiber:S.fibers/100,uFluff:S.fluff/100};
-  const count=S.scene==='shot'?Math.min(MAXN, Math.round(S.density*(BMAX[0]-BMIN[0])*(BMAX[1]-BMIN[1])*(BMAX[2]-BMIN[2]))):0;
+  const count=S.scene!=='fire'?Math.min(MAXN, Math.round(S.density*(BMAX[0]-BMIN[0])*(BMAX[1]-BMIN[1])*(BMAX[2]-BMIN[2]))):0;
   const foliage=S.cookie===2;
   gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
   for(let i=0;i<7;i++) tex(i,null);
-  tex(7,(S.scene==='shot'&&skyMaskTex)||blackTex);
+  tex(7,(S.scene==='shot'&&skyMaskTex)||blackTex); tex(8,(S.scene==='shot'&&covMaskTex)||blackTex);
   gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_3D,voxTex);
 
   tex(0,curShadow||shadowTex);
@@ -1617,7 +1633,8 @@ function render(now){
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS);
   const voidK=S.scene==='shot'&&!atShot()?0.012:1;
   use(P.raster,{...shadowU,uVP:cm.vpJ,uView:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uSunI:S.sunI,uSkyI:S.sunI*0.45,uFill:S.fill,uSkyLo:scl(skyLo,voidK),uSkyHi:scl(skyHi,voidK),uSkyGnd:scl(skyGnd,voidK),uCoal:coalCol,uShade:S.shade==='color'?1:S.shade==='normals'?2:0,uHideSkirt:voidK<1?1:0});
-  drawScene(true); gl.disable(gl.DEPTH_TEST); pickFB=T.rFB[posIdx];
+  drawScene(true); if(voidK<1&&S.cover&&meshCover){ gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(2,8); draw(meshCover); gl.disable(gl.POLYGON_OFFSET_FILL); }
+  gl.disable(gl.DEPTH_TEST); pickFB=T.rFB[posIdx];
 
   // 2. path-traced bounce light (half res), reprojected and accumulated
   const ck=S.cookie===1?0.45:S.cookie===2?0.5:1;
@@ -1774,7 +1791,7 @@ function placeAt(p,n){
 
 /* =================== the shot: a scene rebuilt from a utility pass =================== */
 // SHOT holds only what a render's utility pass provides: world position (P), normals (N), surface colour (C), and the camera.
-let SHOT=null, meshShot=null, shotStats=null, rebuildTimer=0, skyMaskTex=null, shotVP=null;
+let SHOT=null, meshShot=null, meshCover=null, covMaskTex=null, shotStats=null, rebuildTimer=0, skyMaskTex=null, shotVP=null;
 const validAt=(P,k)=>{ const x=P[k*3],y=P[k*3+1],z=P[k*3+2]; return Number.isFinite(x)&&Number.isFinite(y)&&Number.isFinite(z)&&(x!==0||y!==0||z!==0); };
 function mkIndexedMesh(vb,ib){ const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
   const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,vb,gl.STATIC_DRAW); const st=40;
@@ -1788,6 +1805,30 @@ function shotFocal(){ return SHOT? film()/(2*Math.tan(SHOT.cam.hfov/2)) : S.foca
 function autoDustFar(){ return SHOT? clamp(SHOT.medDepth*1.3,2.5,15) : 8; }
 function shotDefaults(){ if(!SHOT) return {}; const o={}; if(SHOT.cam.fstop) o.fstop=clamp(SHOT.cam.fstop,1.2,22); if(SHOT.cam.focus) o.focus=clamp(SHOT.cam.focus*SHOT.scale,0.3,20); return o; }
 
+// mesh the coverage faces: same edge breaks as the shot, normals from the surface, facing the camera
+function coverMesh(faces,cp){ const st=2, eb=S.edgeBreak*st*1.5, V=[], I=[];
+  for(const f of faces){ const {W,H,P,C}=f, gw=Math.ceil((W-1)/st)+1, gh=Math.ceil((H-1)/st)+1, base=V.length/10, ok=new Uint8Array(gw*gh), dist=new Float32Array(gw*gh);
+    for(let j=0;j<gh;j++) for(let i=0;i<gw;i++){ const v=j*gw+i, k=Math.min(j*st,H-1)*W+Math.min(i*st,W-1);
+      if(validAt(P,k)){ ok[v]=1; dist[v]=Math.hypot(P[k*3]-cp[0],P[k*3+1]-cp[1],P[k*3+2]-cp[2]); }
+      V.push(P[k*3],P[k*3+1],P[k*3+2],0,0,0,C[k*3],C[k*3+1],C[k*3+2],22); }
+    const near=(a,b)=>Math.abs(dist[a]-dist[b])<=eb*Math.min(dist[a],dist[b]);
+    const skirts=[];
+    for(let j=0;j<gh-1;j++) for(let i=0;i<gw-1;i++){ const a=j*gw+i,b=a+1,c=a+gw,d=c+1;
+      const t1=ok[a]&&ok[b]&&ok[c]&&near(a,b)&&near(a,c)&&near(b,c), t2=ok[b]&&ok[c]&&ok[d]&&near(b,d)&&near(c,d)&&near(b,c);
+      if(t1) I.push(base+a,base+c,base+b); if(t2) I.push(base+b,base+c,base+d);
+      if(!(t1&&t2)&&ok[a]&&ok[b]&&ok[c]&&ok[d]) skirts.push(a); }
+    // close every depth break with a skirt at the far side's depth, so seen from the camera the shell has no holes except real openings
+    for(const a of skirts){ const q=[a,a+1,a+gw,a+gw+1]; let far=a; for(const v of q) if(dist[v]>dist[far]) far=v;
+      const m=q.map(v=>{ if(near(v,far)) return base+v; const o=(base+v)*10, k=dist[far]/dist[v];
+        V.push(cp[0]+(V[o]-cp[0])*k, cp[1]+(V[o+1]-cp[1])*k, cp[2]+(V[o+2]-cp[2])*k, 0,0,0, V[(base+far)*10+6],V[(base+far)*10+7],V[(base+far)*10+8], 22); return V.length/10-1; });
+      I.push(m[0],m[2],m[1],m[1],m[2],m[3]); } }
+  const vb=new Float32Array(V), idx=new Uint32Array(I);
+  for(let t=0;t<idx.length;t+=3){ const a=idx[t]*10,b=idx[t+1]*10,c=idx[t+2]*10;
+    const ux=vb[b]-vb[a],uy=vb[b+1]-vb[a+1],uz=vb[b+2]-vb[a+2], wx=vb[c]-vb[a],wy=vb[c+1]-vb[a+1],wz=vb[c+2]-vb[a+2], nx=uy*wz-uz*wy, ny=uz*wx-ux*wz, nz=ux*wy-uy*wx;
+    for(const q of [a,b,c]){ vb[q+3]+=nx; vb[q+4]+=ny; vb[q+5]+=nz; } }
+  for(let o=0;o<vb.length;o+=10){ let nx=vb[o+3],ny=vb[o+4],nz=vb[o+5]; const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+    if(nx*(cp[0]-vb[o])+ny*(cp[1]-vb[o+1])+nz*(cp[2]-vb[o+2])<0){ nx=-nx; ny=-ny; nz=-nz; } vb[o+3]=nx; vb[o+4]=ny; vb[o+5]=nz; }
+  return {vb,idx}; }
 function reconstruct(){
   const {W,H,P,N,C,cam}=SHOT, cp=cam.pos;
   const st=Math.max(S.meshStep||Math.round(Math.max(W,H)/720), Math.ceil(Math.sqrt(W*H/2.2e6)), 1);
@@ -1831,7 +1872,10 @@ function reconstruct(){
   // extent of the scene (robust to stray far pixels)
   const pick=[]; const sstep=Math.max(1,Math.floor(nV/30000)); for(let v=0;v<nV;v+=sstep) if(ok[v]) pick.push(v);
   if(pick.length<50) throw new Error('The position pass has almost no valid pixels.');
-  const pct=(k,q)=>{ const a=pick.map(v=>vb[v*10+k]).sort((x,y)=>x-y); return a[Math.min(a.length-1,Math.max(0,Math.floor(q*(a.length-1))))]; };
+  const cv=SHOT.cover&&S.cover? coverMesh(SHOT.cover,cp) : null; freeMesh(meshCover); meshCover=cv&&cv.idx.length? mkIndexedMesh(cv.vb,cv.idx) : null;
+  const pts=[]; for(const v of pick) pts.push(vb[v*10],vb[v*10+1],vb[v*10+2]);
+  if(cv){ const cs=Math.max(1,Math.floor(cv.vb.length/10/30000)); for(let v=0;v<cv.vb.length/10;v+=cs){ const o=v*10; if(cv.vb[o]||cv.vb[o+1]||cv.vb[o+2]) pts.push(cv.vb[o],cv.vb[o+1],cv.vb[o+2]); } }
+  const pct=(k,q)=>{ const a=[]; for(let i=k;i<pts.length;i+=3) a.push(pts[i]); a.sort((x,y)=>x-y); return a[Math.min(a.length-1,Math.max(0,Math.floor(q*(a.length-1))))]; };
   let lo=[0,1,2].map(k=>pct(k,0.01)), hi=[0,1,2].map(k=>pct(k,0.99));
   const ext=[0,1,2].map(k=>hi[k]-lo[k]); const mg=Math.max(...ext)*0.05+0.05; lo=lo.map(x=>x-mg); hi=hi.map(x=>x+mg);
   const ctr=lo.map((x,k)=>(x+hi[k])/2), R=0.5*Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2]);
@@ -1840,13 +1884,14 @@ function reconstruct(){
   const [DX,DY,DZ]=VDIM, vox=new Uint8Array(DX*DY*DZ), thick=S.shell;
   const put=(x,y,z,a)=>{ const ix=Math.floor((x-VMIN[0])/VS), iy=Math.floor((y-VMIN[1])/VS), iz=Math.floor((z-VMIN[2])/VS);
     if(ix<0||iy<0||iz<0||ix>=DX||iy>=DY||iz>=DZ) return; const q=ix+iy*DX+iz*DX*DY; if(!vox[q]) vox[q]=a; };
-  for(let t=0;t<ni;t+=3){ const a=idx[t]*10,b=idx[t+1]*10,c=idx[t+2]*10;
+  const voxTris=(vb,idx,ni,thick)=>{ for(let t=0;t<ni;t+=3){ const a=idx[t]*10,b=idx[t+1]*10,c=idx[t+2]*10;
     const L=Math.max(Math.hypot(vb[b]-vb[a],vb[b+1]-vb[a+1],vb[b+2]-vb[a+2]),Math.hypot(vb[c]-vb[a],vb[c+1]-vb[a+1],vb[c+2]-vb[a+2]));
     const n=Math.max(1,Math.ceil(L/(VS*0.7))), alb=Math.max(2,Math.round(255*(shade==='color'?(0.2126*vb[a+6]+0.7152*vb[a+7]+0.0722*vb[a+8]):0.45)));
     for(let s1=0;s1<=n;s1++) for(let s2=0;s2<=n-s1;s2++){ const u=s1/n, w=s2/n;
       const x=vb[a]+(vb[b]-vb[a])*u+(vb[c]-vb[a])*w, y=vb[a+1]+(vb[b+1]-vb[a+1])*u+(vb[c+1]-vb[a+1])*w, z=vb[a+2]+(vb[b+2]-vb[a+2])*u+(vb[c+2]-vb[a+2])*w;
       put(x,y,z,alb);
-      if(thick>VS*0.5){ const dx=x-cp[0],dy=y-cp[1],dz=z-cp[2], dl=Math.hypot(dx,dy,dz)||1; for(let d=VS*0.7; d<=thick; d+=VS*0.7) put(x+dx/dl*d,y+dy/dl*d,z+dz/dl*d,alb); } } }
+      if(thick>VS*0.5){ const dx=x-cp[0],dy=y-cp[1],dz=z-cp[2], dl=Math.hypot(dx,dy,dz)||1; for(let d=VS*0.7; d<=thick; d+=VS*0.7) put(x+dx/dl*d,y+dy/dl*d,z+dz/dl*d,alb); } } } };
+  voxTris(vb,idx,ni,thick); if(cv) voxTris(cv.vb,cv.idx,cv.idx.length,thick);
   if(voxTex) gl.deleteTexture(voxTex);
   voxTex=gl.createTexture(); gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_3D,voxTex); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
   gl.texImage3D(gl.TEXTURE_3D,0,gl.R8,DX,DY,DZ,0,gl.RED,gl.UNSIGNED_BYTE,vox);
@@ -1864,11 +1909,15 @@ function reconstruct(){
     hmin:lo, hmax:hi, hazeFar:clamp(SHOT.medDepth*2,16,80)};
   GEO=SCENE_GEO.shot; BMIN=bmin; BMAX=bmax;
   GS.length=0; box(GS,ctr.map(x=>x-R*6),ctr.map(x=>x+R*6),[1,1,1],6,false,false); freeMesh(meshSky); meshSky=mkMesh(GS);
+  if(covMaskTex){ gl.deleteTexture(covMaskTex); covMaskTex=null; }
+  if(cv){ const F=SHOT.cover, fw=F[0].W, fh=F[0].H, mk=new Uint8Array(fw*6*fh);
+    F.forEach((f,i)=>{ for(let y=0;y<fh;y++) for(let x=0;x<fw;x++) mk[y*fw*6+i*fw+x]=validAt(f.P,y*fw+x)?0:255; });
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT,1); covMaskTex=mkTex(fw*6,fh,gl.R8,gl.RED,gl.UNSIGNED_BYTE,gl.LINEAR,mk); gl.pixelStorei(gl.UNPACK_ALIGNMENT,4); }
   if(skyMaskTex) gl.deleteTexture(skyMaskTex);
   { const mk=new Uint8Array(W*H); for(let k=0;k<W*H;k++) mk[k]=validAt(P,k)?0:255; gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
     skyMaskTex=mkTex(W,H,gl.R8,gl.RED,gl.UNSIGNED_BYTE,gl.LINEAR,mk); gl.pixelStorei(gl.UNPACK_ALIGNMENT,4); }
   { const fw=scl(cam.back,-1), vf=2*Math.atan(Math.tan(cam.hfov/2)/(W/H)); shotVP=mul(persp(vf,W/H,0.05,1e4), lookAt(cp,add(cp,fw),cam.up)); }
-  shotStats={tris:ni/3, step:st, verts:nV, broken:quads? broken/(quads+broken):0, grid:VDIM.join(' × '), vs:VS};
+  shotStats={cover:cv?cv.idx.length/3:0, tris:ni/3, step:st, verts:nV, broken:quads? broken/(quads+broken):0, grid:VDIM.join(' × '), vs:VS};
   updateLight(); resetGI=true; resetDOF=true; prevVP=null;
   const el=$('#shotInfo'); if(el) el.innerHTML=shotInfoHTML();
 }
@@ -1983,9 +2032,8 @@ const SEQS=[
    {id:'sh0010', label:'wide', cam:{E:[1.7,1.3,2.35],T:[-0.6,1.0,-4.2],focal:24,fstop:4,focus:4.0}},
    {id:'sh0020', label:'workbench', cam:{E:[2.1,1.3,-1.4],T:[0.2,1.15,-4.8],focal:35,fstop:2.8,focus:3.4}},
    {id:'sh0030', label:'skylight shaft', cam:{E:[1.9,0.85,-0.2],T:[-1.6,1.9,-2.5],focal:32,fstop:2.8,focus:2.4}}]},
- {id:'sq020', label:'Loft', kind:'pass', build:buildRoom, pal:true, light:{C:[0,1.6,-1.5],R:8.5}, def:{}, handInfl:true, cu:[0.24,0.56,0.72], shots:[
+ {id:'sq020', label:'Dining room', kind:'pass', build:buildRoom, pal:true, light:{C:[0,1.6,-1.5],R:8.5}, def:{}, handInfl:true, cu:[0.24,0.56,0.72], shots:[
    {id:'sh0010', label:'window light', cam:{E:CAM_DEFAULT.E,T:CAM_DEFAULT.T,focal:32,fstop:4,focus:4.5}}]},
- {id:'sq030', label:'Campfire', kind:'fire', shots:[{id:'sh0010', label:'embers'}]}
 ];
 let curSeq=0, curShotI=0; const shotCache={}, lightCache={};
 const seqDef=()=>SHOT&&SHOT.seq?SHOT.seq.def:{};
@@ -2010,11 +2058,22 @@ function makePlaceholderPass(q,sh){
     gl.bindFramebuffer(gl.FRAMEBUFFER,ls.fb); gl.viewport(0,0,SH,SH); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.clear(gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0); use(P.depth,{uVP:lvp}); draw(m); gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST);
     lp=lightCache[q.id]={tex:ls.tex,fb:ls.fb,az:q.def.sunAz??DEF.sunAz,el:q.def.sunEl??DEF.sunEl,vp:lvp}; }
+  // a 360° utility pass from the shot camera's position (six 90° faces): everything around the camera, not just in frame
+  const CW=320, cover=[], ctx=[0,1,2].map(()=>mkTex(CW,CW,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST)), cdr=depthRB(CW,CW), cfb=mkFB(ctx,cdr);
+  for(const [f,u] of [[[1,0,0],[0,1,0]],[[-1,0,0],[0,1,0]],[[0,0,1],[0,1,0]],[[0,0,-1],[0,1,0]],[[0,1,0],[0,0,-1]],[[0,-1,0],[0,0,1]]]){
+    const v=lookAt(E,add(E,f),u), vp2=mul(persp(Math.PI/2*1.08,1,0.03,80),v);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,cfb); gl.viewport(0,0,CW,CW); for(let i=0;i<3;i++) gl.clearBufferfv(gl.COLOR,i,[0,0,0,0]); gl.clearBufferfv(gl.DEPTH,0,[1]);
+    gl.enable(gl.DEPTH_TEST); use(P.util,{uVP:vp2,uView:v,uCam:E}); draw(m); gl.disable(gl.DEPTH_TEST);
+    const b0=new Float32Array(CW*CW*4), b2=new Float32Array(CW*CW*4); gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0,0,CW,CW,gl.RGBA,gl.FLOAT,b0); gl.readBuffer(gl.COLOR_ATTACHMENT2); gl.readPixels(0,0,CW,CW,gl.RGBA,gl.FLOAT,b2);
+    const fP=new Float32Array(CW*CW*3), fC=new Float32Array(CW*CW*3);
+    for(let y=0;y<CW;y++) for(let x=0;x<CW;x++){ const s_=((CW-1-y)*CW+x)*4, o=(y*CW+x)*3; if(b0[s_+3]<0.5) continue; for(let k=0;k<3;k++){ fP[o+k]=b0[s_+k]; fC[o+k]=b2[s_+k]; } }
+    cover.push({W:CW,H:CW,P:fP,C:fC}); }
+  ctx.forEach(t=>gl.deleteTexture(t)); gl.deleteRenderbuffer(cdr); gl.deleteFramebuffer(cfb);
   freeMesh(m); GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
   const cam={pos:[...E], right:[view[0],view[4],view[8]], up:[view[1],view[5],view[9]], back:[view[2],view[6],view[10]], hfov:hf, focal:sh.cam.focal, fstop:sh.cam.fstop, focus:sh.cam.focus};
   const prev=SHOT;
   setShot({W:RW,H:RH,P:Pp,N:Nn,C:Cc,cam,scale:1,label:`${q.id}_${sh.id}`,seq:q,shot:sh,path:passPath(q,sh),up:'y',autoInfl:!q.handInfl,cu:sh.cu||q.cu||[0.5,0.5,0.5],
-    layers:{P:'P',N:'N',C:'surfaceColor',Z:'depth'}, units:'metres', camSrc:'from the EXR header', lightPass:lp});
+    layers:{P:'P',N:'N',C:'surfaceColor',Z:'depth'}, units:'metres', camSrc:'from the EXR header', lightPass:lp, cover});
   const out=SHOT; SHOT=prev; return out;
 }
 function setShot(sh){
@@ -2041,9 +2100,8 @@ function enterShot(){
 // picking a sequence and shot: the real node would look up that shot's utility pass in the pipeline
 async function selectShot(qi,si){
   if(!started||switching) return; const q=SEQS[qi], sh=q.shots[si]; if(!sh) return;
-  if(q.kind==='fire'){ curSeq=qi; curShotI=si; syncShotPicker(); if(S.scene!=='fire') await switchScene('fire'); syncShotPicker(); return; }
   const key=q.id+'/'+sh.id; if(S.scene==='shot'&&SHOT&&SHOT.label===`${q.id}_${sh.id}`){ syncShotPicker(); return; }
-  curSeq=qi; curShotI=si; syncShotPicker();
+  curSeq=qi; curShotI=si; if(S.scene!=='shot') curTab='shot'; syncShotPicker();
   switching=true; setPlacing(null); const ld=$('#loader'); ld.classList.remove('done');
   try{
     progress(0.1,`Looking up the utility pass for ${q.id} / ${sh.id}`); await nextFrame();
@@ -2056,19 +2114,21 @@ const seqSel=$('#seqSel'), shotSel=$('#shotSel');
 function buildShotPicker(){
   seqSel.innerHTML=SEQS.map((q,i)=>`<option value="${i}">${q.id} · ${q.label}</option>`).join('');
   seqSel.onchange=()=>selectShot(+seqSel.value,0); shotSel.onchange=()=>selectShot(curSeq,+shotSel.value); syncShotPicker(); }
-function syncShotPicker(){ const q=SEQS[curSeq];
+function syncShotPicker(){ const q=SEQS[curSeq], ld=S.scene==='shot';
+  $('#shotpick').hidden=!ld; $('#phtag').hidden=!ld; [...sceneSeg.children].forEach((b,i)=>b.setAttribute('aria-pressed',Object.keys(SCENES)[i]===S.scene));
   seqSel.value=String(curSeq); shotSel.innerHTML=q.shots.map((s,i)=>`<option value="${i}">${s.id} · ${s.label}</option>`).join(''); shotSel.value=String(curShotI);
-  $('#shotNote').textContent = q.kind==='fire'
-    ? 'Hand-built stand-in for the ember demo. The real node would rebuild this shot from its utility pass, like the attic.'
-    : 'Stand-in set: this shot\'s utility pass is rendered in your browser. The real node finds the pass for the shot you pick in the pipeline and rebuilds the scene from it.'; }
-const shotName=()=>{ const q=SEQS[curSeq]; return `${q.id}_${q.shots[curShotI].id}`; };
+  $('#shotNote').textContent = S.scene==='room' ? 'Hand-built stand-in set in full 3D. Switch to Scene loader to see shots rebuilt from their utility passes.'
+    : S.scene==='fire' ? 'Hand-built stand-in set for the ember tool.'
+    : 'Placeholder shots: each utility pass is rendered in your browser from a stand-in set. The real node finds the pass for the shot you pick in the pipeline and rebuilds the scene from it.'; }
+const shotName=()=>{ if(S.scene==='room') return 'dining_room'; if(S.scene==='fire') return 'campfire'; const q=SEQS[curSeq]; return `${q.id}_${q.shots[curShotI].id}`; };
 function shotInfoHTML(){
   if(!SHOT) return '<p class="note">No shot loaded.</p>';
   const s=SHOT, st=shotStats, yes=(v,l)=>v?`<span class="ok">✓</span> ${l}`:`<span class="no">–</span> ${l}`;
   const rows=[['Shot',`${s.seq.id} / ${s.shot.id} · ${s.shot.label}`],['Pass',`<span class="no">${s.path}</span>`],['Status','placeholder pass, rendered from a stand-in set'],['Resolution',`${s.W} × ${s.H}`],
     ['Layers',[s.layers.P,s.layers.N,s.layers.C,s.layers.Z].filter(Boolean).map(l=>yes(1,l)).join('  ')],
     ['Camera',`${s.camSrc} · ${s.cam.focal}mm · ${(s.cam.hfov*180/Math.PI).toFixed(1)}° wide`],['Units',s.units],
-    ['Key light depth',s.lightPass?yes(1,'sun depth pass'):yes(0,'shadows from rebuilt geometry')]];
+    ['Key light depth',s.lightPass?yes(1,'sun depth pass'):yes(0,'shadows from rebuilt geometry')],
+    ['Coverage',s.cover&&S.cover?yes(1,`360° utility pass · 6 × ${s.cover[0].W}²${st&&st.cover?` · ${Math.round(st.cover).toLocaleString()} triangles`:''}`):yes(0,'off: only what is in frame exists')]];
   if(st) rows.push(['Rebuilt',`${Math.round(st.tris).toLocaleString()} triangles · every ${st.step===1?'pixel':st.step+' px'} · ${Math.round(st.broken*100)}% at edges`]);
   return '<dl>'+rows.map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join('')+'</dl>';
 }
@@ -2097,11 +2157,21 @@ function pickAt(sx,sy){ if(!pickFB||!lastCam) return null; const r=canvas.getBou
   gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(x,y,1,1,gl.RGBA,gl.FLOAT,b); gl.bindFramebuffer(gl.READ_FRAMEBUFFER,null);
   const p=[b[0],b[1],b[2]]; if(dot(n,sub(lastCam.E,p))<0) n=scl(n,-1); return {p,n,d:b[3]}; }
 let drag=null;
-canvas.addEventListener('pointerdown',e=>{ drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch,moved:false,thr:e.pointerType==='mouse'?4:14}; canvas.setPointerCapture(e.pointerId); });
+// left drag orbits, middle drag moves the camera sideways and up/down, right drag dollies in and out
+canvas.addEventListener('pointerdown',e=>{ if(drag) return; const mode=e.button===1?'pan':e.button===2?'dolly':'orbit'; if(e.button===1) e.preventDefault();
+  drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch,T:[...cam.T],dist:cam.dist,mode,moved:false,thr:e.pointerType==='mouse'?4:14}; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('mousedown',e=>{ if(e.button===1) e.preventDefault(); });
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('pointermove',e=>{
   const r=canvas.getBoundingClientRect(); loupePos={x:e.clientX-r.left,y:e.clientY-r.top}; if(loupeOn) placeLoupe(loupePos.x,loupePos.y);
   if(drag){ const dx=e.clientX-drag.x, dy=e.clientY-drag.y; if(Math.hypot(dx,dy)>drag.thr) drag.moved=true;
-    if(drag.moved){ cam.yaw=drag.yaw-dx*0.0035; cam.pitch=clamp(drag.pitch+dy*0.0035,-1.1,1.1); } return; }
+    if(drag.moved){
+      if(drag.mode==='orbit'){ cam.yaw=drag.yaw-dx*0.0035; cam.pitch=clamp(drag.pitch+dy*0.0035,-1.1,1.1); }
+      else if(drag.mode==='dolly'){ cam.dist=clamp(drag.dist*Math.exp(dy*0.005),0.3,GEO.maxDist||9); }
+      else { const c=camAt(simTime), f=nrm(sub(c.T,c.E)), rt=nrm(cross(f,c.up||[0,1,0])), up=cross(rt,f);
+        const k=2*cam.dist*Math.tan(Math.atan(Math.tan(hfov()/2)/aspect()))/Math.max(r.height,1);
+        cam.T=add(drag.T,add(scl(rt,-dx*k),scl(up,dy*k))); } }
+    return; }
   if(!lastCam||placing) return; const now=performance.now(); if(now-pickT<60) return; pickT=now;
   const h=pickAt(e.clientX-r.left,e.clientY-r.top);
   if(!h){ $('#readout').textContent=S.scene==='shot'?'Nothing here in the position pass (sky or empty)':'Sky'; return; }
@@ -2110,12 +2180,16 @@ canvas.addEventListener('pointermove',e=>{
   $('#readout').textContent=`P ${f(p[0])} ${f(p[1])} ${f(p[2])}   depth ${d.toFixed(2)} m   CoC ${Math.abs(c).toFixed(1)} px ${Math.abs(c)<1?'(in focus)':c<0?'(front)':'(behind)'}`;
 });
 canvas.addEventListener('pointerleave',()=>{ if(!drag) loupePos=null; });
-canvas.addEventListener('pointerup',e=>{ if(!drag) return; const wasDrag=drag.moved; drag=null; if(wasDrag||!lastCam) return;
+canvas.addEventListener('pointerup',e=>{ if(!drag) return; const wasDrag=drag.moved||drag.mode!=='orbit'; drag=null; if(wasDrag||!lastCam) return;
   const r=canvas.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top, h=pickAt(sx,sy);
   if(placing){ if(h){ placeAt(h.p,h.n); showReticle(sx,sy,true); $('#readout').textContent='Placed'; } setPlacing(null); return; }
   { rackFocus(h?h.d:20); showReticle(sx,sy,false); } });
 canvas.addEventListener('pointercancel',()=>{drag=null;});
-canvas.addEventListener('wheel',e=>{ e.preventDefault(); cam.dist=clamp(cam.dist*Math.exp(e.deltaY*0.0012),0.3,GEO.maxDist||9); },{passive:false});
+// the wheel racks focus; with Shift (or a trackpad pinch) it dollies instead
+canvas.addEventListener('wheel',e=>{ e.preventDefault();
+  if(e.shiftKey||e.ctrlKey){ cam.dist=clamp(cam.dist*Math.exp((e.deltaY||e.deltaX)*0.0012),0.3,GEO.maxDist||9); return; }
+  S.focus=+clamp(S.focus*Math.exp(-e.deltaY*0.0012),0.3,20).toFixed(3); focusAnim=null; focusCur=S.focus; resetDOF=true;
+  syncKnob('focus'); drawRing(); markPreset(null); $('#readout').textContent=`Focus ${S.focus.toFixed(2)} m`; },{passive:false});
 
 function hud(count){
   $('#ovTL').innerHTML=`${shotName()} · MoteField1 · <b>${VIEWS[viewMode].toLowerCase()}</b> · bounce ${giN} spp`;
@@ -2150,15 +2224,16 @@ const TABS=[
    {k:'shell',label:'Shell thickness',min:0.02,max:3,step:0.01,unit:'m',dec:2,log:true},
    {k:'dustFar',label:'Dust depth',min:0,max:80,step:0.1,unit:'m',dec:1,fmt:v=>v<=0?'auto':v.toFixed(1)},
    {t:'seg',k:'shade',label:'Show as',opts:[['clay','Clay'],['color','Colour'],['normals','Normals']]},
+   {t:'toggle',k:'cover',label:'360° coverage pass'},
    {t:'toggle',k:'enclosed',label:'Interior'},
-   {t:'note',text:'Edge break splits the surface where depth jumps between neighbouring pixels, so foreground objects don\'t stretch into the background. Shell thickness gives the one-sided surfaces some depth for bounce light and shadows. Interior treats what the camera can\'t see as more room rather than open sky. Dust fills the camera\'s view out to the dust depth.'}
+   {t:'note',text:'Edge break splits the surface where depth jumps between neighbouring pixels, so foreground objects don\'t stretch into the background. Shell thickness gives the one-sided surfaces some depth for bounce light and shadows. The 360° coverage pass is a second utility pass rendered from the shot camera\'s position in every direction; it closes the scene around the camera so light can\'t pour in where the shot saw nothing. Turn it off to see the leak. Without it, Interior treats what the camera can\'t see as more room rather than open sky. Dust fills the camera\'s view out to the dust depth.'}
   ]],
   ['View',[
    {t:'btn',label:'Back to shot camera',act:()=>applyShotCam()},
    {t:'note',text:'Orbit away to see the rebuilt scene in 3D and place things; the blue frustum is the shot camera. Only surfaces the camera saw exist, so the far side of objects is open.'}
   ]]
  ]},
- {id:'dust',label:'Dust',scenes:['shot'],groups:[
+ {id:'dust',label:'Dust',scenes:['room','shot'],groups:[
   ['Population',[
    {k:'density',label:'Density',min:20,max:500,step:1,unit:'/m³',log:true,dec:0},
    {k:'flakes',label:'Skin & paper flakes',min:0,max:60,step:0.5,unit:'%',dec:1},
@@ -2186,7 +2261,7 @@ const TABS=[
   ]],
   ['',[{t:'note',text:'At real size, almost every mote is smaller than a pixel, so in focus it reads as a point of light and out of focus it takes the shape of the lens aperture. Only large lint and fluff that is close and in focus shows its own shape; press L for a pixel loupe.'},{t:'btn',label:'Reseed motes',act:()=>seedSim()}]]
  ]},
- {id:'motion',label:'Motion',scenes:['shot'],groups:[
+ {id:'motion',label:'Motion',scenes:['room','shot'],groups:[
   ['Air',[
    {k:'speed',label:'Playback speed',min:0,max:3,step:0.01,unit:'×',dec:2},
    {k:'drift',label:'Drift',min:0,max:20,step:0.1,unit:'cm/s',dec:1},
@@ -2202,7 +2277,7 @@ const TABS=[
   ]],
   ['',[{t:'note',text:'Grit settles; lint and fluff hang in the air. For gusts and things moving through the dust, use the Influence tab.'}]]
  ]},
- {id:'influence',label:'Influence',scenes:['shot'],groups:[
+ {id:'influence',label:'Influence',scenes:['room','shot'],groups:[
   ['Gust of wind',[
    {t:'btn',label:'Place gust source',id:'placeGust',act:()=>setPlacing(placing==='gust'?null:'gust')},
    {t:'btn',label:'Aim gust at a point',id:'aimGust',act:()=>setPlacing(placing==='gustAim'?null:'gustAim')},
@@ -2268,8 +2343,9 @@ const TABS=[
    {k:'sunEl',label:'Elevation',min:5,max:85,step:0.5,unit:'°',dec:1},
    {k:'sunI',label:'Intensity',min:0,max:14,step:0.05,dec:2},
    {k:'sunK',label:'Colour temp',min:2500,max:8000,step:50,unit:'K',dec:0},
-   {t:'seg',k:'cookie',label:'Breakup',opts:[[0,'None'],[2,'Leaves']]},
-   {t:'note',scenes:['shot'],text:'In the demo, shadows come from the key light\'s own depth pass, as they would in production. Move the light and they fall back to the rebuilt geometry, which only knows the surfaces the camera saw.'}
+   {t:'seg',k:'cookie',label:'Window',scenes:['room'],opts:[[0,'Open'],[1,'Blinds'],[2,'Foliage']]},
+   {t:'seg',k:'cookie',label:'Breakup',scenes:['shot','fire'],opts:[[0,'None'],[2,'Leaves']]},
+   {t:'note',scenes:['shot'],text:'Shadows come from the key light\'s own depth pass, as they would in production. Move the light and they fall back to the rebuilt geometry, closed around the camera by the 360° coverage pass.'}
   ]],
   ['Bounce',[
    {k:'gi',label:'Bounce light',min:0,max:2,step:0.01,unit:'×',dec:2},
@@ -2290,7 +2366,7 @@ const TABS=[
   ]],
   ['View',[
    {t:'btn',label:'Reset camera',act:()=>{ if(S.scene==='shot') applyShotCam(); else { const c=PRESETS[S.scene][0].cam; setCam(c.E,c.T); } }},
-   {t:'note',text:'Drag in the viewer to orbit, scroll to dolly. Motion blur uses the camera at shutter open and close, so a moving shot camera would blur the motes exactly.'}
+   {t:'note',text:'Drag in the viewer to orbit, middle-drag to move the camera, right-drag (or Shift + scroll) to dolly; the scroll wheel racks focus. Motion blur uses the camera at shutter open and close, so a moving shot camera would blur the motes exactly.'}
   ]]
  ]},
  {id:'lens',label:'Lens',groups:[
@@ -2324,7 +2400,7 @@ const TABS=[
   ]]
  ]}
 ];
-const knobEls={}; let curTab='shot';
+const knobEls={}; let curTab='dust';
 const tabsEl=$('#tabs'), knobsEl=$('#knobs');
 function sliderPos(it,v){ return it.log ? Math.log(v/it.min)/Math.log(it.max/it.min) : (v-it.min)/(it.max-it.min); }
 function sliderVal(it,p){ let v=it.log ? it.min*Math.pow(it.max/it.min,p) : it.min+p*(it.max-it.min); return Math.round(v/it.step)*it.step; }
@@ -2338,7 +2414,7 @@ function onParam(k){
   if(k==='format'||k==='proxy') layout();
   if(['focus','fstop','focal','film','dof'].includes(k)) drawRing();
   if(k==='focus') focusAnim=null;
-  if(['meshStep','edgeBreak','shell','shade'].includes(k)) scheduleRebuild(false);
+  if(['meshStep','edgeBreak','shell','shade','cover'].includes(k)){ scheduleRebuild(false); if(k==='cover') lightDirty=true; }
   if(k==='dustFar') scheduleRebuild(true);
   if(k==='upAxis') setUpAxis(S.upAxis);
   markPreset(null);
@@ -2431,8 +2507,8 @@ function setPlay(p){ playing=p; playBtn.setAttribute('aria-pressed',p); playBtn.
 playBtn.onclick=()=>setPlay(!playing); setPlay(playing);
 $('#btnGust').onclick=()=>{ if(started) fireGust(); };
 $('#btnRun').onclick=()=>{ if(started) runMover(); };
-function syncSceneUI(){ const room=S.scene==='shot'; $('#btnGust').hidden=!room; $('#btnRun').hidden=!room;
-  $('.hints').textContent=room?'Click focus · Drag orbit · Scroll dolly · G gust · R run object · L loupe':'Click focus · Drag orbit · Scroll dolly · L loupe'; }
+function syncSceneUI(){ const room=S.scene!=='fire'; $('#btnGust').hidden=!room; $('#btnRun').hidden=!room;
+  $('.hints').textContent='Click/scroll focus · LMB orbit · MMB move · RMB dolly'+(room?' · G gust · R run':'')+' · L loupe'; }
 $('#btnLoupe').onclick=()=>setLoupe(!loupeOn);
 window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,select')) return;
   if(e.code==='Space'){ e.preventDefault(); setPlay(!playing); }
@@ -2442,20 +2518,19 @@ window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,selec
   else if(e.key==='Escape') setPlacing(null);
   else if(e.key==='l'||e.key==='L') setLoupe(!loupeOn); });
 
-const presetEl=$('#presets');
+const presetEl=$('#presets'), sceneSeg=$('#sceneseg');
 function markPreset(id){ [...presetEl.querySelectorAll('.chip')].forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id)); }
-const REBUILD_KEYS=['meshStep','edgeBreak','shell','dustFar','shade','upAxis','enclosed'];
+const REBUILD_KEYS=['meshStep','edgeBreak','shell','dustFar','shade','upAxis','enclosed','cover'];
 function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; const inf={}; for(const k in S) if(/^(gust|mov)/.test(k)||REBUILD_KEYS.includes(k)) inf[k]=S[k];
   Object.assign(S,DEF,SCENES[S.scene].def,S.scene==='shot'?{...seqDef(),...shotDefaults()}:{},pr.p,keep,inf);
   if(S.scene==='shot'){ applyShotCam(); if(pr.cam==='closeup') closeupCam(); } else setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
   updateLight(); resetGI=true; resetDOF=true; layout(); buildKnobs(); markPreset(pr.id); mover=null; gust=null; blobs.length=0; if(started) prewarmEmbers(); }
 function buildPresets(){ presetEl.querySelectorAll('.chip').forEach(c=>c.remove());
   for(const pr of PRESETS[S.scene]){ const b=document.createElement('button'); b.className='chip'; b.dataset.id=pr.id; b.textContent=typeof pr.label==='function'?pr.label():pr.label; b.onclick=()=>applyLook(pr); presetEl.appendChild(b); } }
-function buildSceneSeg(){ syncShotPicker(); }
+function buildSceneSeg(){ sceneSeg.innerHTML=''; for(const k in SCENES){ const b=document.createElement('button'); b.textContent=SCENES[k].label; b.setAttribute('aria-pressed',S.scene===k); b.onclick=()=>switchScene(k); sceneSeg.appendChild(b); } syncShotPicker(); }
 async function switchScene(name){
   if(!started||switching||name===S.scene) return;
-  if(name==='shot'){ if(!SHOT) return; switching=true; setPlacing(false); const ld=$('#loader'); ld.classList.remove('done'); progress(0.2,'Rebuilding the shot from its utility pass'); await nextFrame();
-    enterShot(); progress(1,'Ready'); ld.classList.add('done'); switching=false; return; }
+  if(name==='shot') return selectShot(curSeq,curShotI);
   switching=true; setPlacing(false);
   const ld=$('#loader'); ld.classList.remove('done'); progress(0.05,'Building the '+SCENES[name].label.toLowerCase()+' scene'); await nextFrame();
   const keepProxy=S.proxy; Object.assign(S,DEF,SCENES[name].def); S.proxy=keepProxy;
@@ -2470,19 +2545,18 @@ async function switchScene(name){
   progress(0.92,'Warming up the embers'); await nextFrame(); prewarmEmbers();
   progress(1,'Ready'); ld.classList.add('done'); switching=false;
 }
-buildShotPicker(); buildPresets();
-buildTabs(); buildKnobs(); syncSceneUI(); markPreset('default'); layout();
+buildShotPicker(); buildSceneSeg(); buildPresets();
+buildTabs(); buildKnobs(); syncSceneUI(); markPreset('loft'); layout();
 /* =================== boot with a progress bar =================== */
 (async function boot(){
   try{
     progress(0.03,'Compiling shaders'); await nextFrame();
     await compileAll(0.03,0.66);
-    const q0=SEQS[0], s0=q0.shots[0];
-    progress(0.68,`Looking up the utility pass for ${q0.id} / ${s0.id} (placeholder)`); await nextFrame();
-    makeShadow(); SHOT=shotCache[q0.id+'/'+s0.id]=makePlaceholderPass(q0,s0);
-    progress(0.74,'Rebuilding the scene from the utility pass'); await nextFrame();
-    Object.assign(S,DEF,SCENES.shot.def,seqDef(),shotDefaults(),{shade:'color',enclosed:!!SHOT.enclosed}); reconstruct(); if(SHOT.autoInfl) autoInfluence(); applyShotCam();
-    started=true; layout(); syncKnob('focal'); syncKnob('format');
+    progress(0.68,'Building the dining room'); await nextFrame();
+    buildScene(); meshMain=mkMesh(GM); meshBlinds=mkMesh(GB); meshSky=mkMesh(GS);
+    progress(0.72,'Voxelising the room for the path tracer'); await nextFrame();
+    voxelize(); makeShadow(); setCam(CAM_DEFAULT.E,CAM_DEFAULT.T);
+    started=true; layout();
     progress(0.82,`Seeding ${MAXN.toLocaleString()} motes`); await nextFrame();
     sim=[0,1].map(()=>{ const p=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST), v=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST); return {p,v,fb:mkFB([p,v])}; });
     seedSim();
@@ -2496,7 +2570,7 @@ buildTabs(); buildKnobs(); syncSceneUI(); markPreset('default'); layout();
     progress(1,'Ready'); $('#loader').classList.add('done');
   }catch(err){ if(!failed){ console.error(err); fail('Loading stopped: '+(err&&err.message||err)); } }
 })();
-window.__mf={S,setView,setCam,switchScene,applyLook,PRESETS,fireGust,runMover,selectShot,applyShotCam,get SHOT(){return SHOT;},get stats(){return shotStats;},get GEO(){return GEO;},pickAt};
+window.__mf={S,get cam(){return cam;},setView,setCam,switchScene,applyLook,PRESETS,fireGust,runMover,selectShot,applyShotCam,get SHOT(){return SHOT;},get stats(){return shotStats;},get GEO(){return GEO;},pickAt};
 })();
 
 </script>
