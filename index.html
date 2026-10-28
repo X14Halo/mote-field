@@ -135,6 +135,10 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 .kbtn{grid-column:1/-1;justify-self:start;background:var(--bin-2);border:1px solid var(--rule);border-radius:3px;padding:5px 12px;font-family:var(--f-cond);font-size:13px;cursor:pointer}
 .kbtn:hover{border-color:var(--dust)}
 .shotinfo{grid-column:1/-1;font-size:12.5px}
+.objlist{display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;font-size:12.5px;max-height:190px;overflow:auto;padding:2px 0 6px}
+.objlist label{display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.objlist label.off{color:var(--mute);text-decoration:line-through}
+.objlist input{accent-color:var(--dust)}
 .shotinfo dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:2px 0 6px}
 .shotinfo dt{color:var(--mute)}
 .shotinfo dd{margin:0;font-family:var(--f-num);font-size:11.5px;overflow-wrap:anywhere}
@@ -324,7 +328,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
   </div>
 
   <dl class="spec">
-    <div class="row"><dt>Scene from passes</dt><dd><h3>The shot rebuilds itself from its utility pass</h3>Pick a sequence and shot and MoteField finds that shot's utility pass in the pipeline, then turns world position into a rough 3D model of the shot: every pixel or few becomes a vertex, neighbours join into triangles, and the surface breaks wherever depth jumps, so a chair stays separate from the wall behind it. Normals and surface colour shade it, and a voxel copy feeds the bounce light. The camera comes from the EXR header, or is solved from the position pass when the header has none; depth alone also works when the header has a camera. Units and up axis are detected. Orbit around the rebuilt scene to place the dust volume, gusts and moving objects, then snap back to the shot camera. On its own it only knows the surfaces the camera saw, so light could pour in where nothing was seen. Two things close that gap: each light's own depth pass for shadows, and a cheap 360° utility pass rendered from the shot camera's position (P only, six 90° faces), which closes the scene around the camera and records which directions are open sky, so sunlight only enters through real openings even when the light is moved. Toggle the coverage pass in the Shot tab to see the difference. In this mockup the shots are placeholders: each one's utility pass is rendered in the browser from a stand-in set (an attic, a loft), and the tool only ever reads the pass.</dd></div>
+    <div class="row"><dt>Scene from passes</dt><dd><h3>The shot rebuilds itself from its utility pass</h3>Pick a sequence and shot and MoteField finds that shot's utility pass in the pipeline, then turns world position into a rough 3D model of the shot: every pixel or few becomes a vertex, neighbours join into triangles, and the surface breaks wherever depth jumps, so a chair stays separate from the wall behind it. Normals and surface colour shade it, and a voxel copy feeds the bounce light. The camera comes from the EXR header, or is solved from the position pass when the header has none; depth alone also works when the header has a camera. Units and up axis are detected. Orbit around the rebuilt scene to place the dust volume, gusts and moving objects, then snap back to the shot camera. On its own it only knows the surfaces the camera saw, so light could pour in where nothing was seen. Two things close that gap: each light's own depth pass for shadows, and a cheap 360° utility pass rendered from the shot camera's position (P only, six 90° faces), which closes the scene around the camera and records which directions are open sky, so sunlight only enters through real openings even when the light is moved. Toggle the coverage pass in the Shot tab to see the difference. The shot's object ID pass (cryptomatte) names every object, so glass is left out automatically, since it lets light through, and any other object can be picked in the viewer and dropped from the rebuild; those choices are kept per sequence. In this mockup the shots are placeholders: each one's utility pass is rendered in the browser from a stand-in set (an attic, a loft), and the tool only ever reads the pass.</dd></div>
     <div class="row"><dt>What dust is</dt><dd><h3>Four kinds of mote, not one sphere</h3>Household dust is mostly fine mineral grit, flakes of skin and paper, textile lint and small clumps of fluff. Each type has its own size range, shape, scattering and drag. Grit is a sub-pixel point of light at most distances. Flakes tumble, change brightness with their angle to the sun and throw brief glints. Lint is a curling strand, millimetres long, often dyed. Fluff is a loose, wispy clump. Shapes only resolve when a mote is large, close and in focus, exactly as in a real plate. Use the Loupe or the Close-up look to see them.</dd></div>
     <div class="row"><dt>Light selection</dt><dd><h3>Choose which lights the dust appears in</h3>Because each light brings its own depth pass, every light becomes a checkbox on the node: dust in the key sun's shaft, not in the window fill, glowing near a practical lamp. Each light gets its own strength and tint. Turning a light off removes its beam from the dust instantly, with no new render. Distant lights such as the sun are the simplest case: their depth pass is a flat, parallel projection, exactly what this mockup uses. For a quicker setup without the extra passes, a per-light-group volume render or a hand-placed beam shape can stand in, with less accuracy in depth.</dd></div>
     <div class="row"><dt>Defocus</dt><dd><h3>Every mote renders its own bokeh</h3>Circle of confusion comes from focal length, T-stop, focus distance and film back. Each mote's shape is spread through the lens aperture, with blade count, rotation and cat's eye toward the frame edge. A defocused lint fibre becomes a soft streak, not a disc. Energy is conserved, so an out-of-focus mote gets larger and dimmer, never brighter.</dd></div>
@@ -363,7 +367,7 @@ canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); failed=tr
 const DEF = {
   scene:'room',
   // rebuilding the shot from its utility pass
-  meshStep:0, edgeBreak:0.03, shell:0.25, dustFar:0, shade:'color', upAxis:'y', enclosed:true, cover:true,
+  meshStep:0, edgeBreak:0.03, shell:0.25, dustFar:0, shade:'color', upAxis:'y', enclosed:true, cover:true, shadowSrc:'pass',
   density:180, sizeMin:4, sizeMax:60, sizeBias:2.4, flakes:18, fibers:1.2, fluff:0.4, flakeScale:1, fiberScale:1, fluffScale:0.6, fluffBright:0.5,
   bright:1.0, g:0.65, ambVis:0.35, glint:0.4, tumble:1, tint:'neutral', tintCustom:'#d9b88f',
   speed:1, drift:1.2, driftDir:200, lift:0, turb:3.0, eddy:1.4, micro:0.8, thermal:1.5, settle:0.5, puffAmt:1.2,
@@ -397,7 +401,7 @@ const VIEWS = ['Comp','Dust','Plate','Shafts','P','Z','ID'];
 let viewMode = 0;
 // parameters that change the plate (room image) and so restart its accumulation
 const PLATE_KEYS = new Set(['cover','enclosed','sunAz','sunEl','sunI','sunK','cookie','atmos','haze','hazeVar','gi','fill','focal','film','format','focus','fstop','dof','blades','bladeRot','round','cat','proxy','fireI','emitX','emitY','emitZ']);
-const LIGHT_KEYS = new Set(['enclosed','sunAz','sunEl','sunI','sunK','cookie','fill','fireI','emitX','emitY','emitZ']);
+const LIGHT_KEYS = new Set(['shadowSrc','enclosed','sunAz','sunEl','sunI','sunK','cookie','fill','fireI','emitX','emitY','emitZ']);
 
 const CAM_DEFAULT = {E:[2.4,1.55,2.6], T:[-1.2,1.25,-3.0]};
 const CAM_FIRE = {E:[1.15,0.95,4.3], T:[0,0.78,0]};
@@ -449,7 +453,9 @@ const halton=(i,b)=>{let f=1,r=0;while(i>0){f/=b;r+=f*(i%b);i=Math.floor(i/b);}r
 // plain grey clay. rayBoxes feed picking and the mote-fill bake; voxPrims feed the voxel grid the path tracer walks
 const GM=[], GB=[], GS=[]; const rayBoxes=[], raySpheres=[], voxPrims=[];
 const G=v=>[v,v,v];
-function pv(a,p,n,c,m){a.push(p[0],p[1],p[2],n[0],n[1],n[2],c[0],c[1],c[2],m);}
+let OBJ=0; const OBJ_NAMES=['unnamed'];
+function obj(name){ let i=OBJ_NAMES.indexOf(name); if(i<0){ i=OBJ_NAMES.length; OBJ_NAMES.push(name); } OBJ=i; }
+function pv(a,p,n,c,m){a.push(p[0],p[1],p[2],n[0],n[1],n[2],c[0],c[1],c[2],m+OBJ*256);}
 function quad(a,p0,p1,p2,p3,n,c,m){pv(a,p0,n,c,m);pv(a,p1,n,c,m);pv(a,p2,n,c,m);pv(a,p0,n,c,m);pv(a,p2,n,c,m);pv(a,p3,n,c,m);}
 function box(a,mn,mx,c,m=0,ray=true,vox=true){const [x0,y0,z0]=mn,[x1,y1,z1]=mx;
   quad(a,[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1],[1,0,0],c,m);
@@ -522,9 +528,11 @@ function rock(a,c,rad,col,seed,su=30,sv=18){
 
 const WALL=G(0.4), FLOORC=G(0.22), WOOD=G(0.18), LIGHT=G(0.46), CRATE=G(0.3), CLOTH=G(0.42), DARKM=G(0.06), CER=G(0.52);
 const WINS=[[-4.9,-3.3],[-2.5,-0.9]], WY0=0.8, WY1=3.1;
-function buildRoom(){
+function buildRoom(glass){
+  obj('floor');
   box(GM,[-4.25,-0.2,-6.25],[4.25,0,3.75],FLOORC);
-  box(GM,[-4.25,3.6,-6.25],[4.25,3.85,3.75],WALL);
+  obj('ceiling'); box(GM,[-4.25,3.6,-6.25],[4.25,3.85,3.75],WALL);
+  obj('walls');
   box(GM,[4,0,-6.25],[4.25,3.6,3.75],WALL);
   box(GM,[-4.25,0,3.5],[4.25,3.6,3.75],WALL);
   box(GM,[-4.25,0,-6.25],[4.25,3.6,-6.0],WALL);
@@ -532,14 +540,16 @@ function buildRoom(){
   box(GM,[LX0,0,-6.25],[LX1,3.6,WINS[0][0]],WALL);
   box(GM,[LX0,0,WINS[0][1]],[LX1,3.6,WINS[1][0]],WALL);
   box(GM,[LX0,0,WINS[1][1]],[LX1,3.6,3.75],WALL);
-  rbox(GM,[-4,0,-6.0],[4,0.12,-5.982],LIGHT,0.004,false);
+  obj('skirting'); rbox(GM,[-4,0,-6.0],[4,0.12,-5.982],LIGHT,0.004,false);
   rbox(GM,[3.982,0,-6],[4,0.12,3.5],LIGHT,0.004,false);
   rbox(GM,[-4,0,3.482],[4,0.12,3.5],LIGHT,0.004,false);
   rbox(GM,[-4,0,-6],[-3.982,0.12,3.5],LIGHT,0.004,false);
   WINS.forEach(([z0,z1],wi)=>{
+    obj('walls');
     box(GM,[LX0,0,z0],[LX1,WY0,z1],WALL);
     box(GM,[LX0,WY1,z0],[LX1,3.6,z1],WALL);
-    const zc=(z0+z1)/2, mw=0.055;
+    obj('window_frames'); const zc=(z0+z1)/2, mw=0.055;
+    if(glass){ obj('window_glass'); box(GM,[-4.118,WY0,z0],[-4.108,WY1,z1],[0.55,0.6,0.62]); obj('window_frames'); }
     rbox(GM,[-4.2,WY0,zc-mw/2],[-4.07,WY1,zc+mw/2],LIGHT);
     rbox(GM,[-4.2,2.2-mw/2,z0],[-4.07,2.2+mw/2,z1],LIGHT);
     rbox(GM,[-4.16,1.5-0.013,z0],[-4.12,1.5+0.013,z1],LIGHT,0.004,false);
@@ -548,30 +558,30 @@ function buildRoom(){
     rbox(GM,[-4.2,WY1-0.05,z0],[-4.04,WY1,z1],LIGHT);
     rbox(GM,[-4.04,WY0-0.045,z0-0.08],[-3.83,WY0,z1+0.08],LIGHT,0.008);
     rbox(GM,[-3.93,3.2,z0-0.5],[-3.9,3.228,z1+0.5],DARKM,0.008,false);
-    curtain(GM,-3.975,z0-0.44,z0-0.03,3.19,0.02,3.5,0.07,CLOTH,wi*1.3);
+    obj('curtains'); curtain(GM,-3.975,z0-0.44,z0-0.03,3.19,0.02,3.5,0.07,CLOTH,wi*1.3);
     curtain(GM,-3.975,z1+0.03,z1+0.44,3.19,0.02,3.5,0.07,CLOTH,wi*2.1+0.7);
     const tilt=0.42;
     for(let y=WY1-0.05;y>WY0+0.02;y-=0.055) obox(GB,[-3.97,y,zc],[0,0,(z1-z0)/2],[Math.sin(tilt)*0.0016,Math.cos(tilt)*0.0016,0],[Math.cos(tilt)*0.026,-Math.sin(tilt)*0.026,0],LIGHT);
     obox(GB,[-3.97,WY1-0.02,zc],[0,0,(z1-z0)/2],[0,0.02,0],[0.03,0,0],LIGHT);
   });
-  for(const z of [-4.6,-2.6,-0.6,1.4]) rbox(GM,[-4,3.32,z-0.11],[4,3.6,z+0.11],WOOD,0.014);
-  rbox(GM,[1.71,0,0.11],[1.89,3.32,0.29],WOOD,0.012);
+  obj('beams'); for(const z of [-4.6,-2.6,-0.6,1.4]) rbox(GM,[-4,3.32,z-0.11],[4,3.6,z+0.11],WOOD,0.014);
+  obj('post'); rbox(GM,[1.71,0,0.11],[1.89,3.32,0.29],WOOD,0.012);
   rbox(GM,[1.66,0,0.06],[1.94,0.07,0.34],WOOD,0.008);
-  rbox(GM,[-1.45,0.74,-3.45],[0.45,0.79,-2.45],WOOD,0.01);
+  obj('table'); rbox(GM,[-1.45,0.74,-3.45],[0.45,0.79,-2.45],WOOD,0.01);
   rbox(GM,[-1.38,0.68,-3.38],[0.38,0.74,-2.52],WOOD,0.004,false);
   for(const [x,z] of [[-1.38,-3.38],[0.31,-3.38],[-1.38,-2.59],[0.31,-2.59]]) rbox(GM,[x,0,z],[x+0.07,0.74,z+0.07],WOOD,0.006);
-  sphere(GM,[-0.2,0.79+0.17,-2.88],0.17,CER);
+  obj('table_props'); sphere(GM,[-0.2,0.79+0.17,-2.88],0.17,CER);
   lathe(GM,[-0.95,0.79,-3.12],[[0,0],[0.06,0.002],[0.085,0.06],[0.09,0.16],[0.07,0.26],[0.045,0.31],[0.05,0.34],[0.042,0.345]],G(0.36));
   lathe(GM,[-0.6,0.79,-3.22],[[0,0],[0.07,0.003],[0.072,0.006],[0.03,0.012],[0.04,0.07],[0.045,0.075],[0.04,0.076],[0.035,0.02],[0,0.018]],CER);
   let by=0.79; [0.2,0.32,0.27].forEach((g,i)=>{const h=0.028+i*0.006, w=0.2-i*0.02, d=0.27-i*0.02, ox=-1.25+i*0.012, oz=-2.8+i*0.01; rbox(GM,[ox,by,oz],[ox+w,by+h,oz+d],G(g),0.004,i===0); by+=h;});
-  rbox(GM,[0.75,0.44,-2.25],[1.2,0.48,-1.8],WOOD,0.008);
+  obj('chair'); rbox(GM,[0.75,0.44,-2.25],[1.2,0.48,-1.8],WOOD,0.008);
   for(const [x,z] of [[0.77,-2.23],[1.14,-2.23],[0.77,-1.86],[1.14,-1.86]]) rbox(GM,[x,0,z],[x+0.04,0.44,z+0.04],WOOD,0.005,false);
   rbox(GM,[1.16,0.48,-2.24],[1.19,0.98,-2.2],WOOD,0.006,false); rbox(GM,[1.16,0.48,-1.85],[1.19,0.98,-1.81],WOOD,0.006,false);
   rbox(GM,[1.16,0.78,-2.24],[1.19,0.95,-1.81],WOOD,0.006);
-  rbox(GM,[2.6,0,-5.3],[3.35,0.62,-4.55],CRATE,0.012);
+  obj('crates'); rbox(GM,[2.6,0,-5.3],[3.35,0.62,-4.55],CRATE,0.012);
   rbox(GM,[2.75,0.62,-5.15],[3.3,1.08,-4.65],CRATE,0.012);
   rbox(GM,[3.0,0,-3.9],[3.6,0.5,-3.3],CRATE,0.012);
-  const BX0=-2.9, BX1=-0.9, BZ0=-6.0, BZ1=-5.62;
+  obj('bookcase'); const BX0=-2.9, BX1=-0.9, BZ0=-6.0, BZ1=-5.62;
   rbox(GM,[BX0,0,BZ0],[BX0+0.03,2.25,BZ1],WOOD,0.005); rbox(GM,[BX1-0.03,0,BZ0],[BX1,2.25,BZ1],WOOD,0.005);
   box(GM,[BX0,0,BZ0],[BX1,2.25,BZ0+0.01],WOOD,0,false);
   const shelves=[0,0.56,1.12,1.68,2.22];
@@ -581,11 +591,12 @@ function buildRoom(){
     while(x<BX1-0.08){ const w=0.022+rnd()*0.04,h=0.2+rnd()*0.26,d=0.17+rnd()*0.12;
       if(rnd()<0.07){ x+=0.06+rnd()*0.12; continue; }
       rbox(GM,[x,y,BZ0+0.012],[x+w,y+Math.min(h,0.5),BZ0+0.012+d],G(0.13+rnd()*0.25),0.004,false); x+=w+0.002; } }
-  rbox(GM,[-0.72,1.28,-6.0],[0.12,2.02,-5.965],WOOD,0.006);
+  obj('picture'); rbox(GM,[-0.72,1.28,-6.0],[0.12,2.02,-5.965],WOOD,0.006);
   quad(GM,[-0.66,1.34,-5.962],[0.06,1.34,-5.962],[0.06,1.96,-5.962],[-0.66,1.96,-5.962],[0,0,1],G(0.32),0);
-  box(GM,[-0.503,2.16,-2.953],[-0.497,3.6,-2.947],DARKM,10,false);
+  obj('pendant_lamp'); box(GM,[-0.503,2.16,-2.953],[-0.497,3.6,-2.947],DARKM,10,false);
   lathe(GM,[-0.5,1.95,-2.95],[[0.21,0],[0.205,0.02],[0.15,0.1],[0.08,0.18],[0.04,0.21],[0.02,0.215]],DARKM,10,48);
-  box(GM,[-2.3,0,-4.3],[1.0,0.012,-1.7],G(0.19),0,false,false);
+  obj('rug'); box(GM,[-2.3,0,-4.3],[1.0,0.012,-1.7],G(0.19),0,false,false);
+  OBJ=0;
   quad(GS,[-12,-25,-60],[-12,-25,60],[-12,40,60],[-12,40,-60],[1,0,0],[1,1,1],6);
 }
 
@@ -613,6 +624,7 @@ const SCENE_GEO = {
 };
 let GEO=SCENE_GEO.room;
 function buildScene(){
+  OBJ=0;
   GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
   VS=0.04; GEO=SCENE_GEO[S.scene]; VMIN=GEO.vmin; VDIM=GEO.vsize.map(v=>Math.ceil(v/VS)); BMIN=GEO.bmin; BMAX=GEO.bmax;
   if(S.scene==='fire') buildFire(); else buildRoom();
@@ -709,8 +721,8 @@ const FSQ_VS = HDR + `void main(){ vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2
 const MESH_VS = HDR + `
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNrm; layout(location=2) in vec3 aCol; layout(location=3) in float aMat;
 uniform mat4 uVP, uView;
-out vec3 vP; out vec3 vN; out vec3 vCol; flat out int vMat; out float vD;
-void main(){ vP=aPos; vN=aNrm; vCol=aCol; vMat=int(aMat+.5); vD=-(uView*vec4(aPos,1.)).z; gl_Position=uVP*vec4(aPos,1.); }`;
+out vec3 vP; out vec3 vN; out vec3 vCol; flat out int vMat; flat out int vObj; out float vD;
+void main(){ int mm=int(aMat+.5); vP=aPos; vN=aNrm; vCol=aCol; vMat=mm%256; vObj=mm/256; vD=-(uView*vec4(aPos,1.)).z; gl_Position=uVP*vec4(aPos,1.); }`;
 // reprojection of last frame's accumulated result; rejects history where the surface changed
 const HISTORY = `
 uniform sampler2D uHist, uPrevPos; uniform mat4 uPrevVP; uniform float uMaxN, uReset, uStatic; uniform vec2 uFull;
@@ -832,7 +844,7 @@ depth: [HDR+`layout(location=0) in vec3 aPos; uniform mat4 uVP; void main(){ gl_
 
 // raster pass: direct sun on clay + G-buffer for the path tracer, the defocus and the holdouts
 raster: [MESH_VS, HDR+NOISE+SHADOW+`
-in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; in float vD;
+in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; flat in int vObj; in float vD;
 layout(location=0) out vec4 oDirect; layout(location=1) out vec4 oPos; layout(location=2) out vec4 oNrm; layout(location=3) out vec4 oAlb;
 uniform vec3 uCam, uL, uSunCol, uSkyLo, uSkyHi, uSkyGnd, uCoal; uniform float uSunI, uSkyI, uFill, uHideSkirt; uniform int uShade;
 float pcf(vec3 p){ vec3 s=lightUV(p); float o=openVis(p); if(outL(s)) return o; float t=1.4/2048., z=s.z-0.0005, v=0.;
@@ -857,15 +869,15 @@ void main(){
     em=uCoal*g*0.45; alb*=0.8+0.4*vnoise(vP*90.); }
   vec3 albC=vec3(alb);
   if(vMat>=20){ albC = uShade==1 ? clamp(vCol,0.,1.) : uShade==2 ? (N*0.5+0.5)*0.6 : vec3(0.3); alb=max(dot(albC,vec3(0.2126,0.7152,0.0722)),1e-4); }
-  oDirect=vec4(albC*E+em,alb); oNrm=vec4(N,1.); oAlb=vec4(albC,1.);
+  oDirect=vec4(albC*E+em,alb); oNrm=vec4(N,1.+float(vObj)); oAlb=vec4(albC,1.);
 }`],
 
 // writes a utility pass: world position, world normal and surface colour (the demo shot's EXR stand-in)
 util: [MESH_VS, HDR+`
-in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; in float vD;
+in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; flat in int vObj; in float vD;
 layout(location=0) out vec4 oP; layout(location=1) out vec4 oN; layout(location=2) out vec4 oC;
 uniform vec3 uCam;
-void main(){ vec3 N=normalize(vN); if(dot(N,uCam-vP)<0.) N=-N; oP=vec4(vP,1.); oN=vec4(N,1.); oC=vec4(vCol,1.); }`],
+void main(){ vec3 N=normalize(vN); if(dot(N,uCam-vP)<0.) N=-N; oP=vec4(vP,1.+float(vObj)); oN=vec4(N,1.); oC=vec4(vCol,1.); }`],
 
 // two-bounce path tracing through the voxelised room, one path per half-res pixel per frame, accumulated over time
 gi: [FSQ_VS, HDR+NOISE+SHADOW+HISTORY+`
@@ -881,7 +893,7 @@ vec3 outside(vec3 d){ return d.y>0.02 ? mix(uSkyLo,uSkyHi,smoothstep(0.,0.6,d.y)
 uniform float uShotOn, uEnclosed; uniform vec3 uUnseen;
 // a ray that leaves the rebuilt scene: open sky if the shot camera saw sky that way, otherwise unseen surroundings
 vec3 env(vec3 p, vec3 d){ vec3 o=outside(d); if(uShotOn<0.5) return o; vec3 alt=uEnclosed>0.5?uUnseen:o;
-  if(uCovOn>0.5) return mix(uUnseen,o,covSky(p+d*(boxExit(p,d)+0.05)));
+  if(uCovOn>0.5) return o;   // the coverage pass closes the shell, so a ray that gets out went through a real opening
   vec3 dd=vec3(abs(d.x)<1e-5?1e-5:d.x, abs(d.y)<1e-5?1e-5:d.y, abs(d.z)<1e-5?1e-5:d.z);
   vec3 bmx=uVoxMin+vec3(uVoxDim)*uVoxS; vec3 tb=(mix(uVoxMin,bmx,step(0.,dd))-p)/dd; float te=max(min(tb.x,min(tb.y,tb.z)),0.);
   vec4 c=uShotVP*vec4(p+d*te,1.); if(c.w>0.){ vec2 uv=c.xy/c.w*0.5+0.5;
@@ -934,11 +946,13 @@ void main(){
   vec3 d=cosDir(N,s);
   int r=trace(P.xyz+N*(uVoxS*1.6),d,hp,hn,a);
   if(r==0) E=env(P.xyz,d);
+  else if(r==1 && a<0.006) E=mix(uUnseen,outside(d),uCovOn>0.5?covSky(hp):0.);
   else if(r==1 && dot(hn,hn)>0.5){
     vec3 E1=sunAt(hp,hn)+fireAt(hp,hn,s);
     vec3 hp2,hn2; float a2; vec3 d2=cosDir(hn,s);
     int r2=trace(hp+hn*(uVoxS*1.2),d2,hp2,hn2,a2);
     if(r2==0) E1+=env(hp,d2);
+    else if(r2==1 && a2<0.006) E1+=mix(uUnseen,outside(d2),uCovOn>0.5?covSky(hp2):0.);
     else if(r2==1 && dot(hn2,hn2)>0.5) E1+=a2*(sunAt(hp2,hn2)+uTail);
     E=a*E1; }
   float l=dot(E,vec3(0.3,0.6,0.1)); if(l>8.) E*=8./l;   // tame fireflies
@@ -1141,7 +1155,8 @@ void main(){
   if(uId==1){ vec3 ic= ty==0?vec3(1.,0.86,0.6): ty==1?vec3(0.35,0.8,1.): ty==2?vec3(1.,0.35,0.5): vec3(0.55,1.,0.45);
     col=ic*0.4*sqrt(sigma)*(0.25+0.75*min(vis,1.))*fade/max(dist,0.3); }
   float peak=max(col.r,max(col.g,col.b))/(PI*max(R*R,rs*rs)+1.);
-  if(peak<2e-5){ cull(); return; }
+  // very faint motes are thinned out at random and the survivors brightened to match, so the total light is unchanged
+  const float THR=3e-6; if(peak<THR){ float keep=peak/THR; if(hash11(sd*83.17+11.3)>keep){ cull(); return; } col*=THR/peak; peak=THR; }
   float ext = ty==2 ? min(max(length(A),max(length(B),length(C)*0.5)),80.)+rs+1. : min(rs*1.7,80.);
   vec2 dir=L>1e-4?seg/(2.*L):vec2(1.,0.);
   float rot=atan(dir.y,dir.x);
@@ -1500,6 +1515,7 @@ function updateLight(){
   const skyI=S.sunI*0.45; skyCol=[0.66*skyI,0.76*skyI,0.95*skyI];
   fireCol=scl(kelvin(1850),3.2*S.fireI); coalCol=scl(kelvin(1250),5*S.fireI);
   lightDirty=true;
+  if(S.scene==='shot'&&voxBase){ clearTimeout(sunClosureT); sunClosureT=setTimeout(()=>{ buildSunClosure(); lightDirty=true; },120); }
 }
 // a coarse bounce estimate for lighting the motes themselves (the room uses the path tracer)
 function bakeMoteFill(){
@@ -1571,7 +1587,7 @@ let counter={t:performance.now(),n:0,fps:0,slow:0}, lastCam=null, loupeOn=false,
 function renderShadow(){
   gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFB); gl.viewport(0,0,SH,SH); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.clear(gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0);
-  use(P.depth,{uVP:lightVP}); drawScene(false); if(S.scene==='shot'&&S.cover&&meshCover) draw(meshCover);
+  use(P.depth,{uVP:lightVP}); drawScene(false); if(S.scene==='shot'&&S.cover){ draw(meshCover); draw(meshVoxShadow); }
   gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST);
 }
 function render(now){
@@ -1591,12 +1607,12 @@ function render(now){
   const invVP=inv(cm.vp), resScale=W/1600;
   const coc={uF:S.focal,uN:S.fstop,uFocus:focusCur,uFilmW:film(),uResX:W,uDofOn:S.dof?1:0};
   if(lightDirty){ const lp=S.scene==='shot'&&SHOT&&SHOT.lightPass, was=onLightPass;
-    onLightPass=!!(lp&&Math.abs(S.sunAz-lp.az)<1e-3&&Math.abs(S.sunEl-lp.el)<1e-3);
+    onLightPass=!!(lp&&S.shadowSrc==='pass'&&Math.abs(S.sunAz-lp.az)<1e-3&&Math.abs(S.sunEl-lp.el)<1e-3);
     if(onLightPass){ lightVP=lp.vp; curShadow=lp.tex; } else { renderShadow(); curShadow=shadowTex; }
-    if(was&&lp&&!onLightPass&&started) $('#readout').textContent='The key light moved off its depth pass, so shadows now come from the rebuilt geometry (surfaces the camera saw).';
+    if(was&&lp&&!onLightPass&&started) $('#readout').textContent='Shadows now come from the rebuilt scene (the shot plus its 360° coverage pass), not the key light\'s depth pass.';
     bakeMoteFill(); lightDirty=false; resetGI=true; resetDOF=true; }
   const shotOn=S.scene==='shot'&&!!skyMaskTex, coverOn=shotOn&&S.cover&&!!meshCover, vmax=[0,1,2].map(k=>VMIN[k]+VDIM[k]*VS);
-  const shadowU={uShadow:0,uLightVP:lightVP,uCookie:S.cookie,uTime:simTime,uSkyMask:7,uShotVP:shotVP||IDENT,uOpenOnly:shotOn&&!onLightPass&&(coverOn||S.enclosed)?1:0,uCovOn:coverOn?1:0,uCovMask:8,uCovPos:SHOT?SHOT.cam.pos:[0,0,0],uSunDir:sunL,uBoxLo:VMIN,uBoxHi:vmax};
+  const shadowU={uShadow:0,uLightVP:lightVP,uCookie:S.cookie,uTime:simTime,uSkyMask:7,uShotVP:shotVP||IDENT,uOpenOnly:shotOn&&!onLightPass&&!coverOn&&S.enclosed?1:0,uCovOn:coverOn?1:0,uCovMask:8,uCovPos:SHOT?SHOT.cam.pos:[0,0,0],uSunDir:sunL,uBoxLo:VMIN,uBoxHi:vmax};
   const typeU={uFlake:S.flakes/100,uFiber:S.fibers/100,uFluff:S.fluff/100};
   const count=S.scene!=='fire'?Math.min(MAXN, Math.round(S.density*(BMAX[0]-BMIN[0])*(BMAX[1]-BMIN[1])*(BMAX[2]-BMIN[2]))):0;
   const foliage=S.cookie===2;
@@ -1776,10 +1792,11 @@ function drawGizmo(){
     for(const a of [0,Math.PI/2,Math.PI,Math.PI*1.5]){ const off=[Math.cos(a)*S.movR,0,Math.sin(a)*S.movR]; poly([add(P0,add(off,[0,S.movR*0.3,0])),add(P0,add(off,[0,S.movH-S.movR*0.3,0]))]); }
   }
 }
-const PLACE_TEXT={emitter:'Click a surface to put the ember emitter there', gust:'Click a wall, door or opening to put the gust source there; it blows out of the surface', gustAim:'Click where the gust should blow toward', moverA:'Click the floor where the moving object starts', moverB:'Click the floor where the moving object ends'};
-const PLACE_BTN={emitter:'placeBtn', gust:'placeGust', gustAim:'aimGust', moverA:'placeA', moverB:'placeB'};
+const PLACE_TEXT={object:'Click an object to leave it out of the rebuild (untick it in the Shot tab to bring it back)', emitter:'Click a surface to put the ember emitter there', gust:'Click a wall, door or opening to put the gust source there; it blows out of the surface', gustAim:'Click where the gust should blow toward', moverA:'Click the floor where the moving object starts', moverB:'Click the floor where the moving object ends'};
+const PLACE_BTN={object:'pickObj', emitter:'placeBtn', gust:'placeGust', gustAim:'aimGust', moverA:'placeA', moverB:'placeB'};
 function setPlacing(mode){ placing=mode||null; for(const k in PLACE_BTN){ const b=$('#'+PLACE_BTN[k]); if(b) b.setAttribute('aria-pressed',placing===k); } if(placing) $('#readout').textContent=PLACE_TEXT[placing]; drawGizmo(); }
-function placeAt(p,n){
+function placeAt(p,n,id){
+  if(placing==='object'){ if(S.scene==='shot'&&SHOT&&SHOT.names&&id>0&&id<SHOT.names.length){ SHOT.ex[id]=1; objChanged(SHOT.names[id]); } return; }
   const f=v=>+v.toFixed(3);
   if(placing==='emitter'){ S.emitX=f(p[0]); S.emitY=f(p[1]); S.emitZ=f(p[2]); onParam('emitX'); prewarmEmbers(); }
   else if(placing==='gust'){ const o=add(p,scl(n||[0,1,0],0.2)); S.gustX=f(o[0]); S.gustY=f(o[1]); S.gustZ=f(o[2]); if(n){ S.gustDX=f(n[0]); S.gustDY=f(n[1]); S.gustDZ=f(n[2]); } }
@@ -1791,7 +1808,7 @@ function placeAt(p,n){
 
 /* =================== the shot: a scene rebuilt from a utility pass =================== */
 // SHOT holds only what a render's utility pass provides: world position (P), normals (N), surface colour (C), and the camera.
-let SHOT=null, meshShot=null, meshCover=null, covMaskTex=null, shotStats=null, rebuildTimer=0, skyMaskTex=null, shotVP=null;
+let SHOT=null, meshShot=null, meshCover=null, meshVoxShadow=null, voxBase=null, sunClosureT=0, covMaskTex=null, shotStats=null, rebuildTimer=0, skyMaskTex=null, shotVP=null;
 const validAt=(P,k)=>{ const x=P[k*3],y=P[k*3+1],z=P[k*3+2]; return Number.isFinite(x)&&Number.isFinite(y)&&Number.isFinite(z)&&(x!==0||y!==0||z!==0); };
 function mkIndexedMesh(vb,ib){ const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
   const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,vb,gl.STATIC_DRAW); const st=40;
@@ -1806,12 +1823,16 @@ function autoDustFar(){ return SHOT? clamp(SHOT.medDepth*1.3,2.5,15) : 8; }
 function shotDefaults(){ if(!SHOT) return {}; const o={}; if(SHOT.cam.fstop) o.fstop=clamp(SHOT.cam.fstop,1.2,22); if(SHOT.cam.focus) o.focus=clamp(SHOT.cam.focus*SHOT.scale,0.3,20); return o; }
 
 // mesh the coverage faces: same edge breaks as the shot, normals from the surface, facing the camera
-function coverMesh(faces,cp){ const st=2, eb=S.edgeBreak*st*1.5, V=[], I=[];
+function coplanar(A,oa,ob){ const nax=A[oa+3],nay=A[oa+4],naz=A[oa+5], nbx=A[ob+3],nby=A[ob+4],nbz=A[ob+5];
+  if(!(nax||nay||naz)||!(nbx||nby||nbz)||Math.abs(nax*nbx+nay*nby+naz*nbz)<0.97) return false;
+  const dx=A[ob]-A[oa],dy=A[ob+1]-A[oa+1],dz=A[ob+2]-A[oa+2], L=Math.hypot(dx,dy,dz)+1e-9;
+  return Math.abs(nax*dx+nay*dy+naz*dz)<0.03*L+1e-4 && Math.abs(nbx*dx+nby*dy+nbz*dz)<0.03*L+1e-4; }
+function coverMesh(faces,cp,ex){ const st=2, eb=S.edgeBreak*st*1.5, V=[], I=[];
   for(const f of faces){ const {W,H,P,C}=f, gw=Math.ceil((W-1)/st)+1, gh=Math.ceil((H-1)/st)+1, base=V.length/10, ok=new Uint8Array(gw*gh), dist=new Float32Array(gw*gh);
     for(let j=0;j<gh;j++) for(let i=0;i<gw;i++){ const v=j*gw+i, k=Math.min(j*st,H-1)*W+Math.min(i*st,W-1);
-      if(validAt(P,k)){ ok[v]=1; dist[v]=Math.hypot(P[k*3]-cp[0],P[k*3+1]-cp[1],P[k*3+2]-cp[2]); }
-      V.push(P[k*3],P[k*3+1],P[k*3+2],0,0,0,C[k*3],C[k*3+1],C[k*3+2],22); }
-    const near=(a,b)=>Math.abs(dist[a]-dist[b])<=eb*Math.min(dist[a],dist[b]);
+      if(validAt(P,k)&&!(f.ids&&ex&&ex[f.ids[k]])){ ok[v]=1; dist[v]=Math.hypot(P[k*3]-cp[0],P[k*3+1]-cp[1],P[k*3+2]-cp[2]); }
+      const N_=f.N; V.push(P[k*3],P[k*3+1],P[k*3+2],N_?N_[k*3]:0,N_?N_[k*3+1]:0,N_?N_[k*3+2]:0,C[k*3],C[k*3+1],C[k*3+2],22+256*(f.ids?f.ids[k]:0)); }
+    const near=(a,b)=>Math.abs(dist[a]-dist[b])<=eb*Math.min(dist[a],dist[b])||coplanar(V,(base+a)*10,(base+b)*10);
     const skirts=[];
     for(let j=0;j<gh-1;j++) for(let i=0;i<gw-1;i++){ const a=j*gw+i,b=a+1,c=a+gw,d=c+1;
       const t1=ok[a]&&ok[b]&&ok[c]&&near(a,b)&&near(a,c)&&near(b,c), t2=ok[b]&&ok[c]&&ok[d]&&near(b,d)&&near(c,d)&&near(b,c);
@@ -1820,29 +1841,44 @@ function coverMesh(faces,cp){ const st=2, eb=S.edgeBreak*st*1.5, V=[], I=[];
     // close every depth break with a skirt at the far side's depth, so seen from the camera the shell has no holes except real openings
     for(const a of skirts){ const q=[a,a+1,a+gw,a+gw+1]; let far=a; for(const v of q) if(dist[v]>dist[far]) far=v;
       const m=q.map(v=>{ if(near(v,far)) return base+v; const o=(base+v)*10, k=dist[far]/dist[v];
-        V.push(cp[0]+(V[o]-cp[0])*k, cp[1]+(V[o+1]-cp[1])*k, cp[2]+(V[o+2]-cp[2])*k, 0,0,0, V[(base+far)*10+6],V[(base+far)*10+7],V[(base+far)*10+8], 22); return V.length/10-1; });
+        V.push(cp[0]+(V[o]-cp[0])*k, cp[1]+(V[o+1]-cp[1])*k, cp[2]+(V[o+2]-cp[2])*k, 0,0,0, V[(base+far)*10+6],V[(base+far)*10+7],V[(base+far)*10+8], V[(base+far)*10+9]); return V.length/10-1; });
       I.push(m[0],m[2],m[1],m[1],m[2],m[3]); } }
-  const vb=new Float32Array(V), idx=new Uint32Array(I);
+  const vb=new Float32Array(V), idx=new Uint32Array(I), fn=new Float32Array(vb.length/10*3);
   for(let t=0;t<idx.length;t+=3){ const a=idx[t]*10,b=idx[t+1]*10,c=idx[t+2]*10;
     const ux=vb[b]-vb[a],uy=vb[b+1]-vb[a+1],uz=vb[b+2]-vb[a+2], wx=vb[c]-vb[a],wy=vb[c+1]-vb[a+1],wz=vb[c+2]-vb[a+2], nx=uy*wz-uz*wy, ny=uz*wx-ux*wz, nz=ux*wy-uy*wx;
-    for(const q of [a,b,c]){ vb[q+3]+=nx; vb[q+4]+=ny; vb[q+5]+=nz; } }
-  for(let o=0;o<vb.length;o+=10){ let nx=vb[o+3],ny=vb[o+4],nz=vb[o+5]; const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+    for(const q of [idx[t],idx[t+1],idx[t+2]]){ fn[q*3]+=nx; fn[q*3+1]+=ny; fn[q*3+2]+=nz; } }
+  for(let o=0;o<vb.length;o+=10){ if(!(vb[o+3]||vb[o+4]||vb[o+5])){ vb[o+3]=fn[o/10*3]; vb[o+4]=fn[o/10*3+1]; vb[o+5]=fn[o/10*3+2]; }
+    let nx=vb[o+3],ny=vb[o+4],nz=vb[o+5]; const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
     if(nx*(cp[0]-vb[o])+ny*(cp[1]-vb[o+1])+nz*(cp[2]-vb[o+2])<0){ nx=-nx; ny=-ny; nz=-nz; } vb[o+3]=nx; vb[o+4]=ny; vb[o+5]=nz; }
   return {vb,idx}; }
+function buildSunClosure(){
+  freeMesh(meshVoxShadow); meshVoxShadow=null; if(!voxBase||!sunL) return;
+  const {dim:[DX,DY,DZ],vmin,vs:V_,open}=voxBase, vox=voxBase.vox.slice(), st=V_*0.5;
+  for(let i=0;i<open.length;i+=3) for(let t=0;t<200;t+=st){ const ix=Math.floor((open[i]+sunL[0]*t-vmin[0])/V_), iy=Math.floor((open[i+1]+sunL[1]*t-vmin[1])/V_), iz=Math.floor((open[i+2]+sunL[2]*t-vmin[2])/V_);
+    if(ix<0||iy<0||iz<0||ix>=DX||iy>=DY||iz>=DZ) break; const q=ix+iy*DX+iz*DX*DY; if(vox[q]>=2&&t>V_*1.5) break; vox[q]=0; }
+  const X1=DX-1,Y1=DY-1,Z1=DZ-1; let nq=0; const free=(x,y,z)=>x>=0&&y>=0&&z>=0&&x<=X1&&y<=Y1&&z<=Z1&&vox[x+y*DX+z*DX*DY]===0;
+  for(let pass=0;pass<2;pass++){ let qv=null, qi=null, n=0; if(pass===1){ if(!nq) return; qv=new Float32Array(nq*40); qi=new Uint32Array(nq*6); }
+    for(let z=0;z<DZ;z++) for(let y=0;y<DY;y++) for(let x=0;x<DX;x++){ if(vox[x+y*DX+z*DX*DY]!==1) continue;   // unknown space only: seen surfaces cast from their own smooth mesh
+      for(let f=0;f<6;f++){ const ax=f>>1, sg=f&1?1:-1; if(!free(x+(ax===0?sg:0),y+(ax===1?sg:0),z+(ax===2?sg:0))) continue;
+        if(pass===0){ nq++; continue; }
+        const c=[x,y,z], o=[0,0,0]; o[ax]=sg>0?1:0; const u=(ax+1)%3, w=(ax+2)%3;
+        for(let v=0;v<4;v++){ const q=[c[0]+o[0],c[1]+o[1],c[2]+o[2]]; if(v===1||v===2) q[u]+=1; if(v>=2) q[w]+=1; const b=(n*4+v)*10; for(let k=0;k<3;k++) qv[b+k]=vmin[k]+q[k]*V_; }
+        const b=n*4; qi[n*6]=b; qi[n*6+1]=b+1; qi[n*6+2]=b+2; qi[n*6+3]=b; qi[n*6+4]=b+2; qi[n*6+5]=b+3; n++; } }
+    if(pass===1) meshVoxShadow=mkIndexedMesh(qv,qi); } }
 function reconstruct(){
   const {W,H,P,N,C,cam}=SHOT, cp=cam.pos;
   const st=Math.max(S.meshStep||Math.round(Math.max(W,H)/720), Math.ceil(Math.sqrt(W*H/2.2e6)), 1);
   const gw=Math.ceil((W-1)/st)+1, gh=Math.ceil((H-1)/st)+1, nV=gw*gh;
   let vb=new Float32Array(nV*10); const ok=new Uint8Array(nV), dist=new Float32Array(nV), shade=S.shade;
   for(let j=0;j<gh;j++) for(let i=0;i<gw;i++){ const v=j*gw+i, k=Math.min(j*st,H-1)*W+Math.min(i*st,W-1), o=v*10;
-    if(!validAt(P,k)) continue; ok[v]=1;
+    if(!validAt(P,k)||(SHOT.ids&&SHOT.ex[SHOT.ids[k]])) continue; ok[v]=1;
     const x=P[k*3],y=P[k*3+1],z=P[k*3+2]; vb[o]=x; vb[o+1]=y; vb[o+2]=z; dist[v]=Math.hypot(x-cp[0],y-cp[1],z-cp[2]);
     if(N){ const nx=N[k*3],ny=N[k*3+1],nz=N[k*3+2], l=Math.hypot(nx,ny,nz); if(l>0.2&&Number.isFinite(l)){ vb[o+3]=nx/l; vb[o+4]=ny/l; vb[o+5]=nz/l; } }
     if(C){ vb[o+6]=clamp(C[k*3],0,1); vb[o+7]=clamp(C[k*3+1],0,1); vb[o+8]=clamp(C[k*3+2],0,1); } else { vb[o+6]=vb[o+7]=vb[o+8]=0.45; }
-    vb[o+9]=20; }
+    vb[o+9]=20+256*(SHOT.ids?SHOT.ids[k]:0); }
   // connect neighbouring pixels into triangles, but break the surface where depth jumps (an object edge)
   const eb=S.edgeBreak*st, skirtQ=[]; let idx=new Uint32Array((gw-1)*(gh-1)*6), ni=0, broken=0, quads=0;
-  const near=(a,b)=>Math.abs(dist[a]-dist[b])<=eb*Math.min(dist[a],dist[b]);
+  const near=(a,b)=>Math.abs(dist[a]-dist[b])<=eb*Math.min(dist[a],dist[b])||coplanar(vb,a*10,b*10);
   for(let j=0;j<gh-1;j++) for(let i=0;i<gw-1;i++){ const a=j*gw+i,b=a+1,c=a+gw,d=c+1;
     if(!(ok[a]&&ok[b]&&ok[c]&&ok[d])){ if(ok[a]||ok[b]||ok[c]||ok[d]) broken++; }
     else quads++;
@@ -1864,7 +1900,7 @@ function reconstruct(){
   if(skirtQ.length){ const sk=[], skI=[]; let nx=nV;
     for(const a of skirtQ){ const q=[a,a+1,a+gw,a+gw+1]; let far=a; for(const v of q) if(dist[v]>dist[far]) far=v;
       const m=q.map(v=>{ if(near(v,far)) return v; const o=v*10, k=dist[far]/dist[v];
-        sk.push(cp[0]+(vb[o]-cp[0])*k, cp[1]+(vb[o+1]-cp[1])*k, cp[2]+(vb[o+2]-cp[2])*k); for(let t=3;t<9;t++) sk.push(vb[far*10+t]); sk.push(21); return nx++; });
+        sk.push(cp[0]+(vb[o]-cp[0])*k, cp[1]+(vb[o+1]-cp[1])*k, cp[2]+(vb[o+2]-cp[2])*k); for(let t=3;t<9;t++) sk.push(vb[far*10+t]); sk.push(vb[far*10+9]+1); return nx++; });
       skI.push(m[0],m[2],m[1],m[1],m[2],m[3]); }
     const vb2=new Float32Array(vb.length+sk.length); vb2.set(vb); vb2.set(sk,vb.length); vb=vb2;
     const id2=new Uint32Array(ni+skI.length); id2.set(idx.subarray(0,ni)); id2.set(skI,ni); idx=id2; ni=id2.length; }
@@ -1872,7 +1908,7 @@ function reconstruct(){
   // extent of the scene (robust to stray far pixels)
   const pick=[]; const sstep=Math.max(1,Math.floor(nV/30000)); for(let v=0;v<nV;v+=sstep) if(ok[v]) pick.push(v);
   if(pick.length<50) throw new Error('The position pass has almost no valid pixels.');
-  const cv=SHOT.cover&&S.cover? coverMesh(SHOT.cover,cp) : null; freeMesh(meshCover); meshCover=cv&&cv.idx.length? mkIndexedMesh(cv.vb,cv.idx) : null;
+  const cv=SHOT.cover&&S.cover? coverMesh(SHOT.cover,cp,SHOT.ex) : null; freeMesh(meshCover); meshCover=cv&&cv.idx.length? mkIndexedMesh(cv.vb,cv.idx) : null;
   const pts=[]; for(const v of pick) pts.push(vb[v*10],vb[v*10+1],vb[v*10+2]);
   if(cv){ const cs=Math.max(1,Math.floor(cv.vb.length/10/30000)); for(let v=0;v<cv.vb.length/10;v+=cs){ const o=v*10; if(cv.vb[o]||cv.vb[o+1]||cv.vb[o+2]) pts.push(cv.vb[o],cv.vb[o+1],cv.vb[o+2]); } }
   const pct=(k,q)=>{ const a=[]; for(let i=k;i<pts.length;i+=3) a.push(pts[i]); a.sort((x,y)=>x-y); return a[Math.min(a.length-1,Math.max(0,Math.floor(q*(a.length-1))))]; };
@@ -1883,7 +1919,19 @@ function reconstruct(){
   VS=Math.max(Math.max(...ext)/170,0.02); VMIN=lo.map(x=>x-VS*2); VDIM=[0,1,2].map(k=>Math.ceil((hi[k]-lo[k])/VS)+4);
   const [DX,DY,DZ]=VDIM, vox=new Uint8Array(DX*DY*DZ), thick=S.shell;
   const put=(x,y,z,a)=>{ const ix=Math.floor((x-VMIN[0])/VS), iy=Math.floor((y-VMIN[1])/VS), iz=Math.floor((z-VMIN[2])/VS);
-    if(ix<0||iy<0||iz<0||ix>=DX||iy>=DY||iz>=DZ) return; const q=ix+iy*DX+iz*DX*DY; if(!vox[q]) vox[q]=a; };
+    if(ix<0||iy<0||iz<0||ix>=DX||iy>=DY||iz>=DZ) return; const q=ix+iy*DX+iz*DX*DY; if(!vox[q]||vox[q]===SOLID) vox[q]=a; };
+  // space carving: with the 360° coverage pass, everything starts solid and only the space the camera actually saw through is
+  // emptied, so light and bounce rays can only get out through real openings (sky, or anything left out like glass)
+  const SOLID=1;
+  if(cv){ vox.fill(SOLID);
+    const carve=(dx,dy,dz,tmax)=>{ const st_=VS*0.5; for(let t=0;t<tmax;t+=st_){ const ix=Math.floor((cp[0]+dx*t-VMIN[0])/VS), iy=Math.floor((cp[1]+dy*t-VMIN[1])/VS), iz=Math.floor((cp[2]+dz*t-VMIN[2])/VS);
+        if(ix<0||iy<0||iz<0||ix>=DX||iy>=DY||iz>=DZ) return; vox[ix+iy*DX+iz*DX*DY]=0; } };
+    const rays=(Pa,ids_,Wd,Hd,step,basis)=>{ for(let y=0;y<Hd;y+=step) for(let x=0;x<Wd;x+=step){ const k=y*Wd+x;
+        if(validAt(Pa,k)&&!(ids_&&SHOT.ex[ids_[k]])){ const ddx=Pa[k*3]-cp[0], ddy=Pa[k*3+1]-cp[1], ddz=Pa[k*3+2]-cp[2], d=Math.hypot(ddx,ddy,ddz)||1; carve(ddx/d,ddy/d,ddz/d,d-VS*0.35); }
+        else { const sx=((x+0.5)/Wd*2-1)*basis.tx, sy=(1-(y+0.5)/Hd*2)*basis.ty, r=basis.r, u=basis.u, f=basis.f;
+          const dx=f[0]+r[0]*sx+u[0]*sy, dy=f[1]+r[1]*sx+u[1]*sy, dz=f[2]+r[2]*sx+u[2]*sy, l=Math.hypot(dx,dy,dz); carve(dx/l,dy/l,dz/l,1e9); } } };
+    for(const f of SHOT.cover) rays(f.P,f.ids,f.W,f.H,2,{r:f.right,u:f.up,f:f.fwd,tx:f.th,ty:f.th});
+    { const th=Math.tan(cam.hfov/2); rays(P,SHOT.ids,W,H,3,{r:cam.right,u:cam.up,f:scl(cam.back,-1),tx:th,ty:th*H/W}); } }
   const voxTris=(vb,idx,ni,thick)=>{ for(let t=0;t<ni;t+=3){ const a=idx[t]*10,b=idx[t+1]*10,c=idx[t+2]*10;
     const L=Math.max(Math.hypot(vb[b]-vb[a],vb[b+1]-vb[a+1],vb[b+2]-vb[a+2]),Math.hypot(vb[c]-vb[a],vb[c+1]-vb[a+1],vb[c+2]-vb[a+2]));
     const n=Math.max(1,Math.ceil(L/(VS*0.7))), alb=Math.max(2,Math.round(255*(shade==='color'?(0.2126*vb[a+6]+0.7152*vb[a+7]+0.0722*vb[a+8]):0.45)));
@@ -1892,6 +1940,19 @@ function reconstruct(){
       put(x,y,z,alb);
       if(thick>VS*0.5){ const dx=x-cp[0],dy=y-cp[1],dz=z-cp[2], dl=Math.hypot(dx,dy,dz)||1; for(let d=VS*0.7; d<=thick; d+=VS*0.7) put(x+dx/dl*d,y+dy/dl*d,z+dz/dl*d,alb); } } } };
   voxTris(vb,idx,ni,thick); if(cv) voxTris(cv.vb,cv.idx,cv.idx.length,thick);
+  // keep the carved grid and the openings (glass left out, or sky seen past a frame) for the light's closure mesh
+  voxBase=null; freeMesh(meshVoxShadow); meshVoxShadow=null;
+  if(cv){ const op=[];
+    const scan=(Pa,ids_,Wd,Hd,step,basis)=>{ for(let y=0;y<Hd;y+=step) for(let x=0;x<Wd;x+=step){ const k=y*Wd+x; const valid=validAt(Pa,k); if(valid&&!(ids_&&SHOT.ex[ids_[k]])) continue;
+        let d0=-1; if(valid) d0=Math.hypot(Pa[k*3]-cp[0],Pa[k*3+1]-cp[1],Pa[k*3+2]-cp[2]);
+        else { for(let r=1;r<=6&&d0<0;r++) for(const [ox,oy] of [[r,0],[-r,0],[0,r],[0,-r],[r,r],[-r,-r],[r,-r],[-r,r]]){ const xx=x+ox, yy=y+oy; if(xx<0||yy<0||xx>=Wd||yy>=Hd) continue; const kk=yy*Wd+xx;
+            if(validAt(Pa,kk)&&!(ids_&&SHOT.ex[ids_[kk]])){ const dd=Math.hypot(Pa[kk*3]-cp[0],Pa[kk*3+1]-cp[1],Pa[kk*3+2]-cp[2]); if(dd>d0) d0=dd; } } }
+        if(d0<0) continue; const sx=((x+0.5)/Wd*2-1)*basis.tx, sy=(1-(y+0.5)/Hd*2)*basis.ty, r=basis.r, u=basis.u, f=basis.f;
+        const dx=f[0]+r[0]*sx+u[0]*sy, dy=f[1]+r[1]*sx+u[1]*sy, dz=f[2]+r[2]*sx+u[2]*sy, l=Math.hypot(dx,dy,dz), t=d0+VS*0.6;
+        op.push(cp[0]+dx/l*t, cp[1]+dy/l*t, cp[2]+dz/l*t); } };
+    for(const f of SHOT.cover) scan(f.P,f.ids,f.W,f.H,1,{r:f.right,u:f.up,f:f.fwd,tx:f.th,ty:f.th});
+    { const th=Math.tan(cam.hfov/2); scan(P,SHOT.ids,W,H,2,{r:cam.right,u:cam.up,f:scl(cam.back,-1),tx:th,ty:th*H/W}); }
+    voxBase={vox:vox.slice(),dim:[DX,DY,DZ],vmin:[...VMIN],vs:VS,open:new Float32Array(op)}; }
   if(voxTex) gl.deleteTexture(voxTex);
   voxTex=gl.createTexture(); gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_3D,voxTex); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
   gl.texImage3D(gl.TEXTURE_3D,0,gl.R8,DX,DY,DZ,0,gl.RED,gl.UNSIGNED_BYTE,vox);
@@ -1904,6 +1965,8 @@ function reconstruct(){
   let bmin=[0,1,2].map(k=>Math.min(...corners.map(c=>c[k]))), bmax=[0,1,2].map(k=>Math.max(...corners.map(c=>c[k])));
   const imin=bmin.map((x,k)=>Math.max(x,Math.min(lo[k],cp[k]))), imax=bmax.map((x,k)=>Math.min(x,Math.max(hi[k],cp[k])));
   if(imin.every((x,k)=>x<imax[k]-0.2)){ bmin=imin; bmax=imax; }
+  // with the coverage pass the whole space around the camera is known, so by default dust fills all of it
+  if(cv&&!(S.dustFar>0)){ bmin=[...lo]; bmax=[...hi]; }
   const clo=[0,1,2].map(k=>Math.min(lo[k]-R*1.5,cp[k]-1)), chi=[0,1,2].map(k=>Math.max(hi[k]+R*1.5,cp[k]+1));
   SCENE_GEO.shot={vmin:VMIN, vsize:VDIM.map(d=>d*VS), bmin, bmax, cmin:clo, cmax:chi, lightC:ctr, lightR:R*1.05, near:clamp(SHOT.medDepth*0.004,0.02,0.5), far:Math.max(80,R*8), maxDist:Math.max(9,R*3),
     hmin:lo, hmax:hi, hazeFar:clamp(SHOT.medDepth*2,16,80)};
@@ -1911,10 +1974,10 @@ function reconstruct(){
   GS.length=0; box(GS,ctr.map(x=>x-R*6),ctr.map(x=>x+R*6),[1,1,1],6,false,false); freeMesh(meshSky); meshSky=mkMesh(GS);
   if(covMaskTex){ gl.deleteTexture(covMaskTex); covMaskTex=null; }
   if(cv){ const F=SHOT.cover, fw=F[0].W, fh=F[0].H, mk=new Uint8Array(fw*6*fh);
-    F.forEach((f,i)=>{ for(let y=0;y<fh;y++) for(let x=0;x<fw;x++) mk[y*fw*6+i*fw+x]=validAt(f.P,y*fw+x)?0:255; });
+    F.forEach((f,i)=>{ for(let y=0;y<fh;y++) for(let x=0;x<fw;x++){ const k=y*fw+x; mk[y*fw*6+i*fw+x]=validAt(f.P,k)&&!(f.ids&&SHOT.ex[f.ids[k]])?0:255; } });
     gl.pixelStorei(gl.UNPACK_ALIGNMENT,1); covMaskTex=mkTex(fw*6,fh,gl.R8,gl.RED,gl.UNSIGNED_BYTE,gl.LINEAR,mk); gl.pixelStorei(gl.UNPACK_ALIGNMENT,4); }
   if(skyMaskTex) gl.deleteTexture(skyMaskTex);
-  { const mk=new Uint8Array(W*H); for(let k=0;k<W*H;k++) mk[k]=validAt(P,k)?0:255; gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  { const mk=new Uint8Array(W*H); for(let k=0;k<W*H;k++) mk[k]=validAt(P,k)&&!(SHOT.ids&&SHOT.ex[SHOT.ids[k]])?0:255; gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
     skyMaskTex=mkTex(W,H,gl.R8,gl.RED,gl.UNSIGNED_BYTE,gl.LINEAR,mk); gl.pixelStorei(gl.UNPACK_ALIGNMENT,4); }
   { const fw=scl(cam.back,-1), vf=2*Math.atan(Math.tan(cam.hfov/2)/(W/H)); shotVP=mul(persp(vf,W/H,0.05,1e4), lookAt(cp,add(cp,fw),cam.up)); }
   shotStats={cover:cv?cv.idx.length/3:0, tris:ni/3, step:st, verts:nV, broken:quads? broken/(quads+broken):0, grid:VDIM.join(' × '), vs:VS};
@@ -1950,74 +2013,76 @@ function buildAttic(){
   const X=3.6, KH=0.9, RH=3.7, Z0=-5.0, Z1=2.6, rise=RH-KH, L=Math.hypot(X,rise);
   const PLASTER=[0.40,0.34,0.27], BEAM=[0.15,0.085,0.045], TRIM=[0.10,0.21,0.18], WOODC=[0.33,0.20,0.10], METAL=[0.05,0.05,0.05];
   const vary=(c,k)=>c.map(v=>v*(1-k+2*k*rnd()));
-  // floorboards
+  obj('floor');
   for(let x=-X;x<X-1e-6;x+=0.2) box(a,[x,-0.06,Z0],[Math.min(x+0.197,X),0,Z1],vary([0.30,0.18,0.095],0.18));
   // roof slopes: side -1 is the -x slope (with the skylight), +1 the +x slope
   const K=s=>[s*X,KH,0], U=s=>[-s*X/L,rise/L,0], Nout=s=>[s*rise/L,X/L,0];
   const at=(s,t)=>add(K(s),scl(U(s),L*t));
   const panel=(s,t0,t1,z0,z1,col)=>obox(a,add(add(at(s,(t0+t1)/2),scl(Nout(s),0.045)),[0,0,(z0+z1)/2]),scl(U(s),(t1-t0)*L/2),scl(Nout(s),0.045),[0,0,(z1-z0)/2],col);
-  const NS=16, T0=6/16, T1=11/16, ZA=-3.4, ZB=-1.8, ZE0=Z0-0.15, ZE1=Z1+0.15;
+  obj('roof'); const NS=16, T0=6/16, T1=11/16, ZA=-3.4, ZB=-1.8, ZE0=Z0-0.15, ZE1=Z1+0.15;
   for(const s of [-1,1]) for(let i=0;i<NS;i++){ const t0=i/NS, t1=(i+1)/NS, col=vary([0.21,0.125,0.07],0.14);
     if(s===-1 && t0>=T0-1e-6 && t1<=T1+1e-6){ panel(s,t0,t1,ZE0,ZA,col); panel(s,t0,t1,ZB,ZE1,col); } else panel(s,t0,t1,ZE0,ZE1,col); }
-  // skylight lining and glazing bars
+  obj('skylight_frame');
   const dn=s=>scl(Nout(s),-1);
   for(const t of [T0,T1]) obox(a,add(add(at(-1,t),scl(dn(-1),0.09)),[0,0,(ZA+ZB)/2]),scl(Nout(-1),0.09),scl(U(-1),0.03),[0,0,(ZB-ZA)/2],TRIM);
   for(const z of [ZA,ZB]) obox(a,add(add(at(-1,(T0+T1)/2),scl(dn(-1),0.09)),[0,0,z]),scl(U(-1),(T1-T0)*L/2),scl(Nout(-1),0.09),[0,0,0.03],TRIM);
   obox(a,add(at(-1,(T0+T1)/2),[0,0,(ZA+ZB)/2]),scl(U(-1),(T1-T0)*L/2),scl(Nout(-1),0.025),[0,0,0.022],TRIM);
   obox(a,add(at(-1,(T0+T1)/2),[0,0,(ZA+ZB)/2]),scl(U(-1),0.022),scl(Nout(-1),0.025),[0,0,(ZB-ZA)/2],TRIM);
-  // rafters, collar ties and the ridge beam
+  obj('skylight_glass'); obox(a,add(at(-1,(T0+T1)/2),[0,0,(ZA+ZB)/2]),scl(U(-1),(T1-T0)*L/2),scl(Nout(-1),0.004),[0,0,(ZB-ZA)/2],[0.55,0.6,0.62]);
+  obj('rafters');
   const zs=[]; for(let z=Z0+0.12;z<Z1;z+=0.8) zs.push(z);
   for(const z of zs) for(const s of [-1,1]) obox(a,add(add(at(s,0.5),scl(dn(s),0.08)),[0,0,z]),scl(U(s),L*0.5),scl(Nout(s),0.08),[0,0,0.05],vary(BEAM,0.1));
   const cy=2.75, cx=X*(1-(cy-KH)/rise)-0.05;
   zs.forEach((z,i)=>{ if(i%2===0) box(a,[-cx,cy-0.07,z-0.05],[cx,cy+0.07,z+0.05],BEAM); });
   box(a,[-0.09,RH-0.24,ZE0],[0.09,RH-0.04,ZE1],BEAM);
-  // knee walls with skirting
+  obj('walls');
   for(const s of [-1,1]){ box(a,s<0?[-X-0.12,0,ZE0]:[X,0,ZE0],s<0?[-X,KH,ZE1]:[X+0.12,KH,ZE1],PLASTER); box(a,s<0?[-X,0,Z0]:[X-0.025,0,Z0],s<0?[-X+0.025,0.12,Z1]:[X,0.12,Z1],BEAM); }
   // gable walls; the back one has a round window
-  const hole={x:-0.9,y:2.1,r:0.48};
+  obj('walls'); const hole={x:-0.9,y:2.1,r:0.48};
   const gable=(z0,z1,h)=>{ for(let y=0;y<RH;y+=0.04){ const yc=y+0.02, hw=yc<KH?X:X*(1-(yc-KH)/rise)+0.02; if(hw<=0.03) break;
       let segs=[[-hw,hw]]; if(h){ const dy=yc-h.y; if(Math.abs(dy)<h.r){ const dx=Math.sqrt(h.r*h.r-dy*dy); segs=[[-hw,h.x-dx],[h.x+dx,hw]]; } }
       for(const [x0,x1] of segs) if(x1-x0>0.005) box(a,[x0,y,z0],[x1,Math.min(y+0.04,RH),z1],PLASTER); } };
   gable(Z0-0.12,Z0,hole); gable(Z1,Z1+0.12,null);
-  for(let i=0;i<32;i++){ const an=i/32*2*Math.PI, c=[Math.cos(an),Math.sin(an),0], t=[-Math.sin(an),Math.cos(an),0];
+  obj('round_window_glass'); box(a,[hole.x-hole.r,hole.y-hole.r,Z0-0.068],[hole.x+hole.r,hole.y+hole.r,Z0-0.062],[0.55,0.6,0.62]);
+  obj('round_window_frame'); for(let i=0;i<32;i++){ const an=i/32*2*Math.PI, c=[Math.cos(an),Math.sin(an),0], t=[-Math.sin(an),Math.cos(an),0];
     obox(a,[hole.x+c[0]*(hole.r+0.03),hole.y+c[1]*(hole.r+0.03),Z0-0.05],scl(t,Math.PI*hole.r/32*1.15),scl(c,0.05),[0,0,0.09],TRIM); }
   box(a,[hole.x-0.022,hole.y-hole.r,Z0-0.09],[hole.x+0.022,hole.y+hole.r,Z0-0.04],TRIM);
   box(a,[hole.x-hole.r,hole.y-0.022,Z0-0.09],[hole.x+hole.r,hole.y+0.022,Z0-0.04],TRIM);
-  // workbench under the skylight, with jars, a vise and papers
+  obj('workbench');
   const WB=[-0.15,-4.88,1.35,-4.15];
   rbox(a,[WB[0],0.8,WB[1]],[WB[2],0.9,WB[3]],WOODC,0.012);
   for(const [x,z] of [[WB[0]+0.04,WB[1]+0.04],[WB[2]-0.11,WB[1]+0.04],[WB[0]+0.04,WB[3]-0.11],[WB[2]-0.11,WB[3]-0.11]]) rbox(a,[x,0,z],[x+0.07,0.8,z+0.07],WOODC,0.008);
   rbox(a,[WB[0]+0.04,0.22,WB[1]+0.04],[WB[2]-0.04,0.26,WB[3]-0.04],vary(WOODC,0.1),0.006);
-  [[0.1,-4.7,0.09,0.24,[0.30,0.42,0.36]],[0.32,-4.72,0.07,0.17,[0.42,0.33,0.16]],[0.05,-4.45,0.06,0.13,[0.25,0.30,0.40]],[1.15,-4.68,0.08,0.2,[0.35,0.42,0.30]]].forEach(([x,z,r,h,c])=>
+  obj('jars'); [[0.1,-4.7,0.09,0.24,[0.30,0.42,0.36]],[0.32,-4.72,0.07,0.17,[0.42,0.33,0.16]],[0.05,-4.45,0.06,0.13,[0.25,0.30,0.40]],[1.15,-4.68,0.08,0.2,[0.35,0.42,0.30]]].forEach(([x,z,r,h,c])=>
     lathe(a,[x,0.9,z],[[0,0],[r,0.003],[r*1.05,h*0.15],[r,h*0.8],[r*0.6,h*0.9],[r*0.6,h],[r*0.65,h*1.04],[0,h*1.04]],c,0,24));
-  rbox(a,[1.0,0.9,-4.4],[1.2,1.05,-4.2],METAL,0.01); rbox(a,[0.97,1.05,-4.37],[1.23,1.1,-4.23],METAL,0.008);
+  obj('workbench'); rbox(a,[1.0,0.9,-4.4],[1.2,1.05,-4.2],METAL,0.01); rbox(a,[0.97,1.05,-4.37],[1.23,1.1,-4.23],METAL,0.008);
   for(let i=0;i<5;i++) obox(a,[0.62+0.01*i,0.905+i*0.006,-4.45],[0.15,0,0.02*Math.sin(i)],[0,0.003,0],[0.02*Math.sin(i)*-1,0,0.21],[0.62,0.58,0.50]);
   cylA(a,[0.35,0.92,-4.3],[0.7,0.92,-4.22],0.022,WOODC,0,10); rbox(a,[0.66,0.9,-4.33],[0.8,0.98,-4.15],[0.20,0.12,0.06],0.01);
-  // a big armchair in the skylight's patch of sun, a side table and a teacup
+  obj('armchair');
   const RED=[0.33,0.055,0.045], MUST=[0.55,0.36,0.07];
   { const x0=-0.7, x1=0.15, z0=-2.35, z1=-1.45;
     rbox(a,[x0,0.12,z0],[x1,0.48,z1],RED,0.06); rbox(a,[x0-0.02,0.48,z0-0.02],[x1+0.02,1.25,z0+0.23],RED,0.08);
     rbox(a,[x0-0.02,0.48,z0],[x0+0.18,0.8,z1+0.02],RED,0.07); rbox(a,[x1-0.18,0.48,z0],[x1+0.02,0.8,z1+0.02],RED,0.07);
     rbox(a,[x0+0.18,0.48,z0+0.23],[x1-0.18,0.62,z1-0.02],MUST,0.05);
     for(const [x,z] of [[x0+0.04,z0+0.04],[x1-0.1,z0+0.04],[x0+0.04,z1-0.1],[x1-0.1,z1-0.1]]) rbox(a,[x,0,z],[x+0.06,0.12,z+0.06],BEAM,0.01); }
-  lathe(a,[0.6,0,-1.55],[[0.18,0],[0.2,0.02],[0.04,0.05],[0.035,0.52],[0.22,0.55],[0.23,0.58],[0,0.585]],WOODC,0,28);
+  obj('side_table'); lathe(a,[0.6,0,-1.55],[[0.18,0],[0.2,0.02],[0.04,0.05],[0.035,0.52],[0.22,0.55],[0.23,0.58],[0,0.585]],WOODC,0,28);
   lathe(a,[0.65,0.585,-1.58],[[0,0],[0.03,0.002],[0.045,0.05],[0.04,0.055],[0,0.05]],[0.62,0.6,0.55],0,20);
-  // trunk, dress form, globe, crates, books, a rolled rug and a hanging lantern
+  obj('trunk');
   const TEAL=[0.05,0.19,0.19], BRASS=[0.45,0.32,0.09];
   rbox(a,[-2.95,0,-4.8],[-1.8,0.52,-4.15],TEAL,0.02); rbox(a,[-2.97,0.52,-4.82],[-1.78,0.66,-4.13],TEAL,0.05);
   for(const x of [-2.75,-2.0]) box(a,[x,0,-4.84],[x+0.06,0.67,-4.11],BRASS,0,false);
-  lathe(a,[-2.2,0,-2.4],[[0.22,0],[0.22,0.03],[0.03,0.05],[0,0.05]],METAL,0,20); cylA(a,[-2.2,0.04,-2.4],[-2.2,1.05,-2.4],0.018,METAL,0,10);
+  obj('dress_form'); lathe(a,[-2.2,0,-2.4],[[0.22,0],[0.22,0.03],[0.03,0.05],[0,0.05]],METAL,0,20); cylA(a,[-2.2,0.04,-2.4],[-2.2,1.05,-2.4],0.018,METAL,0,10);
   lathe(a,[-2.2,0.95,-2.4],[[0,0],[0.15,0.02],[0.19,0.12],[0.15,0.3],[0.165,0.44],[0.2,0.55],[0.13,0.66],[0.05,0.7],[0.04,0.78],[0,0.8]],[0.50,0.42,0.33],0,32);
-  lathe(a,[2.3,0,-2.75],[[0.2,0],[0.2,0.03],[0.04,0.06],[0.03,0.75],[0.06,0.78],[0,0.78]],WOODC,0,24); sphere(a,[2.3,1.0,-2.75],0.23,[0.13,0.28,0.30]);
-  rbox(a,[2.6,0,-4.95],[3.3,0.62,-4.3],[0.36,0.25,0.13],0.015);
+  obj('globe'); lathe(a,[2.3,0,-2.75],[[0.2,0],[0.2,0.03],[0.04,0.06],[0.03,0.75],[0.06,0.78],[0,0.78]],WOODC,0,24); sphere(a,[2.3,1.0,-2.75],0.23,[0.13,0.28,0.30]);
+  obj('crates'); rbox(a,[2.6,0,-4.95],[3.3,0.62,-4.3],[0.36,0.25,0.13],0.015);
   obox(a,[2.95,0.86,-4.6],[0.27,0,0.08],[0,0.24,0],[-0.08,0,0.27],[0.30,0.21,0.11]);
   rbox(a,[2.1,0,-4.9],[2.55,0.4,-4.45],[0.33,0.23,0.12],0.015);
-  let by=0; for(let i=0;i<9;i++){ const h=0.035+rnd()*0.04, w=0.22+rnd()*0.12, d=0.16+rnd()*0.08, an=(rnd()-0.5)*0.5, c=[0.08+0.35*rnd(),0.06+0.2*rnd(),0.05+0.25*rnd()];
+  obj('books'); let by=0; for(let i=0;i<9;i++){ const h=0.035+rnd()*0.04, w=0.22+rnd()*0.12, d=0.16+rnd()*0.08, an=(rnd()-0.5)*0.5, c=[0.08+0.35*rnd(),0.06+0.2*rnd(),0.05+0.25*rnd()];
     obox(a,[2.95+(rnd()-0.5)*0.04,by+h/2,-3.75],[Math.cos(an)*w/2,0,Math.sin(an)*w/2],[0,h/2,0],[-Math.sin(an)*d/2,0,Math.cos(an)*d/2],c); by+=h; }
-  cylA(a,[3.15,0.17,-0.8],[3.15,0.17,1.7],0.16,[0.40,0.11,0.07],0,24);
-  box(a,[0.185,2.1,-2.515],[0.195,cy-0.07,-2.505],METAL,0,false);
+  obj('rug'); cylA(a,[3.15,0.17,-0.8],[3.15,0.17,1.7],0.16,[0.40,0.11,0.07],0,24);
+  obj('lantern'); box(a,[0.185,2.1,-2.515],[0.195,cy-0.07,-2.505],METAL,0,false);
   lathe(a,[0.19,1.8,-2.51],[[0,0],[0.09,0.01],[0.1,0.05],[0.08,0.06],[0.085,0.24],[0.1,0.25],[0.04,0.3],[0,0.31]],[0.08,0.07,0.06],0,20);
-  box(GS,[-80,-2,-80],[80,80,80],[1,1,1],6,false,false);
+  OBJ=0; box(GS,[-80,-2,-80],[80,80,80],[1,1,1],6,false,false);
 }
 // the old loft is grey clay; give it the surface colour a render's albedo pass would have
 function palettize(arr){
@@ -2032,7 +2097,7 @@ const SEQS=[
    {id:'sh0010', label:'wide', cam:{E:[1.7,1.3,2.35],T:[-0.6,1.0,-4.2],focal:24,fstop:4,focus:4.0}},
    {id:'sh0020', label:'workbench', cam:{E:[2.1,1.3,-1.4],T:[0.2,1.15,-4.8],focal:35,fstop:2.8,focus:3.4}},
    {id:'sh0030', label:'skylight shaft', cam:{E:[1.9,0.85,-0.2],T:[-1.6,1.9,-2.5],focal:32,fstop:2.8,focus:2.4}}]},
- {id:'sq020', label:'Dining room', kind:'pass', build:buildRoom, pal:true, light:{C:[0,1.6,-1.5],R:8.5}, def:{}, handInfl:true, cu:[0.24,0.56,0.72], shots:[
+ {id:'sq020', label:'Dining room', kind:'pass', build:()=>buildRoom(true), pal:true, light:{C:[0,1.6,-1.5],R:8.5}, def:{}, handInfl:true, cu:[0.24,0.56,0.72], shots:[
    {id:'sh0010', label:'window light', cam:{E:CAM_DEFAULT.E,T:CAM_DEFAULT.T,focal:32,fstop:4,focus:4.5}}]},
 ];
 let curSeq=0, curShotI=0; const shotCache={}, lightCache={};
@@ -2040,15 +2105,17 @@ const seqDef=()=>SHOT&&SHOT.seq?SHOT.seq.def:{};
 const passPath=(q,sh)=>`/shows/${SHOW}/${q.id}/${sh.id}/lighting/render/utility/v001/${q.id}_${sh.id}_utility.1001.exr`;
 function makePlaceholderPass(q,sh){
   const RW=1280, RH=536, ar=RW/RH;
-  GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0; q.build(); if(q.pal) palettize(GM);
+  GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0; OBJ_NAMES.length=1; OBJ=0; q.build(); OBJ=0; if(q.pal) palettize(GM);
+  // the object ID pass (cryptomatte-style): names come with the render; glass is left out of the rebuild by default
+  if(!q.names){ q.names=[...OBJ_NAMES]; q.ex=new Uint8Array(q.names.length); q.names.forEach((n,i)=>{ if(/glass/i.test(n)) q.ex[i]=1; }); }
   const m=mkMesh(GM), E=sh.cam.E, hf=2*Math.atan(FILMS.s35.w/(2*sh.cam.focal));
   const view=lookAt(E,sh.cam.T,[0,1,0]), vp=mul(persp(2*Math.atan(Math.tan(hf/2)/ar),ar,0.03,80),view);
   const tx=[0,1,2].map(()=>mkTex(RW,RH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST)), d=depthRB(RW,RH), fb=mkFB(tx,d);
   gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,RW,RH); for(let i=0;i<3;i++) gl.clearBufferfv(gl.COLOR,i,[0,0,0,0]); gl.clearBufferfv(gl.DEPTH,0,[1]);
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); use(P.util,{uVP:vp,uView:view,uCam:E}); draw(m); gl.disable(gl.DEPTH_TEST);
   const rb=tx.map((_,i)=>{ const b=new Float32Array(RW*RH*4); gl.readBuffer(gl.COLOR_ATTACHMENT0+i); gl.readPixels(0,0,RW,RH,gl.RGBA,gl.FLOAT,b); return b; });
-  const Pp=new Float32Array(RW*RH*3), Nn=new Float32Array(RW*RH*3), Cc=new Float32Array(RW*RH*3);
-  for(let y=0;y<RH;y++) for(let x=0;x<RW;x++){ const s=((RH-1-y)*RW+x)*4, o=(y*RW+x)*3; if(rb[0][s+3]<0.5) continue;
+  const Pp=new Float32Array(RW*RH*3), Nn=new Float32Array(RW*RH*3), Cc=new Float32Array(RW*RH*3), ids=new Uint16Array(RW*RH);
+  for(let y=0;y<RH;y++) for(let x=0;x<RW;x++){ const s=((RH-1-y)*RW+x)*4, o=(y*RW+x)*3; if(rb[0][s+3]<0.5) continue; ids[y*RW+x]=Math.round(rb[0][s+3]-1);
     for(let k=0;k<3;k++){ Pp[o+k]=rb[0][s+k]; Nn[o+k]=rb[1][s+k]; Cc[o+k]=rb[2][s+k]; } }
   tx.forEach(t=>gl.deleteTexture(t)); gl.deleteRenderbuffer(d); gl.deleteFramebuffer(fb);
   // the key light's depth pass for the sequence, as a lighting render would supply it per light
@@ -2056,7 +2123,9 @@ function makePlaceholderPass(q,sh){
   if(!lp){ const az=(q.def.sunAz??DEF.sunAz)*Math.PI/180, el=(q.def.sunEl??DEF.sunEl)*Math.PI/180, sl=[-Math.cos(az)*Math.cos(el), Math.sin(el), -Math.sin(az)*Math.cos(el)], C=q.light.C, R=q.light.R;
     const lvp=mul(ortho(-R,R,-R,R,1,50), lookAt(add(C,scl(sl,25)),C,[0,1,0])), ls=mkShadowTarget();
     gl.bindFramebuffer(gl.FRAMEBUFFER,ls.fb); gl.viewport(0,0,SH,SH); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.clear(gl.DEPTH_BUFFER_BIT);
-    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0); use(P.depth,{uVP:lvp}); draw(m); gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST);
+    const opq=[]; for(let i=0;i<GM.length;i+=30){ const id=Math.floor((GM[i+9]+0.5)/256); if(/glass/i.test(q.names[id]||'')) continue; for(let k=0;k<30;k++) opq.push(GM[i+k]); }
+    const mo=mkMesh(opq);
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0); use(P.depth,{uVP:lvp}); draw(mo); gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST); freeMesh(mo);
     lp=lightCache[q.id]={tex:ls.tex,fb:ls.fb,az:q.def.sunAz??DEF.sunAz,el:q.def.sunEl??DEF.sunEl,vp:lvp}; }
   // a 360° utility pass from the shot camera's position (six 90° faces): everything around the camera, not just in frame
   const CW=320, cover=[], ctx=[0,1,2].map(()=>mkTex(CW,CW,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST)), cdr=depthRB(CW,CW), cfb=mkFB(ctx,cdr);
@@ -2064,16 +2133,18 @@ function makePlaceholderPass(q,sh){
     const v=lookAt(E,add(E,f),u), vp2=mul(persp(Math.PI/2*1.08,1,0.03,80),v);
     gl.bindFramebuffer(gl.FRAMEBUFFER,cfb); gl.viewport(0,0,CW,CW); for(let i=0;i<3;i++) gl.clearBufferfv(gl.COLOR,i,[0,0,0,0]); gl.clearBufferfv(gl.DEPTH,0,[1]);
     gl.enable(gl.DEPTH_TEST); use(P.util,{uVP:vp2,uView:v,uCam:E}); draw(m); gl.disable(gl.DEPTH_TEST);
-    const b0=new Float32Array(CW*CW*4), b2=new Float32Array(CW*CW*4); gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0,0,CW,CW,gl.RGBA,gl.FLOAT,b0); gl.readBuffer(gl.COLOR_ATTACHMENT2); gl.readPixels(0,0,CW,CW,gl.RGBA,gl.FLOAT,b2);
-    const fP=new Float32Array(CW*CW*3), fC=new Float32Array(CW*CW*3);
-    for(let y=0;y<CW;y++) for(let x=0;x<CW;x++){ const s_=((CW-1-y)*CW+x)*4, o=(y*CW+x)*3; if(b0[s_+3]<0.5) continue; for(let k=0;k<3;k++){ fP[o+k]=b0[s_+k]; fC[o+k]=b2[s_+k]; } }
-    cover.push({W:CW,H:CW,P:fP,C:fC}); }
+    const b0=new Float32Array(CW*CW*4), b1=new Float32Array(CW*CW*4), b2=new Float32Array(CW*CW*4);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(0,0,CW,CW,gl.RGBA,gl.FLOAT,b0); gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(0,0,CW,CW,gl.RGBA,gl.FLOAT,b1); gl.readBuffer(gl.COLOR_ATTACHMENT2); gl.readPixels(0,0,CW,CW,gl.RGBA,gl.FLOAT,b2);
+    const fP=new Float32Array(CW*CW*3), fN=new Float32Array(CW*CW*3), fC=new Float32Array(CW*CW*3), fI=new Uint16Array(CW*CW);
+    for(let y=0;y<CW;y++) for(let x=0;x<CW;x++){ const s_=((CW-1-y)*CW+x)*4, o=(y*CW+x)*3; if(b0[s_+3]<0.5) continue; fI[y*CW+x]=Math.round(b0[s_+3]-1); for(let k=0;k<3;k++){ fP[o+k]=b0[s_+k]; fN[o+k]=b1[s_+k]; fC[o+k]=b2[s_+k]; } }
+    cover.push({W:CW,H:CW,P:fP,N:fN,C:fC,ids:fI,right:[v[0],v[4],v[8]],up:[v[1],v[5],v[9]],fwd:f,th:Math.tan(Math.PI/2*1.08/2)}); }
   ctx.forEach(t=>gl.deleteTexture(t)); gl.deleteRenderbuffer(cdr); gl.deleteFramebuffer(cfb);
   freeMesh(m); GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
   const cam={pos:[...E], right:[view[0],view[4],view[8]], up:[view[1],view[5],view[9]], back:[view[2],view[6],view[10]], hfov:hf, focal:sh.cam.focal, fstop:sh.cam.fstop, focus:sh.cam.focus};
   const prev=SHOT;
   setShot({W:RW,H:RH,P:Pp,N:Nn,C:Cc,cam,scale:1,label:`${q.id}_${sh.id}`,seq:q,shot:sh,path:passPath(q,sh),up:'y',autoInfl:!q.handInfl,cu:sh.cu||q.cu||[0.5,0.5,0.5],
-    layers:{P:'P',N:'N',C:'surfaceColor',Z:'depth'}, units:'metres', camSrc:'from the EXR header', lightPass:lp, cover});
+    layers:{P:'P',N:'N',C:'surfaceColor',Z:'depth',ID:'objectId'}, units:'metres', camSrc:'from the EXR header', lightPass:lp, cover, ids, names:q.names, ex:q.ex});
+  { const cnt=new Uint32Array(q.names.length); for(let k=0;k<RW*RH;k++) if(validAt(Pp,k)) cnt[ids[k]]++; for(const f of cover) for(let k=0;k<CW*CW;k++) if(validAt(f.P,k)) cnt[f.ids[k]]++; SHOT.present=[...cnt].map((c,i)=>c?i:-1).filter(i=>i>0); }
   const out=SHOT; SHOT=prev; return out;
 }
 function setShot(sh){
@@ -2121,11 +2192,18 @@ function syncShotPicker(){ const q=SEQS[curSeq], ld=S.scene==='shot';
     : S.scene==='fire' ? 'Hand-built stand-in set for the ember tool.'
     : 'Placeholder shots: each utility pass is rendered in your browser from a stand-in set. The real node finds the pass for the shot you pick in the pipeline and rebuilds the scene from it.'; }
 const shotName=()=>{ if(S.scene==='room') return 'dining_room'; if(S.scene==='fire') return 'campfire'; const q=SEQS[curSeq]; return `${q.id}_${q.shots[curShotI].id}`; };
+function fillObjList(d){ d=d||$('#objList'); if(!d) return; d.innerHTML=''; if(!SHOT||!SHOT.present){ d.textContent='No ID pass.'; return; }
+  for(const i of [...SHOT.present].sort((a,b)=>SHOT.names[a].localeCompare(SHOT.names[b]))){ const l=document.createElement('label'), cb=document.createElement('input');
+    cb.type='checkbox'; cb.checked=!SHOT.ex[i]; l.className=cb.checked?'':'off'; cb.onchange=()=>{ SHOT.ex[i]=cb.checked?0:1; objChanged(SHOT.names[i]); };
+    l.appendChild(cb); l.appendChild(document.createTextNode(SHOT.names[i].replace(/_/g,' '))); l.title=SHOT.names[i]; d.appendChild(l); } }
+function objChanged(name){ fillObjList(); scheduleRebuild(false); lightDirty=true; resetGI=true; resetDOF=true;
+  const off=SHOT.ex[SHOT.names.indexOf(name)];
+  $('#readout').textContent=`${name.replace(/_/g,' ')} ${off?'left out of':'back in'} the rebuild`+(onLightPass?'. Shadows still come from the key light\'s depth pass; set Shadows from to Rebuilt scene (Light tab) to see it in the light.':''); }
 function shotInfoHTML(){
   if(!SHOT) return '<p class="note">No shot loaded.</p>';
   const s=SHOT, st=shotStats, yes=(v,l)=>v?`<span class="ok">✓</span> ${l}`:`<span class="no">–</span> ${l}`;
   const rows=[['Shot',`${s.seq.id} / ${s.shot.id} · ${s.shot.label}`],['Pass',`<span class="no">${s.path}</span>`],['Status','placeholder pass, rendered from a stand-in set'],['Resolution',`${s.W} × ${s.H}`],
-    ['Layers',[s.layers.P,s.layers.N,s.layers.C,s.layers.Z].filter(Boolean).map(l=>yes(1,l)).join('  ')],
+    ['Layers',[s.layers.P,s.layers.N,s.layers.C,s.layers.Z,s.layers.ID].filter(Boolean).map(l=>yes(1,l)).join('  ')],
     ['Camera',`${s.camSrc} · ${s.cam.focal}mm · ${(s.cam.hfov*180/Math.PI).toFixed(1)}° wide`],['Units',s.units],
     ['Key light depth',s.lightPass?yes(1,'sun depth pass'):yes(0,'shadows from rebuilt geometry')],
     ['Coverage',s.cover&&S.cover?yes(1,`360° utility pass · 6 × ${s.cover[0].W}²${st&&st.cover?` · ${Math.round(st.cover).toLocaleString()} triangles`:''}`):yes(0,'off: only what is in frame exists')]];
@@ -2153,9 +2231,9 @@ let pickFB=null, pickT=0;
 function pickAt(sx,sy){ if(!pickFB||!lastCam) return null; const r=canvas.getBoundingClientRect();
   const x=clamp(Math.floor(sx/r.width*W),0,W-1), y=clamp(Math.floor((1-sy/r.height)*H),0,H-1), b=new Float32Array(4);
   gl.bindFramebuffer(gl.READ_FRAMEBUFFER,pickFB); gl.readBuffer(gl.COLOR_ATTACHMENT2); gl.readPixels(x,y,1,1,gl.RGBA,gl.FLOAT,b);
-  if(!(b[3]>0.5)){ gl.bindFramebuffer(gl.READ_FRAMEBUFFER,null); return null; } let n=nrm([b[0],b[1],b[2]]);
+  if(!(b[3]>0.5)){ gl.bindFramebuffer(gl.READ_FRAMEBUFFER,null); return null; } let n=nrm([b[0],b[1],b[2]]); const id=Math.round(b[3]-1);
   gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(x,y,1,1,gl.RGBA,gl.FLOAT,b); gl.bindFramebuffer(gl.READ_FRAMEBUFFER,null);
-  const p=[b[0],b[1],b[2]]; if(dot(n,sub(lastCam.E,p))<0) n=scl(n,-1); return {p,n,d:b[3]}; }
+  const p=[b[0],b[1],b[2]]; if(dot(n,sub(lastCam.E,p))<0) n=scl(n,-1); return {p,n,d:b[3],id}; }
 let drag=null;
 // left drag orbits, middle drag moves the camera sideways and up/down, right drag dollies in and out
 canvas.addEventListener('pointerdown',e=>{ if(drag) return; const mode=e.button===1?'pan':e.button===2?'dolly':'orbit'; if(e.button===1) e.preventDefault();
@@ -2177,12 +2255,13 @@ canvas.addEventListener('pointermove',e=>{
   if(!h){ $('#readout').textContent=S.scene==='shot'?'Nothing here in the position pass (sky or empty)':'Sky'; return; }
   const p=h.p, d=h.d, c=cocPxJS(d);
   const f=v=>(v>=0?' ':'−')+Math.abs(v).toFixed(2);
-  $('#readout').textContent=`P ${f(p[0])} ${f(p[1])} ${f(p[2])}   depth ${d.toFixed(2)} m   CoC ${Math.abs(c).toFixed(1)} px ${Math.abs(c)<1?'(in focus)':c<0?'(front)':'(behind)'}`;
+  const on=S.scene==='shot'&&SHOT&&SHOT.names&&h.id>0&&SHOT.names[h.id]?`   ${SHOT.names[h.id].replace(/_/g,' ')}`:'';
+  $('#readout').textContent=`P ${f(p[0])} ${f(p[1])} ${f(p[2])}   depth ${d.toFixed(2)} m   CoC ${Math.abs(c).toFixed(1)} px ${Math.abs(c)<1?'(in focus)':c<0?'(front)':'(behind)'}${on}`;
 });
 canvas.addEventListener('pointerleave',()=>{ if(!drag) loupePos=null; });
 canvas.addEventListener('pointerup',e=>{ if(!drag) return; const wasDrag=drag.moved||drag.mode!=='orbit'; drag=null; if(wasDrag||!lastCam) return;
   const r=canvas.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top, h=pickAt(sx,sy);
-  if(placing){ if(h){ placeAt(h.p,h.n); showReticle(sx,sy,true); $('#readout').textContent='Placed'; } setPlacing(null); return; }
+  if(placing){ if(h){ const ob=placing==='object'; placeAt(h.p,h.n,h.id); showReticle(sx,sy,true); if(!ob) $('#readout').textContent='Placed'; } setPlacing(null); return; }
   { rackFocus(h?h.d:20); showReticle(sx,sy,false); } });
 canvas.addEventListener('pointercancel',()=>{drag=null;});
 // the wheel racks focus; with Shift (or a trackpad pinch) it dollies instead
@@ -2226,7 +2305,12 @@ const TABS=[
    {t:'seg',k:'shade',label:'Show as',opts:[['clay','Clay'],['color','Colour'],['normals','Normals']]},
    {t:'toggle',k:'cover',label:'360° coverage pass'},
    {t:'toggle',k:'enclosed',label:'Interior'},
-   {t:'note',text:'Edge break splits the surface where depth jumps between neighbouring pixels, so foreground objects don\'t stretch into the background. Shell thickness gives the one-sided surfaces some depth for bounce light and shadows. The 360° coverage pass is a second utility pass rendered from the shot camera\'s position in every direction; it closes the scene around the camera so light can\'t pour in where the shot saw nothing. Turn it off to see the leak. Without it, Interior treats what the camera can\'t see as more room rather than open sky. Dust fills the camera\'s view out to the dust depth.'}
+   {t:'note',text:'Edge break splits the surface where depth jumps between neighbouring pixels, so foreground objects don\'t stretch into the background. Shell thickness gives the one-sided surfaces some depth for bounce light and shadows. The 360° coverage pass is a second utility pass rendered from the shot camera\'s position in every direction; it closes the scene around the camera so light can\'t pour in where the shot saw nothing. Turn it off to see the leak. Without it, Interior treats what the camera can\'t see as more room rather than open sky. By default dust fills the whole rebuilt space; set Dust depth to limit it to the camera\'s view out to that distance.'}
+  ]],
+  ['Objects · ID pass',[
+   {t:'objects'},
+   {t:'btn',label:'Pick an object in the viewer',id:'pickObj',act:()=>setPlacing(placing==='object'?null:'object')},
+   {t:'note',text:'Objects come from the shot\'s object ID pass (cryptomatte in production). Untick one, or pick it in the viewer, to leave it out of the rebuild: it stops casting shadows from the rebuilt scene, stops blocking bounce light and counts as an opening. Glass is left out automatically, since it lets the light through. Choices are kept per sequence, so every shot of the set gets them.'}
   ]],
   ['View',[
    {t:'btn',label:'Back to shot camera',act:()=>applyShotCam()},
@@ -2345,6 +2429,7 @@ const TABS=[
    {k:'sunK',label:'Colour temp',min:2500,max:8000,step:50,unit:'K',dec:0},
    {t:'seg',k:'cookie',label:'Window',scenes:['room'],opts:[[0,'Open'],[1,'Blinds'],[2,'Foliage']]},
    {t:'seg',k:'cookie',label:'Breakup',scenes:['shot','fire'],opts:[[0,'None'],[2,'Leaves']]},
+   {t:'seg',k:'shadowSrc',label:'Shadows from',scenes:['shot'],opts:[['pass','Light depth pass'],['rebuild','Rebuilt scene']]},
    {t:'note',scenes:['shot'],text:'Shadows come from the key light\'s own depth pass, as they would in production. Move the light and they fall back to the rebuilt geometry, closed around the camera by the 360° coverage pass.'}
   ]],
   ['Bounce',[
@@ -2406,7 +2491,7 @@ function sliderPos(it,v){ return it.log ? Math.log(v/it.min)/Math.log(it.max/it.
 function sliderVal(it,p){ let v=it.log ? it.min*Math.pow(it.max/it.min,p) : it.min+p*(it.max-it.min); return Math.round(v/it.step)*it.step; }
 const fmtVal=(it,v)=>it.fmt?it.fmt(v):Number(v).toFixed(it.dec??2);
 function onParam(k){
-  if(['sunAz','sunEl','sunI','sunK','cookie','fireI'].includes(k)) updateLight();
+  if(['sunAz','sunEl','sunI','sunK','cookie','fireI','shadowSrc'].includes(k)) updateLight();
   if(k==='embers' && S.embers) prewarmEmbers();
   if(k==='embers'||k==='showEmitter') drawGizmo();
   if(LIGHT_KEYS.has(k)) resetGI=true;
@@ -2432,6 +2517,7 @@ function buildKnobs(){
     const g=document.createElement('div'); g.className='grp'; if(title){ const h=document.createElement('h3'); h.textContent=title; g.appendChild(h); }
     for(const it of items){
       if(it.scenes && !it.scenes.includes(S.scene)) continue;
+      if(it.t==='objects'){ const d=document.createElement('div'); d.className='objlist'; d.id='objList'; fillObjList(d); g.appendChild(d); continue; }
       if(it.t==='info'){ const d=document.createElement('div'); d.className='shotinfo'; d.id='shotInfo'; d.innerHTML=shotInfoHTML(); g.appendChild(d); continue; }
       if(it.t==='note'){ const p=document.createElement('p'); p.className='note'; p.textContent=it.text; g.appendChild(p); continue; }
       if(it.t==='legend'){ const d=document.createElement('div'); d.className='legend'; d.innerHTML='<span><i style="background:#ffdb99"></i>grit</span><span><i style="background:#59ccff"></i>flakes</span><span><i style="background:#ff5980"></i>lint</span><span><i style="background:#8cff73"></i>fluff</span><span>· ID channel colours</span>'; g.appendChild(d); continue; }
@@ -2520,7 +2606,7 @@ window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,selec
 
 const presetEl=$('#presets'), sceneSeg=$('#sceneseg');
 function markPreset(id){ [...presetEl.querySelectorAll('.chip')].forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id)); }
-const REBUILD_KEYS=['meshStep','edgeBreak','shell','dustFar','shade','upAxis','enclosed','cover'];
+const REBUILD_KEYS=['meshStep','edgeBreak','shell','dustFar','shade','upAxis','enclosed','cover','shadowSrc'];
 function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; const inf={}; for(const k in S) if(/^(gust|mov)/.test(k)||REBUILD_KEYS.includes(k)) inf[k]=S[k];
   Object.assign(S,DEF,SCENES[S.scene].def,S.scene==='shot'?{...seqDef(),...shotDefaults()}:{},pr.p,keep,inf);
   if(S.scene==='shot'){ applyShotCam(); if(pr.cam==='closeup') closeupCam(); } else setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
