@@ -13,7 +13,7 @@ The shots in the mockup are **placeholders**: each one's utility pass (world pos
 - Shadows come from the key light's own depth pass; move the light and they fall back to the rebuilt geometry
 - A 360° coverage pass (P only, six 90° faces from the shot camera's position) closes the scene around the camera and records which directions are open sky, so light only enters through real openings
 - Orbit away to inspect the rebuilt scene, with the shot camera drawn as a frustum
-- Objects come from the shot's object ID pass (cryptomatte in production): anything named glass, window or skylight is left out of the rebuild automatically so openings stay open, and any object can be picked in the viewer or unticked to drop it from the rebuild, per sequence
+- Objects come from the shot's object ID pass (cryptomatte in production): anything named glass, window or skylight is left out of the rebuild automatically so openings stay open, and any other object can be clicked in the viewer to hide it; only hidden objects are listed (a production ID pass can hold thousands), each with a Show button, kept per sequence
 - With the coverage pass, unseen space is carved: everything starts solid and only what the camera saw through is emptied, so bounce light and the rebuilt-scene shadows only get in through real openings
 
 The dust itself:

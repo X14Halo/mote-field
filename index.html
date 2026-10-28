@@ -135,7 +135,14 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 .kbtn{grid-column:1/-1;justify-self:start;background:var(--bin-2);border:1px solid var(--rule);border-radius:3px;padding:5px 12px;font-family:var(--f-cond);font-size:13px;cursor:pointer}
 .kbtn:hover{border-color:var(--dust)}
 .shotinfo{grid-column:1/-1;font-size:12.5px}
-.objlist{display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;font-size:12.5px;max-height:190px;overflow:auto;padding:2px 0 6px}
+.objlist{grid-column:1/-1;display:flex;flex-direction:column;gap:3px;font-size:12.5px;max-height:220px;overflow:auto;padding:2px 0 6px}
+.objlist .orow{display:flex;align-items:center;gap:8px;min-width:0}
+.objlist .onm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--f-num);font-size:12px}
+.objlist .otag{font-family:var(--f-cond);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);border:1px solid var(--rule);border-radius:2px;padding:0 5px}
+.objlist .oshow{background:var(--bin-2);border:1px solid var(--rule);border-radius:3px;padding:2px 9px;font-family:var(--f-cond);font-size:12px;cursor:pointer}
+.objlist .oshow:hover{border-color:var(--dust)}
+.objlist .oshow.all{align-self:flex-start;margin-top:4px}
+.objlist .empty{margin:0;color:var(--mute)}
 .objlist label{display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .objlist label.off{color:var(--mute);text-decoration:line-through}
 .objlist input{accent-color:var(--dust)}
@@ -1792,7 +1799,7 @@ function drawGizmo(){
     for(const a of [0,Math.PI/2,Math.PI,Math.PI*1.5]){ const off=[Math.cos(a)*S.movR,0,Math.sin(a)*S.movR]; poly([add(P0,add(off,[0,S.movR*0.3,0])),add(P0,add(off,[0,S.movH-S.movR*0.3,0]))]); }
   }
 }
-const PLACE_TEXT={object:'Click an object to leave it out of the rebuild (untick it in the Shot tab to bring it back)', emitter:'Click a surface to put the ember emitter there', gust:'Click a wall, door or opening to put the gust source there; it blows out of the surface', gustAim:'Click where the gust should blow toward', moverA:'Click the floor where the moving object starts', moverB:'Click the floor where the moving object ends'};
+const PLACE_TEXT={object:'Click objects to hide them from the rebuild. Esc to stop picking', emitter:'Click a surface to put the ember emitter there', gust:'Click a wall, door or opening to put the gust source there; it blows out of the surface', gustAim:'Click where the gust should blow toward', moverA:'Click the floor where the moving object starts', moverB:'Click the floor where the moving object ends'};
 const PLACE_BTN={object:'pickObj', emitter:'placeBtn', gust:'placeGust', gustAim:'aimGust', moverA:'placeA', moverB:'placeB'};
 function setPlacing(mode){ placing=mode||null; for(const k in PLACE_BTN){ const b=$('#'+PLACE_BTN[k]); if(b) b.setAttribute('aria-pressed',placing===k); } if(placing) $('#readout').textContent=PLACE_TEXT[placing]; drawGizmo(); }
 function placeAt(p,n,id){
@@ -2193,13 +2200,20 @@ function syncShotPicker(){ const q=SEQS[curSeq], ld=S.scene==='shot';
     : S.scene==='fire' ? 'Hand-built stand-in set for the ember tool.'
     : 'Placeholder shots: each utility pass is rendered in your browser from a stand-in set. The real node finds the pass for the shot you pick in the pipeline and rebuilds the scene from it.'; }
 const shotName=()=>{ if(S.scene==='room') return 'dining_room'; if(S.scene==='fire') return 'campfire'; const q=SEQS[curSeq]; return `${q.id}_${q.shots[curShotI].id}`; };
-function fillObjList(d){ d=d||$('#objList'); if(!d) return; d.innerHTML=''; if(!SHOT||!SHOT.present){ d.textContent='No ID pass.'; return; }
-  for(const i of [...SHOT.present].sort((a,b)=>SHOT.names[a].localeCompare(SHOT.names[b]))){ const l=document.createElement('label'), cb=document.createElement('input');
-    cb.type='checkbox'; cb.checked=!SHOT.ex[i]; l.className=cb.checked?'':'off'; cb.onchange=()=>{ SHOT.ex[i]=cb.checked?0:1; objChanged(SHOT.names[i]); };
-    l.appendChild(cb); l.appendChild(document.createTextNode(SHOT.names[i].replace(/_/g,' '))); l.title=SHOT.names[i]; d.appendChild(l); } }
+// only the hidden objects are listed: a production ID pass can hold thousands of names
+function fillObjList(d){ d=d||$('#objList'); if(!d) return; d.innerHTML=''; if(!SHOT||!SHOT.names){ d.textContent='No ID pass.'; return; }
+  const hid=[]; for(let i=1;i<SHOT.names.length;i++) if(SHOT.ex[i]&&SHOT.present.includes(i)) hid.push(i);
+  if(!hid.length){ const p=document.createElement('p'); p.className='empty'; p.textContent='Nothing hidden. Pick objects in the viewer to hide them.'; d.appendChild(p); return; }
+  hid.sort((a,b)=>SHOT.names[a].localeCompare(SHOT.names[b]));
+  for(const i of hid){ const row=document.createElement('div'); row.className='orow';
+    const nm=document.createElement('span'); nm.className='onm'; nm.textContent=SHOT.names[i].replace(/_/g,' '); nm.title=SHOT.names[i]; row.appendChild(nm);
+    if(AUTO_OUT.test(SHOT.names[i])){ const t=document.createElement('span'); t.className='otag'; t.textContent='auto'; t.title='Hidden automatically: the name matches glass, window or skylight'; row.appendChild(t); }
+    const b=document.createElement('button'); b.className='oshow'; b.textContent='Show'; b.setAttribute('aria-label','Show '+SHOT.names[i]); b.onclick=()=>{ SHOT.ex[i]=0; objChanged(SHOT.names[i]); }; row.appendChild(b);
+    d.appendChild(row); }
+  if(hid.length>1){ const b=document.createElement('button'); b.className='oshow all'; b.textContent='Show all'; b.onclick=()=>{ for(const i of hid) SHOT.ex[i]=0; objChanged(null); }; d.appendChild(b); } }
 function objChanged(name){ fillObjList(); scheduleRebuild(false); lightDirty=true; resetGI=true; resetDOF=true;
-  const off=SHOT.ex[SHOT.names.indexOf(name)];
-  $('#readout').textContent=`${name.replace(/_/g,' ')} ${off?'left out of':'back in'} the rebuild`+(onLightPass?'. Shadows still come from the key light\'s depth pass; set Shadows from to Rebuilt scene (Light tab) to see it in the light.':''); }
+  const off=name&&SHOT.ex[SHOT.names.indexOf(name)];
+  $('#readout').textContent=(name?`${name.replace(/_/g,' ')} ${off?'hidden from':'back in'} the rebuild`:'All hidden objects are back in the rebuild')+(onLightPass?'. Shadows still come from the key light\'s depth pass; set Shadows from to Rebuilt scene (Light tab) to see it in the light.':''); }
 function shotInfoHTML(){
   if(!SHOT) return '<p class="note">No shot loaded.</p>';
   const s=SHOT, st=shotStats, yes=(v,l)=>v?`<span class="ok">✓</span> ${l}`:`<span class="no">–</span> ${l}`;
@@ -2251,7 +2265,7 @@ canvas.addEventListener('pointermove',e=>{
         const k=2*cam.dist*Math.tan(Math.atan(Math.tan(hfov()/2)/aspect()))/Math.max(r.height,1);
         cam.T=add(drag.T,add(scl(rt,-dx*k),scl(up,dy*k))); } }
     return; }
-  if(!lastCam||placing) return; const now=performance.now(); if(now-pickT<60) return; pickT=now;
+  if(!lastCam||(placing&&placing!=='object')) return; const now=performance.now(); if(now-pickT<60) return; pickT=now;
   const h=pickAt(e.clientX-r.left,e.clientY-r.top);
   if(!h){ $('#readout').textContent=S.scene==='shot'?'Nothing here in the position pass (sky or empty)':'Sky'; return; }
   const p=h.p, d=h.d, c=cocPxJS(d);
@@ -2262,7 +2276,7 @@ canvas.addEventListener('pointermove',e=>{
 canvas.addEventListener('pointerleave',()=>{ if(!drag) loupePos=null; });
 canvas.addEventListener('pointerup',e=>{ if(!drag) return; const wasDrag=drag.moved||drag.mode!=='orbit'; drag=null; if(wasDrag||!lastCam) return;
   const r=canvas.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top, h=pickAt(sx,sy);
-  if(placing){ if(h){ const ob=placing==='object'; placeAt(h.p,h.n,h.id); showReticle(sx,sy,true); if(!ob) $('#readout').textContent='Placed'; } setPlacing(null); return; }
+  if(placing){ const ob=placing==='object'; if(h){ placeAt(h.p,h.n,h.id); showReticle(sx,sy,true); if(!ob) $('#readout').textContent='Placed'; } if(!ob) setPlacing(null); return; }   // picking objects stays on for several clicks
   { rackFocus(h?h.d:20); showReticle(sx,sy,false); } });
 canvas.addEventListener('pointercancel',()=>{drag=null;});
 // the wheel racks focus; with Shift (or a trackpad pinch) it dollies instead
@@ -2308,10 +2322,10 @@ const TABS=[
    {t:'toggle',k:'enclosed',label:'Interior'},
    {t:'note',text:'Edge break splits the surface where depth jumps between neighbouring pixels, so foreground objects don\'t stretch into the background. Shell thickness gives the one-sided surfaces some depth for bounce light and shadows. The 360° coverage pass is a second utility pass rendered from the shot camera\'s position in every direction; it closes the scene around the camera so light can\'t pour in where the shot saw nothing. Turn it off to see the leak. Without it, Interior treats what the camera can\'t see as more room rather than open sky. By default dust fills the whole rebuilt space; set Dust depth to limit it to the camera\'s view out to that distance.'}
   ]],
-  ['Objects · ID pass',[
+  ['Hidden objects · ID pass',[
    {t:'objects'},
-   {t:'btn',label:'Pick an object in the viewer',id:'pickObj',act:()=>setPlacing(placing==='object'?null:'object')},
-   {t:'note',text:'Objects come from the shot\'s object ID pass (cryptomatte in production). Untick one, or pick it in the viewer, to leave it out of the rebuild: it stops casting shadows from the rebuilt scene, stops blocking bounce light and counts as an opening. Anything named glass, window or skylight is left out automatically, so openings stay open. Choices are kept per sequence, so every shot of the set gets them.'}
+   {t:'btn',label:'Pick objects to hide',id:'pickObj',act:()=>setPlacing(placing==='object'?null:'object')},
+   {t:'note',text:'Objects come from the shot\'s object ID pass (cryptomatte in production). Click Pick objects to hide, then click things in the viewer; each one is hidden from the rebuild and added to this list. A hidden object stops casting shadows from the rebuilt scene, stops blocking bounce light and counts as an opening. Anything named glass, window or skylight is hidden automatically. The list is kept per sequence, so every shot of the set gets it. Press Esc or the button again to stop picking.'}
   ]],
   ['View',[
    {t:'btn',label:'Back to shot camera',act:()=>applyShotCam()},
