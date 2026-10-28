@@ -39,6 +39,14 @@ button{font:inherit;color:inherit}
 .mark{font-family:var(--f-mark);font-size:17px;letter-spacing:.16em;display:flex;align-items:center;gap:10px}
 .mark i{width:7px;height:7px;border-radius:50%;background:var(--dust);box-shadow:0 0 10px 2px rgba(228,186,107,.55);display:inline-block}
 .sub{color:var(--mute);font-family:var(--f-cond);font-size:13px;letter-spacing:.02em}
+.shotpick{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.shotpick .plabel{margin:0 0 0 6px}
+.sel{background:var(--bin-2);color:var(--text);border:1px solid var(--rule);border-radius:3px;padding:5px 8px;font-family:var(--f-num);font-size:13px;cursor:pointer}
+.sel:hover{border-color:var(--dust)}
+.phtag{font-family:var(--f-cond);font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#1a1408;background:var(--dust);border-radius:2px;padding:2px 7px}
+.shotnote{color:var(--mute);font-size:12.5px;line-height:1.35;flex:1 1 260px;min-width:0}
+.subbar{display:flex;align-items:center;gap:20px;flex-wrap:wrap;min-width:0}
+.subbar .presets{margin-left:auto}
 .scenebar{display:flex;align-items:center;gap:6px;margin-left:auto}
 .scenebar .seg button{padding:5px 10px;font-size:13px}
 .presets{display:flex;align-items:center;gap:6px;overflow-x:auto;max-width:100%;padding-bottom:2px;scrollbar-width:none}
@@ -125,8 +133,6 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 .sw input:focus-visible+span{outline:2px solid var(--dust);outline-offset:2px}
 .kbtn{grid-column:1/-1;justify-self:start;background:var(--bin-2);border:1px solid var(--rule);border-radius:3px;padding:5px 12px;font-family:var(--f-cond);font-size:13px;cursor:pointer}
 .kbtn:hover{border-color:var(--dust)}
-.drop{position:absolute;inset:8px;z-index:5;display:flex;align-items:center;justify-content:center;text-align:center;background:rgba(11,11,10,.82);border:1.5px dashed var(--dust);border-radius:6px;color:var(--text);font-family:var(--f-cond);font-size:18px;letter-spacing:.04em}
-.drop small{display:block;margin-top:6px;color:var(--mute);font-size:13px;letter-spacing:0}
 .shotinfo{grid-column:1/-1;font-size:12.5px}
 .shotinfo dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:2px 0 6px}
 .shotinfo dt{color:var(--mute)}
@@ -181,7 +187,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 }
 @media (prefers-reduced-motion:reduce){ .reticle,.loader,.lbar i{transition:none} }
 </style>
-<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust and ember node. It rebuilds a rough 3D scene from a render's utility pass, then adds physically based dust motes in light shafts and fire embers with real bokeh, shutter motion blur and depth holdouts.">
+<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust and ember node. Pick a sequence and shot, it rebuilds a rough 3D scene from that shot's utility pass, then adds physically based dust motes and embers with real bokeh, shutter motion blur and depth holdouts.">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
 </head>
 <body>
@@ -189,26 +195,26 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">
-      <span class="mark"><i aria-hidden="true"></i>MOTEFIELD</span>
-      <span class="sub">Camera-aware dust for comp · tool concept for Lighting &amp; Compositing</span>
+    <span class="mark"><i aria-hidden="true"></i>MOTEFIELD</span>
+    <div class="shotpick" role="group" aria-label="Shot">
+      <label class="plabel" for="seqSel">SEQUENCE</label><select id="seqSel" class="sel"></select>
+      <label class="plabel" for="shotSel">SHOT</label><select id="shotSel" class="sel"></select>
     </div>
-    <div class="scenebar">
-      <span class="plabel">SCENE</span>
-      <div class="seg" id="sceneseg" role="group" aria-label="Scene"></div>
-    </div>
+    <span class="phtag">Placeholder</span>
+    <span class="shotnote" id="shotNote"></span>
+  </header>
+  <div class="subbar">
+    <span class="sub">Camera-aware dust for comp · tool concept for Lighting &amp; Compositing</span>
     <nav class="presets" aria-label="Looks" id="presets">
       <span class="plabel">LOOKS</span>
     </nav>
-  </header>
+  </div>
 
   <main class="work">
     <section class="viewer" aria-label="Viewer">
       <div class="vbar">
         <div class="seg" id="viewseg" role="group" aria-label="Viewer channel"></div>
         <div class="vbar-r">
-          <button class="tbtn" id="btnLoad" title="Load the render's utility pass EXRs: position, normals, depth, surface colour">Load passes</button>
-          <input type="file" id="fileIn" accept=".exr" multiple hidden>
           <button class="tbtn tog" id="btnLoupe" aria-pressed="false" title="Magnify the pixels under the cursor">Loupe <kbd>L</kbd></button>
           <button class="tbtn" id="btnGust" title="Fire the placed gust of wind">Gust <kbd>G</kbd></button>
           <button class="tbtn" id="btnRun" title="Run the placed moving object along its path">Run object <kbd>R</kbd></button>
@@ -234,7 +240,6 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
           </div>
         </div>
         <div class="glerr" id="glerr" hidden><p></p></div>
-        <div class="drop" id="drop" hidden><div>Drop utility pass EXRs<small>position · normals · depth · surface colour. Files are read in your browser and never uploaded.</small></div></div>
       </div>
       <div class="status">
         <span id="readout">Hover the viewer to read P and depth under the cursor</span>
@@ -253,7 +258,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 <section class="pitch" aria-labelledby="pitch-h">
   <p class="eyebrow">THE PITCH</p>
   <h2 id="pitch-h">Dust that lives in the comp, driven by the shot camera and the lighting scene</h2>
-  <p class="lede">Today dust motes are a 3D particle render. Every note on density, size, drift or focus means another render, and nobody sees the result until it comes back. MoteField moves the motes into Nuke as a node that reads the shot's camera, the render's utility pass and the key light's depth map, then renders physically based motes in seconds. From the utility pass it rebuilds a rough 3D model of the shot in about a second, so artists can see exactly where the dust, the gusts and the moving objects sit. The viewer above is a working mockup of that node: the scene is rebuilt from a utility pass (a built-in demo, or your own EXRs via Load passes), and the optics and the light math are the real thing.</p>
+  <p class="lede">Today dust motes are a 3D particle render. Every note on density, size, drift or focus means another render, and nobody sees the result until it comes back. MoteField moves the motes into Nuke as a node that reads the shot's camera, the render's utility pass and the key light's depth map, then renders physically based motes in seconds. From the utility pass it rebuilds a rough 3D model of the shot in about a second, so artists can see exactly where the dust, the gusts and the moving objects sit. The viewer above is a working mockup of that node: pick a sequence and shot at the top and the scene is rebuilt from that shot's utility pass (placeholder shots for now, rendered from stand-in sets), and the optics and the light math are the real thing.</p>
 
   <div class="graph" aria-label="Proposed node graph">
     <svg viewBox="0 0 760 210" role="img" aria-label="Plate, P pass, camera and key light depth feed MoteField, whose output is merged over the plate">
@@ -317,7 +322,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
   </div>
 
   <dl class="spec">
-    <div class="row"><dt>Scene from passes</dt><dd><h3>The shot rebuilds itself from its utility pass</h3>Load the render's utility EXRs and MoteField turns world position into a rough 3D model of the shot: every pixel or few becomes a vertex, neighbours join into triangles, and the surface breaks wherever depth jumps, so a chair stays separate from the wall behind it. Normals and surface colour shade it, and a voxel copy feeds the bounce light. The camera comes from the EXR header, or is solved from the position pass when the header has none; depth alone also works when the header has a camera. Units and up axis are detected. Orbit around the rebuilt scene to place the dust volume, gusts and moving objects, then snap back to the shot camera. It only knows the surfaces the camera saw, which is enough for placement and holdouts; shadows come from each light's own depth pass. The demo shot is a utility pass rendered in the browser from a built-in loft; the tool itself only ever reads the pass.</dd></div>
+    <div class="row"><dt>Scene from passes</dt><dd><h3>The shot rebuilds itself from its utility pass</h3>Pick a sequence and shot and MoteField finds that shot's utility pass in the pipeline, then turns world position into a rough 3D model of the shot: every pixel or few becomes a vertex, neighbours join into triangles, and the surface breaks wherever depth jumps, so a chair stays separate from the wall behind it. Normals and surface colour shade it, and a voxel copy feeds the bounce light. The camera comes from the EXR header, or is solved from the position pass when the header has none; depth alone also works when the header has a camera. Units and up axis are detected. Orbit around the rebuilt scene to place the dust volume, gusts and moving objects, then snap back to the shot camera. It only knows the surfaces the camera saw, which is enough for placement and holdouts; shadows come from each light's own depth pass. In this mockup the shots are placeholders: each one's utility pass is rendered in the browser from a stand-in set (an attic, a loft), and the tool only ever reads the pass.</dd></div>
     <div class="row"><dt>What dust is</dt><dd><h3>Four kinds of mote, not one sphere</h3>Household dust is mostly fine mineral grit, flakes of skin and paper, textile lint and small clumps of fluff. Each type has its own size range, shape, scattering and drag. Grit is a sub-pixel point of light at most distances. Flakes tumble, change brightness with their angle to the sun and throw brief glints. Lint is a curling strand, millimetres long, often dyed. Fluff is a loose, wispy clump. Shapes only resolve when a mote is large, close and in focus, exactly as in a real plate. Use the Loupe or the Close-up look to see them.</dd></div>
     <div class="row"><dt>Light selection</dt><dd><h3>Choose which lights the dust appears in</h3>Because each light brings its own depth pass, every light becomes a checkbox on the node: dust in the key sun's shaft, not in the window fill, glowing near a practical lamp. Each light gets its own strength and tint. Turning a light off removes its beam from the dust instantly, with no new render. Distant lights such as the sun are the simplest case: their depth pass is a flat, parallel projection, exactly what this mockup uses. For a quicker setup without the extra passes, a per-light-group volume render or a hand-placed beam shape can stand in, with less accuracy in depth.</dd></div>
     <div class="row"><dt>Defocus</dt><dd><h3>Every mote renders its own bokeh</h3>Circle of confusion comes from focal length, T-stop, focus distance and film back. Each mote's shape is spread through the lens aperture, with blade count, rotation and cat's eye toward the frame edge. A defocused lint fibre becomes a soft streak, not a disc. Energy is conserved, so an out-of-focus mote gets larger and dimmer, never brighter.</dd></div>
@@ -332,216 +337,9 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div><span class="ph">PHASE 2</span><h4>Deterministic sim cache</h4><p>Seeded per shot and frame-addressable, so scrubbing, the farm and the artist's viewer all see the same motes. Motion vectors out for re-blur.</p></div>
     <div><span class="ph">PHASE 3</span><h4>NDK node + presets</h4><p>C++ node with show presets (dusty attic, cathedral, exterior pollen), multi-light support and deep output for deep comps.</p></div>
   </div>
-  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, press G for a gust and R to run the moving object, press L for a pixel loupe, and try the Looks along the top. Switch the Scene to Campfire for the ember tool. Drop your own utility pass EXRs on the viewer (ZIP, ZIPS, RLE or uncompressed) to rebuild your shot. The ID channel colours each mote by type.</p>
+  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, press G for a gust and R to run the moving object, press L for a pixel loupe, and try the Looks along the top. Pick the Campfire sequence for the ember tool. Pick a sequence and shot at the top to rebuild a different shot (placeholders for now). The ID channel colours each mote by type.</p>
 </section>
 
-<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
-<script>
-/* ---------- EXR reader for utility passes (scanline, multi-part or single-part; NONE / RLE / ZIPS / ZIP) ---------- */
-const EXR = (() => {
-  const H2F = new Float32Array(65536);
-  for (let h = 0; h < 65536; h++) { const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 31, m = h & 1023;
-    H2F[h] = e === 0 ? s * 6.103515625e-5 * (m / 1024) : e === 31 ? (m ? NaN : s * Infinity) : s * Math.pow(2, e - 15) * (1 + m / 1024); }
-  const COMP = ['NONE', 'RLE', 'ZIPS', 'ZIP', 'PIZ', 'PXR24', 'B44', 'B44A', 'DWAA', 'DWAB'];
-  const LINES = { 0: 1, 1: 1, 2: 1, 3: 16, 4: 32, 5: 16, 6: 32, 7: 32, 8: 32, 9: 256 };
-  const td = new TextDecoder();
-  function cstr(u8, o) { let e = o; while (u8[e] !== 0) e++; return [td.decode(u8.subarray(o, e)), e + 1]; }
-  function readAttr(dv, u8, o, type, size) {
-    switch (type) {
-      case 'chlist': { const ch = []; let p = o; while (u8[p] !== 0) { const [n, q] = cstr(u8, p); ch.push({ name: n, type: dv.getInt32(q, true), xs: dv.getInt32(q + 8, true), ys: dv.getInt32(q + 12, true) }); p = q + 16; } return ch; }
-      case 'compression': case 'lineOrder': case 'envmap': case 'deepImageState': return u8[o];
-      case 'box2i': return [dv.getInt32(o, true), dv.getInt32(o + 4, true), dv.getInt32(o + 8, true), dv.getInt32(o + 12, true)];
-      case 'int': return dv.getInt32(o, true);
-      case 'float': return dv.getFloat32(o, true);
-      case 'double': return dv.getFloat64(o, true);
-      case 'string': return td.decode(u8.subarray(o, o + size));
-      case 'm44f': { const a = []; for (let i = 0; i < 16; i++) a.push(dv.getFloat32(o + i * 4, true)); return a; }
-      case 'm44d': { const a = []; for (let i = 0; i < 16; i++) a.push(dv.getFloat64(o + i * 8, true)); return a; }
-      case 'v2f': return [dv.getFloat32(o, true), dv.getFloat32(o + 4, true)];
-      case 'v3f': return [dv.getFloat32(o, true), dv.getFloat32(o + 4, true), dv.getFloat32(o + 8, true)];
-      case 'v2i': return [dv.getInt32(o, true), dv.getInt32(o + 4, true)];
-      default: return null;
-    }
-  }
-  function readHeader(dv, u8, o) {
-    const h = {};
-    for (;;) { const [name, a] = cstr(u8, o); if (name === '') return [h, a];
-      const [type, b] = cstr(u8, a); const size = dv.getInt32(b, true); h[name] = readAttr(dv, u8, b + 4, type, size); o = b + 4 + size; }
-  }
-  function inflate(u8) { if (typeof fflate !== 'undefined') return fflate.unzlibSync(u8); throw new Error('No zlib decoder available'); }
-  function unRLE(src, outLen) { const out = new Uint8Array(outLen); let i = 0, o = 0;
-    while (i < src.length && o < outLen) { let c = (src[i] << 24) >> 24; i++;
-      if (c < 0) { c = -c; out.set(src.subarray(i, i + c), o); o += c; i += c; } else { const v = src[i++]; out.fill(v, o, o + c + 1); o += c + 1; } }
-    return out; }
-  function unPredict(t) { const out = new Uint8Array(t.length);
-    for (let i = 1; i < t.length; i++) t[i] = (t[i - 1] + t[i] - 128) & 255;
-    const half = (t.length + 1) >> 1; let a = 0, b = half;
-    for (let o = 0; o < t.length; o++) out[o] = (o & 1) ? t[b++] : t[a++];
-    return out; }
-
-  function open(buf) {
-    const u8 = new Uint8Array(buf), dv = new DataView(buf);
-    if (dv.getUint32(0, true) !== 20000630) throw new Error('Not an OpenEXR file');
-    const ver = dv.getUint32(4, true), tiled = !!(ver & 0x200), deep = !!(ver & 0x800), multi = !!(ver & 0x1000);
-    if (deep) throw new Error('Deep EXR files are not supported here; use a flat utility pass');
-    let o = 8; const parts = [];
-    if (multi) { for (;;) { if (u8[o] === 0) { o++; break; } const [h, n] = readHeader(dv, u8, o); parts.push({ header: h }); o = n; } }
-    else { const [h, n] = readHeader(dv, u8, o); parts.push({ header: h }); o = n; }
-    for (const p of parts) {
-      const h = p.header, dw = h.dataWindow;
-      p.name = h.name || ''; p.x0 = dw[0]; p.y0 = dw[1]; p.width = dw[2] - dw[0] + 1; p.height = dw[3] - dw[1] + 1;
-      p.channels = h.channels || []; p.comp = h.compression; p.lines = LINES[p.comp] || 1;
-      p.tiled = tiled || (h.type && String(h.type).includes('tiled'));
-      p.chunkCount = h.chunkCount || Math.ceil(p.height / p.lines);
-      p.offsets = new Array(p.chunkCount);
-      for (let i = 0; i < p.chunkCount; i++) { p.offsets[i] = Number(dv.getBigUint64(o, true)); o += 8; }
-    }
-    function read(pi, want) {
-      const p = parts[pi];
-      if (p.tiled) throw new Error('Tiled EXR parts are not supported; write scanline images');
-      if (![0, 1, 2, 3].includes(p.comp)) throw new Error(`"${p.name || 'image'}" uses ${COMP[p.comp] || p.comp} compression. Write utility passes with ZIP, ZIPS, RLE or no compression.`);
-      const W = p.width, Hh = p.height, chs = p.channels;
-      const bps = chs.map(c => c.type === 1 ? 2 : 4), lineBytes = bps.reduce((a, b) => a + b, 0) * W;
-      const out = {}; for (const n of want) out[n] = new Float32Array(W * Hh);
-      const wantIdx = chs.map(c => want.includes(c.name));
-      for (let ci = 0; ci < p.chunkCount; ci++) {
-        let q = p.offsets[ci]; if (multi) q += 4;
-        const y = dv.getInt32(q, true), size = dv.getInt32(q + 4, true); q += 8;
-        const ly = y - p.y0, nl = Math.min(p.lines, Hh - ly), expect = lineBytes * nl;
-        let data = u8.subarray(q, q + size);
-        if (size < expect) { if (p.comp === 1) data = unPredict(unRLE(data, expect)); else if (p.comp >= 2) data = unPredict(inflate(data)); }
-        const ddv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        let r = 0;
-        for (let l = 0; l < nl; l++) {
-          const row = (ly + l) * W;
-          for (let c = 0; c < chs.length; c++) {
-            if (wantIdx[c]) { const dst = out[chs[c].name], t = chs[c].type;
-              if (t === 1) for (let x = 0; x < W; x++) dst[row + x] = H2F[ddv.getUint16(r + x * 2, true)];
-              else if (t === 2) for (let x = 0; x < W; x++) dst[row + x] = ddv.getFloat32(r + x * 4, true);
-              else for (let x = 0; x < W; x++) dst[row + x] = ddv.getUint32(r + x * 4, true); }
-            r += bps[c] * W;
-          }
-        }
-      }
-      return out;
-    }
-    return { parts, read, multi };
-  }
-
-  /* ---- which channels are what ---- */
-  const ROLE = {
-    P: ['pos', 'p', 'pworld', 'position', 'worldposition', 'worldpos', 'pw', 'wp', 'ppass', 'world', 'positionworld', 'pworldspace', 'worldp'],
-    N: ['normal', 'n', 'nworld', 'normals', 'worldnormal', 'nw', 'normalworld', 'nn', 'worldnormals'],
-    Z: ['depth', 'z', 'zdepth', 'depthnofilter', 'distance'],
-    C: ['surfacecolor', 'albedo', 'diffusealbedo', 'basecolor', 'diffusecolor', 'diffcolor', 'surfacealbedo', 'diffusefilter', 'dfilter']
-  };
-  const compIndex = c => { c = c.toLowerCase(); return 'rxu'.includes(c) ? 0 : 'gyv'.includes(c) ? 1 : 'bzw'.includes(c) ? 2 : -1; };
-  function survey(files) {
-    // files: [{name, exr}] → role → {file, part, names:[3] or [1]}
-    const found = {}, all = [];
-    for (const f of files) f.exr.parts.forEach((p, pi) => { for (const c of p.channels) {
-      let layer, comp; const k = c.name.lastIndexOf('.');
-      if (k >= 0) { layer = c.name.slice(0, k); comp = c.name.slice(k + 1); } else if (c.name.length === 1 && 'ZRGBA'.includes(c.name) && p.name) { layer = c.name === 'Z' ? 'depth' : p.name; comp = c.name; } else { layer = c.name; comp = ''; }
-      all.push({ f, pi, ch: c.name, key: layer.toLowerCase().replace(/[^a-z0-9]/g, ''), comp, w: p.width, h: p.height });
-    } });
-    for (const role of ['P', 'N', 'C']) for (const key of ROLE[role]) { if (found[role]) break;
-      const g = all.filter(a => a.key === key); const names = [null, null, null];
-      for (const a of g) { const i = compIndex(a.comp); if (i >= 0 && !names[i]) names[i] = a; }
-      if (names.every(Boolean) && names[0].f === names[1].f && names[1].f === names[2].f && names[0].pi === names[1].pi && names[1].pi === names[2].pi) found[role] = { f: names[0].f, pi: names[0].pi, names: names.map(a => a.ch), w: names[0].w, h: names[0].h, label: g[0].ch.split('.')[0] }; }
-    for (const key of ROLE.Z) { if (found.Z) break; const a = all.find(a => a.key === key && (a.comp === '' || /^(z|r|y)$/i.test(a.comp))) || (key === 'z' && all.find(a => a.ch === 'Z'));
-      if (a) found.Z = { f: a.f, pi: a.pi, names: [a.ch], w: a.w, h: a.h, label: a.ch }; }
-    return { found, all };
-  }
-
-  /* ---- camera from header metadata ---- */
-  const nums = v => Array.isArray(v) ? v.map(Number) : typeof v === 'string' ? (v.match(/-?\d+\.?\d*(?:e[-+]?\d+)?/gi) || []).map(Number) : typeof v === 'number' ? [v] : [];
-  function inv4(m) { // row-major 4x4 inverse
-    const a = m, o = new Array(16); const s0 = a[0] * a[5] - a[4] * a[1], s1 = a[0] * a[6] - a[4] * a[2], s2 = a[0] * a[7] - a[4] * a[3], s3 = a[1] * a[6] - a[5] * a[2], s4 = a[1] * a[7] - a[5] * a[3], s5 = a[2] * a[7] - a[6] * a[3];
-    const c5 = a[10] * a[15] - a[14] * a[11], c4 = a[9] * a[15] - a[13] * a[11], c3 = a[9] * a[14] - a[13] * a[10], c2 = a[8] * a[15] - a[12] * a[11], c1 = a[8] * a[14] - a[12] * a[10], c0 = a[8] * a[13] - a[12] * a[9];
-    const d = 1 / (s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0);
-    o[0] = (a[5] * c5 - a[6] * c4 + a[7] * c3) * d; o[1] = (-a[1] * c5 + a[2] * c4 - a[3] * c3) * d; o[2] = (a[13] * s5 - a[14] * s4 + a[15] * s3) * d; o[3] = (-a[9] * s5 + a[10] * s4 - a[11] * s3) * d;
-    o[4] = (-a[4] * c5 + a[6] * c2 - a[7] * c1) * d; o[5] = (a[0] * c5 - a[2] * c2 + a[3] * c1) * d; o[6] = (-a[12] * s5 + a[14] * s2 - a[15] * s1) * d; o[7] = (a[8] * s5 - a[10] * s2 + a[11] * s1) * d;
-    o[8] = (a[4] * c4 - a[5] * c2 + a[7] * c0) * d; o[9] = (-a[0] * c4 + a[1] * c2 - a[3] * c0) * d; o[10] = (a[12] * s4 - a[13] * s2 + a[15] * s0) * d; o[11] = (-a[8] * s4 + a[9] * s2 - a[11] * s0) * d;
-    o[12] = (-a[4] * c3 + a[5] * c1 - a[6] * c0) * d; o[13] = (a[0] * c3 - a[1] * c1 + a[2] * c0) * d; o[14] = (-a[12] * s3 + a[13] * s1 - a[14] * s0) * d; o[15] = (a[8] * s3 - a[9] * s1 + a[10] * s0) * d;
-    return o; }
-  function cameraFromHeaders(headers) {
-    const cam = {};
-    for (const h of headers) for (const k in h) { const kl = k.toLowerCase(), v = h[k];
-      if (!cam.toWorld && /(camtoworld|cameratoworld)$/.test(kl)) { const n = nums(v); if (n.length >= 16) cam.toWorld = n.slice(0, 16), cam.src = k; }
-      else if (!cam.toWorld && !cam.w2c && /worldtocamera$/.test(kl)) { const n = nums(v); if (n.length >= 16) cam.w2c = n.slice(0, 16), cam.src = k; }
-      else if (cam.hfov == null && /horizontalfov/.test(kl)) cam.hfov = nums(v)[0];
-      else if (cam.focal == null && /focallength$/.test(kl)) cam.focal = nums(v)[0];
-      else if (cam.fstop == null && /(fstop|fnumber)$/.test(kl)) cam.fstop = nums(v)[0];
-      else if (cam.focus == null && /focusdistance$/.test(kl)) cam.focus = nums(v)[0];
-      else if (cam.aperture == null && /(horizontalaperture|filmbackwidth|aperturewidth|hfilmaperture)$/.test(kl)) cam.aperture = nums(v)[0];
-    }
-    if (!cam.toWorld && cam.w2c) cam.toWorld = inv4(cam.w2c);
-    if (!cam.toWorld) return null;
-    let M = cam.toWorld;
-    // row-vector convention keeps translation in the last row; otherwise transpose
-    const lastRow = Math.abs(M[12]) + Math.abs(M[13]) + Math.abs(M[14]), lastCol = Math.abs(M[3]) + Math.abs(M[7]) + Math.abs(M[11]);
-    if (lastCol > lastRow) M = [M[0], M[4], M[8], M[12], M[1], M[5], M[9], M[13], M[2], M[6], M[10], M[14], M[3], M[7], M[11], M[15]];
-    const n3 = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
-    const out = { right: n3(M.slice(0, 3)), up: n3(M.slice(4, 7)), back: n3(M.slice(8, 11)), pos: M.slice(12, 15), src: cam.src };
-    if (cam.hfov) out.hfov = cam.hfov * Math.PI / 180;
-    else if (cam.focal && cam.aperture) out.hfov = 2 * Math.atan(cam.aperture * (cam.aperture < 5 ? 25.4 : 1) / (2 * cam.focal));
-    out.fstop = cam.fstop; out.focus = cam.focus; out.focal = cam.focal;
-    return out;
-  }
-
-  /* ---- camera solved from the position pass alone (DLT), for files without camera metadata ---- */
-  function jacobiMin(A, n) { // smallest eigenvector of a symmetric n×n matrix
-    const a = A.map(r => r.slice()), V = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => i === j ? 1 : 0));
-    for (let sweep = 0; sweep < 60; sweep++) { let off = 0; for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) off += a[p][q] * a[p][q]; if (off < 1e-22) break;
-      for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) { if (Math.abs(a[p][q]) < 1e-30) continue;
-        const th = (a[q][q] - a[p][p]) / (2 * a[p][q]), t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1)), c = 1 / Math.sqrt(t * t + 1), s = t * c;
-        for (let k = 0; k < n; k++) { const akp = a[k][p], akq = a[k][q]; a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq; }
-        for (let k = 0; k < n; k++) { const apk = a[p][k], aqk = a[q][k]; a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk; }
-        for (let k = 0; k < n; k++) { const vkp = V[k][p], vkq = V[k][q]; V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq; } } }
-    let mi = 0; for (let i = 1; i < n; i++) if (a[i][i] < a[mi][mi]) mi = i; return V.map(r => r[mi]); }
-  function solveCamera(P, W, H, valid) {
-    const pts = []; const step = Math.max(1, Math.floor(Math.sqrt(W * H / 900)));
-    for (let y = step >> 1; y < H; y += step) for (let x = step >> 1; x < W; x += step) { const i = y * W + x; if (valid(i)) pts.push([x + 0.5, y + 0.5, P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]); }
-    if (pts.length < 12) return null;
-    const mean = k => pts.reduce((s, p) => s + p[k], 0) / pts.length;
-    const mu = mean(0), mv = mean(1), mx = mean(2), my = mean(3), mz = mean(4);
-    const s2 = Math.SQRT2 / (pts.reduce((s, p) => s + Math.hypot(p[0] - mu, p[1] - mv), 0) / pts.length);
-    const s3 = Math.sqrt(3) / (pts.reduce((s, p) => s + Math.hypot(p[2] - mx, p[3] - my, p[4] - mz), 0) / pts.length);
-    const T2i = [[1 / s2, 0, mu], [0, 1 / s2, mv], [0, 0, 1]], T3 = [[s3, 0, 0, -s3 * mx], [0, s3, 0, -s3 * my], [0, 0, s3, -s3 * mz], [0, 0, 0, 1]];
-    const mm = (A, B) => A.map(r => B[0].map((_, j) => r.reduce((s, a, k) => s + a * B[k][j], 0)));
-    const nrm = pts.map(p => [(p[0] - mu) * s2, (p[1] - mv) * s2, (p[2] - mx) * s3, (p[3] - my) * s3, (p[4] - mz) * s3]);
-    const dlt = idx => { const AtA = Array.from({ length: 12 }, () => new Array(12).fill(0));
-      for (const i of idx) { const q = nrm[i], X = [q[2], q[3], q[4], 1];
-        const r1 = [...X, 0, 0, 0, 0, ...X.map(a => -q[0] * a)], r2 = [0, 0, 0, 0, ...X, ...X.map(a => -q[1] * a)];
-        for (const r of [r1, r2]) for (let i2 = 0; i2 < 12; i2++) { const ri = r[i2]; if (ri) for (let j = 0; j < 12; j++) AtA[i2][j] += ri * r[j]; } }
-      const h = jacobiMin(AtA, 12); return mm(mm(T2i, [h.slice(0, 4), h.slice(4, 8), h.slice(8, 12)]), T3); };
-    const errs = Pm => pts.map(p => { const w = Pm[2][0] * p[2] + Pm[2][1] * p[3] + Pm[2][2] * p[4] + Pm[2][3];
-      return Math.hypot((Pm[0][0] * p[2] + Pm[0][1] * p[3] + Pm[0][2] * p[4] + Pm[0][3]) / w - p[0], (Pm[1][0] * p[2] + Pm[1][1] * p[3] + Pm[1][2] * p[4] + Pm[1][3]) / w - p[1]); });
-    // robust: blended edge pixels don't fit any pinhole camera, so keep the camera most pixels agree with
-    let seed = 12345; const rnd = n => { seed = (seed * 16807) % 2147483647; return seed % n; };
-    let best = null;
-    for (let it = 0; it < 300; it++) { const idx = new Set(); while (idx.size < 6) idx.add(rnd(pts.length));
-      const Pm = dlt([...idx]); const e = errs(Pm); let n = 0; for (const v of e) if (v < 3) n++; if (!best || n > best.n) best = { n, Pm }; }
-    let Pm = best.Pm;
-    for (let k = 0; k < 4; k++) { const e = errs(Pm), inl = []; e.forEach((v, i) => { if (v < (k ? 2 : 3)) inl.push(i); }); if (inl.length < 6) break; Pm = dlt(inl); }
-    const M3 = Pm.map(r => r.slice(0, 3)), p4 = Pm.map(r => r[3]);
-    const det3 = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    const inv3 = m => { const d = det3(m); return [[(m[1][1] * m[2][2] - m[1][2] * m[2][1]) / d, (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / d, (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / d], [(m[1][2] * m[2][0] - m[1][0] * m[2][2]) / d, (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / d, (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / d], [(m[1][0] * m[2][1] - m[1][1] * m[2][0]) / d, (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / d, (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / d]]; };
-    const Mi = inv3(M3), C = [0, 1, 2].map(i => -(Mi[i][0] * p4[0] + Mi[i][1] * p4[1] + Mi[i][2] * p4[2]));
-    // rows of M3 are fx·right + cx·fwd, fy·down + cy·fwd, fwd (up to scale)
-    let r3 = M3[2]; const l3 = Math.hypot(...r3); let fwd = r3.map(a => a / l3);
-    const t = pts[pts.length >> 1]; if ((t[2] - C[0]) * fwd[0] + (t[3] - C[1]) * fwd[1] + (t[4] - C[2]) * fwd[2] < 0) fwd = fwd.map(a => -a);
-    const sgn = r3[0] * fwd[0] + r3[1] * fwd[1] + r3[2] * fwd[2] > 0 ? 1 : -1;
-    const row = k => M3[k].map(a => a * sgn / l3);
-    const cx = row(0).reduce((s, a, i) => s + a * fwd[i], 0), cy = row(1).reduce((s, a, i) => s + a * fwd[i], 0);
-    const rx = row(0).map((a, i) => a - cx * fwd[i]), dn = row(1).map((a, i) => a - cy * fwd[i]);
-    const fx = Math.hypot(...rx); const right = rx.map(a => a / fx), down = dn.map(a => a / Math.hypot(...dn));
-    return { right, up: down.map(a => -a), back: fwd.map(a => -a), pos: C, hfov: 2 * Math.atan(W / (2 * fx)), src: 'solved from position pass' };
-  }
-  return { open, survey, cameraFromHeaders, solveCamera, COMP };
-})();
-if (typeof module !== 'undefined') module.exports = EXR;
-</script>
 <script>
 (() => {
 'use strict';
@@ -604,7 +402,7 @@ const CAM_FIRE = {E:[1.15,0.95,4.3], T:[0,0.78,0]};
 const SCENES = {shot:{label:'Dust shot', def:{format:'plate', fill:0.7}}, fire:{label:'Campfire', def:FIRE_DEF}};
 const PRESETS = {
  shot:[
-  {id:'default', label:()=>SHOT&&!SHOT.demo?'Shot camera':'Sunlit loft', p:{}, cam:null},
+  {id:'default', label:'Shot default', p:{}, cam:null},
   {id:'closeup', label:'Close-up', p:{fstop:2.8, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:'closeup'}
  ],
  fire:[
@@ -1976,7 +1774,7 @@ function placeAt(p,n){
 
 /* =================== the shot: a scene rebuilt from a utility pass =================== */
 // SHOT holds only what a render's utility pass provides: world position (P), normals (N), surface colour (C), and the camera.
-let SHOT=null, DEMO_SHOT=null, meshShot=null, shotStats=null, rebuildTimer=0, skyMaskTex=null, shotVP=null;
+let SHOT=null, meshShot=null, shotStats=null, rebuildTimer=0, skyMaskTex=null, shotVP=null;
 const validAt=(P,k)=>{ const x=P[k*3],y=P[k*3+1],z=P[k*3+2]; return Number.isFinite(x)&&Number.isFinite(y)&&Number.isFinite(z)&&(x!==0||y!==0||z!==0); };
 function mkIndexedMesh(vb,ib){ const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
   const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,vb,gl.STATIC_DRAW); const st=40;
@@ -2059,7 +1857,7 @@ function reconstruct(){
   const far=S.dustFar||autoDustFar(), fwd=scl(cam.back,-1), th=Math.tan(cam.hfov/2), tv=th/(W/H), corners=[];
   for(const dd of [0.3,far]) for(const sx of [-1,1]) for(const sy of [-1,1]) corners.push(add(cp,add(scl(fwd,dd),add(scl(cam.right,sx*th*dd),scl(cam.up,sy*tv*dd)))));
   let bmin=[0,1,2].map(k=>Math.min(...corners.map(c=>c[k]))), bmax=[0,1,2].map(k=>Math.max(...corners.map(c=>c[k])));
-  const imin=bmin.map((x,k)=>Math.max(x,lo[k])), imax=bmax.map((x,k)=>Math.min(x,hi[k]));
+  const imin=bmin.map((x,k)=>Math.max(x,Math.min(lo[k],cp[k]))), imax=bmax.map((x,k)=>Math.min(x,Math.max(hi[k],cp[k])));
   if(imin.every((x,k)=>x<imax[k]-0.2)){ bmin=imin; bmax=imax; }
   const clo=[0,1,2].map(k=>Math.min(lo[k]-R*1.5,cp[k]-1)), chi=[0,1,2].map(k=>Math.max(hi[k]+R*1.5,cp[k]+1));
   SCENE_GEO.shot={vmin:VMIN, vsize:VDIM.map(d=>d*VS), bmin, bmax, cmin:clo, cmax:chi, lightC:ctr, lightR:R*1.05, near:clamp(SHOT.medDepth*0.004,0.02,0.5), far:Math.max(80,R*8), maxDist:Math.max(9,R*3),
@@ -2081,9 +1879,9 @@ function applyShotCam(){ if(!SHOT) return; const c=SHOT.cam;
   S.focal=+shotFocal().toFixed(2); FORMATS.plate=SHOT.W/SHOT.H; S.format='plate';
   focusAnim=null; focusCur=S.focus; resetDOF=true; resetGI=true; if(started) layout(); syncKnob('focal'); syncKnob('format'); syncKnob('film'); }
 function closeupCam(){ if(!SHOT) return; const c=SHOT.cam;
-  const fx=SHOT.demo?0.24:0.5, fy=SHOT.demo?0.56:0.5, th=Math.tan(c.hfov/2), tv=th*SHOT.H/SHOT.W;
+  const [fx,fy,kd]=SHOT.cu||[0.5,0.5,0.5], th=Math.tan(c.hfov/2), tv=th*SHOT.H/SHOT.W;
   const dir=nrm(add(scl(c.back,-1),add(scl(c.right,(fx*2-1)*th),scl(c.up,(1-fy*2)*tv)))), h=shotPoint(fx,fy);
-  const dd=h? len(sub(h.p,c.pos))*(SHOT.demo?0.72:0.5) : SHOT.medDepth*0.45, tg=add(c.pos,scl(dir,dd));
+  const dd=h? len(sub(h.p,c.pos))*kd : SHOT.medDepth*0.45, tg=add(c.pos,scl(dir,dd));
   setCam(c.pos,tg,c.up); S.focal=+(shotFocal()*2.2).toFixed(1); S.focus=+clamp(len(sub(tg,c.pos)),0.3,20).toFixed(2); focusCur=S.focus; resetDOF=true; resetGI=true; }
 function atShot(){ if(!SHOT||!lastCam) return true; return len(sub(lastCam.E,SHOT.cam.pos))<1e-3*Math.max(1,SHOT.medDepth) && Math.abs(S.focal-shotFocal())<0.05; }
 function shotPoint(fx,fy){ const {W,H,P,N}=SHOT;
@@ -2096,37 +1894,128 @@ function autoInfluence(){ const f=v=>+v.toFixed(3);
   if(src&&mid){ const toCam=nrm(sub(SHOT.cam.pos,src.p)), n=src.n&&dot(src.n,toCam)>0?src.n:toCam; const o=add(src.p,scl(n,0.25)); const d=nrm(sub(mid.p,o));
     [S.gustX,S.gustY,S.gustZ]=o.map(f); [S.gustDX,S.gustDY,S.gustDZ]=d.map(f); } }
 
-/* ---- the demo shot: a utility pass rendered from a built-in scene; the tool only ever sees the pass ---- */
-async function makeDemoPass(){
-  const RW=1280, RH=536, saved={focal:S.focal,film:S.film,format:S.format};
-  GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0; buildRoom();
-  // give the clay a believable surface colour pass (the render's albedo)
+/* ---- placeholder shots: until the node can query the pipeline, each shot's utility pass is rendered here from a stand-in set ---- */
+// a storybook attic: sloped roof with a skylight and a round gable window, exposed rafters, a workbench, an armchair and clutter
+function buildAttic(){
+  const a=GM; let seed=11; const rnd=()=>{ seed=(seed*16807)%2147483647; return seed/2147483647; };
+  const X=3.6, KH=0.9, RH=3.7, Z0=-5.0, Z1=2.6, rise=RH-KH, L=Math.hypot(X,rise);
+  const PLASTER=[0.40,0.34,0.27], BEAM=[0.15,0.085,0.045], TRIM=[0.10,0.21,0.18], WOODC=[0.33,0.20,0.10], METAL=[0.05,0.05,0.05];
+  const vary=(c,k)=>c.map(v=>v*(1-k+2*k*rnd()));
+  // floorboards
+  for(let x=-X;x<X-1e-6;x+=0.2) box(a,[x,-0.06,Z0],[Math.min(x+0.197,X),0,Z1],vary([0.30,0.18,0.095],0.18));
+  // roof slopes: side -1 is the -x slope (with the skylight), +1 the +x slope
+  const K=s=>[s*X,KH,0], U=s=>[-s*X/L,rise/L,0], Nout=s=>[s*rise/L,X/L,0];
+  const at=(s,t)=>add(K(s),scl(U(s),L*t));
+  const panel=(s,t0,t1,z0,z1,col)=>obox(a,add(add(at(s,(t0+t1)/2),scl(Nout(s),0.045)),[0,0,(z0+z1)/2]),scl(U(s),(t1-t0)*L/2),scl(Nout(s),0.045),[0,0,(z1-z0)/2],col);
+  const NS=16, T0=6/16, T1=11/16, ZA=-3.4, ZB=-1.8, ZE0=Z0-0.15, ZE1=Z1+0.15;
+  for(const s of [-1,1]) for(let i=0;i<NS;i++){ const t0=i/NS, t1=(i+1)/NS, col=vary([0.21,0.125,0.07],0.14);
+    if(s===-1 && t0>=T0-1e-6 && t1<=T1+1e-6){ panel(s,t0,t1,ZE0,ZA,col); panel(s,t0,t1,ZB,ZE1,col); } else panel(s,t0,t1,ZE0,ZE1,col); }
+  // skylight lining and glazing bars
+  const dn=s=>scl(Nout(s),-1);
+  for(const t of [T0,T1]) obox(a,add(add(at(-1,t),scl(dn(-1),0.09)),[0,0,(ZA+ZB)/2]),scl(Nout(-1),0.09),scl(U(-1),0.03),[0,0,(ZB-ZA)/2],TRIM);
+  for(const z of [ZA,ZB]) obox(a,add(add(at(-1,(T0+T1)/2),scl(dn(-1),0.09)),[0,0,z]),scl(U(-1),(T1-T0)*L/2),scl(Nout(-1),0.09),[0,0,0.03],TRIM);
+  obox(a,add(at(-1,(T0+T1)/2),[0,0,(ZA+ZB)/2]),scl(U(-1),(T1-T0)*L/2),scl(Nout(-1),0.025),[0,0,0.022],TRIM);
+  obox(a,add(at(-1,(T0+T1)/2),[0,0,(ZA+ZB)/2]),scl(U(-1),0.022),scl(Nout(-1),0.025),[0,0,(ZB-ZA)/2],TRIM);
+  // rafters, collar ties and the ridge beam
+  const zs=[]; for(let z=Z0+0.12;z<Z1;z+=0.8) zs.push(z);
+  for(const z of zs) for(const s of [-1,1]) obox(a,add(add(at(s,0.5),scl(dn(s),0.08)),[0,0,z]),scl(U(s),L*0.5),scl(Nout(s),0.08),[0,0,0.05],vary(BEAM,0.1));
+  const cy=2.75, cx=X*(1-(cy-KH)/rise)-0.05;
+  zs.forEach((z,i)=>{ if(i%2===0) box(a,[-cx,cy-0.07,z-0.05],[cx,cy+0.07,z+0.05],BEAM); });
+  box(a,[-0.09,RH-0.24,ZE0],[0.09,RH-0.04,ZE1],BEAM);
+  // knee walls with skirting
+  for(const s of [-1,1]){ box(a,s<0?[-X-0.12,0,ZE0]:[X,0,ZE0],s<0?[-X,KH,ZE1]:[X+0.12,KH,ZE1],PLASTER); box(a,s<0?[-X,0,Z0]:[X-0.025,0,Z0],s<0?[-X+0.025,0.12,Z1]:[X,0.12,Z1],BEAM); }
+  // gable walls; the back one has a round window
+  const hole={x:-0.9,y:2.1,r:0.48};
+  const gable=(z0,z1,h)=>{ for(let y=0;y<RH;y+=0.04){ const yc=y+0.02, hw=yc<KH?X:X*(1-(yc-KH)/rise)+0.02; if(hw<=0.03) break;
+      let segs=[[-hw,hw]]; if(h){ const dy=yc-h.y; if(Math.abs(dy)<h.r){ const dx=Math.sqrt(h.r*h.r-dy*dy); segs=[[-hw,h.x-dx],[h.x+dx,hw]]; } }
+      for(const [x0,x1] of segs) if(x1-x0>0.005) box(a,[x0,y,z0],[x1,Math.min(y+0.04,RH),z1],PLASTER); } };
+  gable(Z0-0.12,Z0,hole); gable(Z1,Z1+0.12,null);
+  for(let i=0;i<32;i++){ const an=i/32*2*Math.PI, c=[Math.cos(an),Math.sin(an),0], t=[-Math.sin(an),Math.cos(an),0];
+    obox(a,[hole.x+c[0]*(hole.r+0.03),hole.y+c[1]*(hole.r+0.03),Z0-0.05],scl(t,Math.PI*hole.r/32*1.15),scl(c,0.05),[0,0,0.09],TRIM); }
+  box(a,[hole.x-0.022,hole.y-hole.r,Z0-0.09],[hole.x+0.022,hole.y+hole.r,Z0-0.04],TRIM);
+  box(a,[hole.x-hole.r,hole.y-0.022,Z0-0.09],[hole.x+hole.r,hole.y+0.022,Z0-0.04],TRIM);
+  // workbench under the skylight, with jars, a vise and papers
+  const WB=[-0.15,-4.88,1.35,-4.15];
+  rbox(a,[WB[0],0.8,WB[1]],[WB[2],0.9,WB[3]],WOODC,0.012);
+  for(const [x,z] of [[WB[0]+0.04,WB[1]+0.04],[WB[2]-0.11,WB[1]+0.04],[WB[0]+0.04,WB[3]-0.11],[WB[2]-0.11,WB[3]-0.11]]) rbox(a,[x,0,z],[x+0.07,0.8,z+0.07],WOODC,0.008);
+  rbox(a,[WB[0]+0.04,0.22,WB[1]+0.04],[WB[2]-0.04,0.26,WB[3]-0.04],vary(WOODC,0.1),0.006);
+  [[0.1,-4.7,0.09,0.24,[0.30,0.42,0.36]],[0.32,-4.72,0.07,0.17,[0.42,0.33,0.16]],[0.05,-4.45,0.06,0.13,[0.25,0.30,0.40]],[1.15,-4.68,0.08,0.2,[0.35,0.42,0.30]]].forEach(([x,z,r,h,c])=>
+    lathe(a,[x,0.9,z],[[0,0],[r,0.003],[r*1.05,h*0.15],[r,h*0.8],[r*0.6,h*0.9],[r*0.6,h],[r*0.65,h*1.04],[0,h*1.04]],c,0,24));
+  rbox(a,[1.0,0.9,-4.4],[1.2,1.05,-4.2],METAL,0.01); rbox(a,[0.97,1.05,-4.37],[1.23,1.1,-4.23],METAL,0.008);
+  for(let i=0;i<5;i++) obox(a,[0.62+0.01*i,0.905+i*0.006,-4.45],[0.15,0,0.02*Math.sin(i)],[0,0.003,0],[0.02*Math.sin(i)*-1,0,0.21],[0.62,0.58,0.50]);
+  cylA(a,[0.35,0.92,-4.3],[0.7,0.92,-4.22],0.022,WOODC,0,10); rbox(a,[0.66,0.9,-4.33],[0.8,0.98,-4.15],[0.20,0.12,0.06],0.01);
+  // a big armchair in the skylight's patch of sun, a side table and a teacup
+  const RED=[0.33,0.055,0.045], MUST=[0.55,0.36,0.07];
+  { const x0=-0.7, x1=0.15, z0=-2.35, z1=-1.45;
+    rbox(a,[x0,0.12,z0],[x1,0.48,z1],RED,0.06); rbox(a,[x0-0.02,0.48,z0-0.02],[x1+0.02,1.25,z0+0.23],RED,0.08);
+    rbox(a,[x0-0.02,0.48,z0],[x0+0.18,0.8,z1+0.02],RED,0.07); rbox(a,[x1-0.18,0.48,z0],[x1+0.02,0.8,z1+0.02],RED,0.07);
+    rbox(a,[x0+0.18,0.48,z0+0.23],[x1-0.18,0.62,z1-0.02],MUST,0.05);
+    for(const [x,z] of [[x0+0.04,z0+0.04],[x1-0.1,z0+0.04],[x0+0.04,z1-0.1],[x1-0.1,z1-0.1]]) rbox(a,[x,0,z],[x+0.06,0.12,z+0.06],BEAM,0.01); }
+  lathe(a,[0.6,0,-1.55],[[0.18,0],[0.2,0.02],[0.04,0.05],[0.035,0.52],[0.22,0.55],[0.23,0.58],[0,0.585]],WOODC,0,28);
+  lathe(a,[0.65,0.585,-1.58],[[0,0],[0.03,0.002],[0.045,0.05],[0.04,0.055],[0,0.05]],[0.62,0.6,0.55],0,20);
+  // trunk, dress form, globe, crates, books, a rolled rug and a hanging lantern
+  const TEAL=[0.05,0.19,0.19], BRASS=[0.45,0.32,0.09];
+  rbox(a,[-2.95,0,-4.8],[-1.8,0.52,-4.15],TEAL,0.02); rbox(a,[-2.97,0.52,-4.82],[-1.78,0.66,-4.13],TEAL,0.05);
+  for(const x of [-2.75,-2.0]) box(a,[x,0,-4.84],[x+0.06,0.67,-4.11],BRASS,0,false);
+  lathe(a,[-2.2,0,-2.4],[[0.22,0],[0.22,0.03],[0.03,0.05],[0,0.05]],METAL,0,20); cylA(a,[-2.2,0.04,-2.4],[-2.2,1.05,-2.4],0.018,METAL,0,10);
+  lathe(a,[-2.2,0.95,-2.4],[[0,0],[0.15,0.02],[0.19,0.12],[0.15,0.3],[0.165,0.44],[0.2,0.55],[0.13,0.66],[0.05,0.7],[0.04,0.78],[0,0.8]],[0.50,0.42,0.33],0,32);
+  lathe(a,[2.3,0,-2.75],[[0.2,0],[0.2,0.03],[0.04,0.06],[0.03,0.75],[0.06,0.78],[0,0.78]],WOODC,0,24); sphere(a,[2.3,1.0,-2.75],0.23,[0.13,0.28,0.30]);
+  rbox(a,[2.6,0,-4.95],[3.3,0.62,-4.3],[0.36,0.25,0.13],0.015);
+  obox(a,[2.95,0.86,-4.6],[0.27,0,0.08],[0,0.24,0],[-0.08,0,0.27],[0.30,0.21,0.11]);
+  rbox(a,[2.1,0,-4.9],[2.55,0.4,-4.45],[0.33,0.23,0.12],0.015);
+  let by=0; for(let i=0;i<9;i++){ const h=0.035+rnd()*0.04, w=0.22+rnd()*0.12, d=0.16+rnd()*0.08, an=(rnd()-0.5)*0.5, c=[0.08+0.35*rnd(),0.06+0.2*rnd(),0.05+0.25*rnd()];
+    obox(a,[2.95+(rnd()-0.5)*0.04,by+h/2,-3.75],[Math.cos(an)*w/2,0,Math.sin(an)*w/2],[0,h/2,0],[-Math.sin(an)*d/2,0,Math.cos(an)*d/2],c); by+=h; }
+  cylA(a,[3.15,0.17,-0.8],[3.15,0.17,1.7],0.16,[0.40,0.11,0.07],0,24);
+  box(a,[0.185,2.1,-2.515],[0.195,cy-0.07,-2.505],METAL,0,false);
+  lathe(a,[0.19,1.8,-2.51],[[0,0],[0.09,0.01],[0.1,0.05],[0.08,0.06],[0.085,0.24],[0.1,0.25],[0.04,0.3],[0,0.31]],[0.08,0.07,0.06],0,20);
+  box(GS,[-80,-2,-80],[80,80,80],[1,1,1],6,false,false);
+}
+// the old loft is grey clay; give it the surface colour a render's albedo pass would have
+function palettize(arr){
   const PAL=[[0.4,[0.46,0.42,0.37]],[0.22,[0.30,0.20,0.12]],[0.18,[0.23,0.14,0.08]],[0.46,[0.56,0.54,0.50]],[0.3,[0.34,0.27,0.18]],[0.42,[0.50,0.45,0.37]],[0.06,[0.05,0.05,0.05]],[0.52,[0.62,0.58,0.52]],[0.19,[0.26,0.08,0.06]],[0.36,[0.30,0.36,0.40]],[0.32,[0.40,0.38,0.34]]];
-  for(let i=0;i<GM.length;i+=10){ const g=GM[i+6]; let c=null; for(const [v,col] of PAL) if(Math.abs(g-v)<1e-4){ c=col; break; }
+  for(let i=0;i<arr.length;i+=10){ const g=arr[i+6]; let c=null; for(const [v,col] of PAL) if(Math.abs(g-v)<1e-4){ c=col; break; }
     if(!c){ const h=Math.sin(g*9137.1)*43758.5; const u=h-Math.floor(h), k=g*1.15; c=[k*(0.7+0.6*Math.abs(Math.sin(u*6.28))),k*(0.6+0.5*Math.abs(Math.sin(u*6.28+2.1))),k*(0.6+0.6*Math.abs(Math.sin(u*6.28+4.2)))]; }
-    GM[i+6]=c[0]; GM[i+7]=c[1]; GM[i+8]=c[2]; }
-  const m=mkMesh(GM); S.focal=32; S.film='s35'; S.format='2.39'; setCam(CAM_DEFAULT.E,CAM_DEFAULT.T,[0,1,0]);
-  const c=camAt(0), view=lookAt(c.E,c.T,c.up), proj=persp(2*Math.atan(Math.tan(hfov()/2)/(RW/RH)),RW/RH,0.03,80), vp=mul(proj,view);
+    arr[i+6]=c[0]; arr[i+7]=c[1]; arr[i+8]=c[2]; } }
+
+const SHOW='PLACEHOLDER';
+const SEQS=[
+ {id:'sq010', label:'Attic', kind:'pass', build:buildAttic, light:{C:[0,1.85,-1.2],R:6.5}, def:{sunAz:30,sunEl:38,haze:0.22}, shots:[
+   {id:'sh0010', label:'wide', cam:{E:[1.7,1.3,2.35],T:[-0.6,1.0,-4.2],focal:24,fstop:4,focus:4.0}},
+   {id:'sh0020', label:'workbench', cam:{E:[2.1,1.3,-1.4],T:[0.2,1.15,-4.8],focal:35,fstop:2.8,focus:3.4}},
+   {id:'sh0030', label:'skylight shaft', cam:{E:[1.9,0.85,-0.2],T:[-1.6,1.9,-2.5],focal:32,fstop:2.8,focus:2.4}}]},
+ {id:'sq020', label:'Loft', kind:'pass', build:buildRoom, pal:true, light:{C:[0,1.6,-1.5],R:8.5}, def:{}, handInfl:true, cu:[0.24,0.56,0.72], shots:[
+   {id:'sh0010', label:'window light', cam:{E:CAM_DEFAULT.E,T:CAM_DEFAULT.T,focal:32,fstop:4,focus:4.5}}]},
+ {id:'sq030', label:'Campfire', kind:'fire', shots:[{id:'sh0010', label:'embers'}]}
+];
+let curSeq=0, curShotI=0; const shotCache={}, lightCache={};
+const seqDef=()=>SHOT&&SHOT.seq?SHOT.seq.def:{};
+const passPath=(q,sh)=>`/shows/${SHOW}/${q.id}/${sh.id}/lighting/render/utility/v001/${q.id}_${sh.id}_utility.1001.exr`;
+function makePlaceholderPass(q,sh){
+  const RW=1280, RH=536, ar=RW/RH;
+  GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0; q.build(); if(q.pal) palettize(GM);
+  const m=mkMesh(GM), E=sh.cam.E, hf=2*Math.atan(FILMS.s35.w/(2*sh.cam.focal));
+  const view=lookAt(E,sh.cam.T,[0,1,0]), vp=mul(persp(2*Math.atan(Math.tan(hf/2)/ar),ar,0.03,80),view);
   const tx=[0,1,2].map(()=>mkTex(RW,RH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST)), d=depthRB(RW,RH), fb=mkFB(tx,d);
   gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,RW,RH); for(let i=0;i<3;i++) gl.clearBufferfv(gl.COLOR,i,[0,0,0,0]); gl.clearBufferfv(gl.DEPTH,0,[1]);
-  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); use(P.util,{uVP:vp,uView:view,uCam:c.E}); draw(m); gl.disable(gl.DEPTH_TEST);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); use(P.util,{uVP:vp,uView:view,uCam:E}); draw(m); gl.disable(gl.DEPTH_TEST);
   const rb=tx.map((_,i)=>{ const b=new Float32Array(RW*RH*4); gl.readBuffer(gl.COLOR_ATTACHMENT0+i); gl.readPixels(0,0,RW,RH,gl.RGBA,gl.FLOAT,b); return b; });
   const Pp=new Float32Array(RW*RH*3), Nn=new Float32Array(RW*RH*3), Cc=new Float32Array(RW*RH*3);
   for(let y=0;y<RH;y++) for(let x=0;x<RW;x++){ const s=((RH-1-y)*RW+x)*4, o=(y*RW+x)*3; if(rb[0][s+3]<0.5) continue;
     for(let k=0;k<3;k++){ Pp[o+k]=rb[0][s+k]; Nn[o+k]=rb[1][s+k]; Cc[o+k]=rb[2][s+k]; } }
   tx.forEach(t=>gl.deleteTexture(t)); gl.deleteRenderbuffer(d); gl.deleteFramebuffer(fb);
-  // the key light's depth pass, as a lighting render would supply it per light
-  const az=S.sunAz*Math.PI/180, el=S.sunEl*Math.PI/180, sl=[-Math.cos(az)*Math.cos(el), Math.sin(el), -Math.sin(az)*Math.cos(el)], LC=[0,1.6,-1.5];
-  const lvp=mul(ortho(-8.5,8.5,-8.5,8.5,1,50), lookAt(add(LC,scl(sl,25)),LC,[0,1,0])), ls=mkShadowTarget();
-  gl.bindFramebuffer(gl.FRAMEBUFFER,ls.fb); gl.viewport(0,0,SH,SH); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.clear(gl.DEPTH_BUFFER_BIT);
-  gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0); use(P.depth,{uVP:lvp}); draw(m); gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST);
-  freeMesh(m);
-  GM.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
-  const camInfo={pos:c.E, right:[view[0],view[4],view[8]], up:[view[1],view[5],view[9]], back:[view[2],view[6],view[10]], hfov:hfov(), focal:32, fstop:4, focus:4.5, src:'from header'};
-  Object.assign(S,saved);
-  setShot({W:RW,H:RH,P:Pp,N:Nn,C:Cc,cam:camInfo,scale:1,label:'Demo shot (built-in loft)',demo:true,up:'y',
-    layers:{P:'P',N:'N',C:'surfaceColor',Z:'depth'}, units:'metres', camSrc:'from header', lightPass:{tex:ls.tex,fb:ls.fb,az:S.sunAz,el:S.sunEl,vp:lvp}});
-  DEMO_SHOT=SHOT;
+  // the key light's depth pass for the sequence, as a lighting render would supply it per light
+  let lp=lightCache[q.id];
+  if(!lp){ const az=(q.def.sunAz??DEF.sunAz)*Math.PI/180, el=(q.def.sunEl??DEF.sunEl)*Math.PI/180, sl=[-Math.cos(az)*Math.cos(el), Math.sin(el), -Math.sin(az)*Math.cos(el)], C=q.light.C, R=q.light.R;
+    const lvp=mul(ortho(-R,R,-R,R,1,50), lookAt(add(C,scl(sl,25)),C,[0,1,0])), ls=mkShadowTarget();
+    gl.bindFramebuffer(gl.FRAMEBUFFER,ls.fb); gl.viewport(0,0,SH,SH); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0); use(P.depth,{uVP:lvp}); draw(m); gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST);
+    lp=lightCache[q.id]={tex:ls.tex,fb:ls.fb,az:q.def.sunAz??DEF.sunAz,el:q.def.sunEl??DEF.sunEl,vp:lvp}; }
+  freeMesh(m); GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
+  const cam={pos:[...E], right:[view[0],view[4],view[8]], up:[view[1],view[5],view[9]], back:[view[2],view[6],view[10]], hfov:hf, focal:sh.cam.focal, fstop:sh.cam.fstop, focus:sh.cam.focus};
+  const prev=SHOT;
+  setShot({W:RW,H:RH,P:Pp,N:Nn,C:Cc,cam,scale:1,label:`${q.id}_${sh.id}`,seq:q,shot:sh,path:passPath(q,sh),up:'y',autoInfl:!q.handInfl,cu:sh.cu||q.cu||[0.5,0.5,0.5],
+    layers:{P:'P',N:'N',C:'surfaceColor',Z:'depth'}, units:'metres', camSrc:'from the EXR header', lightPass:lp});
+  const out=SHOT; SHOT=prev; return out;
 }
 function setShot(sh){
   const {W,H,P,cam}=sh; const ds=[]; const stp=Math.max(1,Math.floor(W*H/20000));
@@ -2137,98 +2026,50 @@ function setShot(sh){
   sh.enclosed = sky/Math.max(tot,1) < 0.35;
   SHOT=sh;
 }
-// swap between Y-up and Z-up worlds (Z-up files are turned so Y is up)
+// swap between Y-up and Z-up worlds (Z-up scenes are turned so Y is up)
 function setUpAxis(ax,quiet){ if(!SHOT||SHOT.up===ax) return; const toY=ax==='z';
   const f=(a,i)=>{ const y=a[i+1], z=a[i+2]; if(toY){ a[i+1]=z; a[i+2]=-y; } else { a[i+1]=-z; a[i+2]=y; } };
   const n=SHOT.W*SHOT.H; for(let i=0;i<n*3;i+=3){ f(SHOT.P,i); if(SHOT.N) f(SHOT.N,i); }
   const c=SHOT.cam; for(const k of ['pos','right','up','back']){ c[k]=[...c[k]]; f(c[k],0); }
-  SHOT.up=ax; S.upAxis=ax; if(!quiet&&S.scene==='shot'&&started){ reconstruct(); if(!SHOT.demo) autoInfluence(); applyShotCam(); seedSim(); } }
+  SHOT.up=ax; S.upAxis=ax; if(!quiet&&S.scene==='shot'&&started){ reconstruct(); if(SHOT.autoInfl) autoInfluence(); applyShotCam(); seedSim(); } }
 function enterShot(){
-  const keep={proxy:S.proxy}; Object.assign(S,DEF,SCENES.shot.def,shotDefaults(),keep,{scene:'shot',shade:SHOT.C?'color':'clay',upAxis:SHOT.up||'y',enclosed:!!SHOT.enclosed});
-  reconstruct(); if(!SHOT.demo) autoInfluence(); applyShotCam(); seedSim(); updateLight();
-  mover=null; gust=null; blobs.length=0; curTab='shot';
-  buildSceneSeg(); buildPresets(); buildTabs(); buildKnobs(); syncSceneUI(); markPreset('default'); layout();
+  const keep={proxy:S.proxy}; Object.assign(S,DEF,SCENES.shot.def,seqDef(),shotDefaults(),keep,{scene:'shot',shade:SHOT.C?'color':'clay',upAxis:SHOT.up||'y',enclosed:!!SHOT.enclosed});
+  reconstruct(); if(SHOT.autoInfl) autoInfluence(); applyShotCam(); seedSim(); updateLight();
+  mover=null; gust=null; blobs.length=0; if(!visTabs().some(t=>t.id===curTab)) curTab='shot';
+  syncShotPicker(); buildPresets(); buildTabs(); buildKnobs(); syncSceneUI(); markPreset('default'); layout();
 }
-async function loadDemo(){ if(!started||switching||!DEMO_SHOT) return; if(SHOT===DEMO_SHOT&&S.scene==='shot') return;
-  switching=true; setPlacing(null); const ld=$('#loader'); ld.classList.remove('done'); progress(0.3,'Rebuilding the demo shot'); await nextFrame();
-  try{ SHOT=DEMO_SHOT; enterShot(); $('#readout').textContent='Demo shot: a utility pass rendered from a built-in loft'; }
-  finally{ progress(1,'Ready'); ld.classList.add('done'); switching=false; } }
-
-// antialiased P blends an edge pixel with whatever is behind it (or with 0 where there is nothing), which puts
-// that point off its own pixel's view ray; drop those so they don't become spikes flying toward the origin
-function dropFilteredEdges(P,W,H,cam){
-  const th=Math.tan(cam.hfov/2), tv=th*H/W, pa=2*th/W, fw=scl(cam.back,-1), err=new Float32Array(W*H).fill(-1), smp=[];
-  for(let y=0;y<H;y++){ const sy=(1-(y+0.5)/H*2)*tv; for(let x=0;x<W;x++){ const k=y*W+x; if(!validAt(P,k)) continue;
-    const sx=((x+0.5)/W*2-1)*th, dx=fw[0]+cam.right[0]*sx+cam.up[0]*sy, dy=fw[1]+cam.right[1]*sx+cam.up[1]*sy, dz=fw[2]+cam.right[2]*sx+cam.up[2]*sy;
-    const vx=P[k*3]-cam.pos[0], vy=P[k*3+1]-cam.pos[1], vz=P[k*3+2]-cam.pos[2];
-    const cx=dy*vz-dz*vy, cy=dz*vx-dx*vz, cz=dx*vy-dy*vx, e=Math.hypot(cx,cy,cz)/(Math.hypot(dx,dy,dz)*Math.hypot(vx,vy,vz)+1e-12)/pa;
-    err[k]=e; if((k&63)===0) smp.push(e); } }
-  smp.sort((a,b)=>a-b); const med=smp.length?smp[smp.length>>1]:0; if(med>2) return {dropped:0,med};
-  const lim=Math.max(2.5,med*4); let n=0; for(let k=0;k<W*H;k++) if(err[k]>lim){ P[k*3]=P[k*3+1]=P[k*3+2]=0; n++; }
-  return {dropped:n,med}; }
-
-/* ---- loading utility EXRs dropped in by the artist ---- */
-async function loadFiles(list){
-  list=[...list].filter(f=>/\.exr$/i.test(f.name)); if(!list.length){ $('#readout').textContent='Drop .exr utility passes (position, normals, depth, surface colour)'; return; }
-  if(!started||switching) return; switching=true; setPlacing(null);
-  const ld=$('#loader'); ld.classList.remove('done');
+// picking a sequence and shot: the real node would look up that shot's utility pass in the pipeline
+async function selectShot(qi,si){
+  if(!started||switching) return; const q=SEQS[qi], sh=q.shots[si]; if(!sh) return;
+  if(q.kind==='fire'){ curSeq=qi; curShotI=si; syncShotPicker(); if(S.scene!=='fire') await switchScene('fire'); syncShotPicker(); return; }
+  const key=q.id+'/'+sh.id; if(S.scene==='shot'&&SHOT&&SHOT.label===`${q.id}_${sh.id}`){ syncShotPicker(); return; }
+  curSeq=qi; curShotI=si; syncShotPicker();
+  switching=true; setPlacing(null); const ld=$('#loader'); ld.classList.remove('done');
   try{
-    const files=[];
-    for(let i=0;i<list.length;i++){ progress(0.05+0.3*i/list.length,`Reading ${list[i].name}`); await nextFrame();
-      const buf=await list[i].arrayBuffer(); files.push({name:list[i].name, exr:EXR.open(buf)}); }
-    progress(0.4,'Finding position, normal, depth and colour layers'); await nextFrame();
-    const {found}=EXR.survey(files);
-    if(!found.P && !found.Z) throw new Error('No world position or depth found. Expected a layer named like pos, P, Pworld or depth.');
-    const ref=found.P||found.Z, W=ref.w, H=ref.h, n=W*H;
-    const grab3=f=>{ if(!f||f.w!==W||f.h!==H) return null; const d=f.f.exr.read(f.pi,f.names), o=new Float32Array(n*3); for(let i=0;i<n;i++) for(let k=0;k<3;k++) o[i*3+k]=d[f.names[k]][i]; return o; };
-    progress(0.5,'Decoding layers'); await nextFrame();
-    let Pp=grab3(found.P); const Nn=grab3(found.N), Cc=grab3(found.C);
-    const headers=files.flatMap(f=>f.exr.parts.map(p=>p.header));
-    let cam=EXR.cameraFromHeaders(headers), camSrc=cam?'from header':'';
-    if(!Pp){ // depth alone: rebuild positions from the camera
-      if(!cam||!cam.hfov) throw new Error('This file has depth but no world position, and no camera in its header to turn depth into positions.');
-      const Z=found.Z.f.exr.read(found.Z.pi,found.Z.names)[found.Z.names[0]], th=Math.tan(cam.hfov/2), tv=th*H/W; Pp=new Float32Array(n*3);
-      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=y*W+x, z=Z[i]; if(!(z>0)||!Number.isFinite(z)||z>1e9) continue;
-        const sx=((x+0.5)/W*2-1)*th, sy=(1-(y+0.5)/H*2)*tv, dir=nrm(add(scl(cam.back,-1),add(scl(cam.right,sx),scl(cam.up,sy))));
-        for(let k=0;k<3;k++) Pp[i*3+k]=cam.pos[k]+dir[k]*z; } }
-    if(!cam||!cam.hfov){ progress(0.6,'No camera in the header: solving it from the position pass'); await nextFrame();
-      const solved=EXR.solveCamera(Pp,W,H,k=>validAt(Pp,k)); if(!solved) throw new Error('Could not work out the camera from the position pass.');
-      cam=Object.assign(cam||{},solved); camSrc='solved from the position pass'; }
-    // world normals or camera-space normals? keep whichever faces the camera
-    if(Nn){ let w=0,c=0,t=0; for(let k=0;k<n;k+=Math.max(1,Math.floor(n/4000))){ if(!validAt(Pp,k)) continue; t++;
-        const v=sub(cam.pos,[Pp[k*3],Pp[k*3+1],Pp[k*3+2]]), nv=[Nn[k*3],Nn[k*3+1],Nn[k*3+2]];
-        if(dot(nv,v)>0) w++; const nw=add(scl(cam.right,nv[0]),add(scl(cam.up,nv[1]),scl(cam.back,nv[2]))); if(dot(nw,v)>0) c++; }
-      if(c>w*1.15) for(let i=0;i<n;i++){ const a=Nn[i*3],b=Nn[i*3+1],d=Nn[i*3+2]; for(let k=0;k<3;k++) Nn[i*3+k]=cam.right[k]*a+cam.up[k]*b+cam.back[k]*d; } }
-    // units: the tool works in metres
-    const prev=SHOT, tmp={W,H,P:Pp,cam}; setShot(tmp); SHOT=prev; const med=tmp.medDepth;
-    const scale=med>4000?0.001:med>40?0.01:1, units=scale===0.01?'centimetres':scale===0.001?'millimetres':'metres';
-    if(scale!==1){ for(let i=0;i<n*3;i++) Pp[i]*=scale; cam.pos=cam.pos.map(v=>v*scale); }
-    if(Cc){ for(let i=0;i<n*3;i++) if(!Number.isFinite(Cc[i])) Cc[i]=0; }
-    // normals that point away from the camera everywhere are probably flipped; the raster flips per pixel anyway
-    if(Cc){ let mx=0; for(let i=0;i<n*3;i+=7) if(Cc[i]>mx) mx=Cc[i]; if(mx<=0) Cc=null; }
-    progress(0.7,'Removing filtered edge pixels'); await nextFrame();
-    const clean=dropFilteredEdges(Pp,W,H,cam);
-    const prevShot=SHOT;
-    setShot({W,H,P:Pp,N:Nn,C:Cc,cam,scale,label:files.map(f=>f.name).join(' + '),demo:false,up:'y',
-      layers:{P:found.P?found.P.label:'', N:found.N?found.N.label:'', C:Cc&&found.C?found.C.label:'', Z:found.Z?found.Z.label:''}, units, camSrc, clean});
-    // a camera whose up vector leans along Z means the scene was built Z-up
-    const zUp=Math.abs(cam.up[2])>Math.abs(cam.up[1])+0.1;
-    progress(0.75,'Rebuilding the scene from the pass'); await nextFrame();
-    try{ if(zUp){ SHOT.up='y'; setUpAxis('z',true); } enterShot(); }
-    catch(e){ SHOT=prevShot; if(SHOT) enterShot(); throw e; }
-    $('#readout').textContent=`Loaded ${SHOT.label}${zUp?' · Z-up scene turned to Y-up':''}`;
-  }catch(err){ console.error(err); $('#readout').textContent='Could not load: '+(err.message||err); const el=$('#shotInfo'); if(el) el.innerHTML=`<p class="err">${(err.message||String(err)).replace(/</g,'&lt;')}</p>`+shotInfoHTML(); }
-  finally{ progress(1,'Ready'); ld.classList.add('done'); switching=false; }
+    progress(0.1,`Looking up the utility pass for ${q.id} / ${sh.id}`); await nextFrame();
+    if(!shotCache[key]){ progress(0.3,'Reading position, normals and surface colour (placeholder pass)'); await nextFrame(); shotCache[key]=makePlaceholderPass(q,sh); }
+    SHOT=shotCache[key]; progress(0.65,'Rebuilding the scene from the utility pass'); await nextFrame();
+    enterShot(); $('#readout').textContent=`${q.id} / ${sh.id}: rebuilt from its utility pass (placeholder)`;
+  } finally { progress(1,'Ready'); ld.classList.add('done'); switching=false; }
 }
+const seqSel=$('#seqSel'), shotSel=$('#shotSel');
+function buildShotPicker(){
+  seqSel.innerHTML=SEQS.map((q,i)=>`<option value="${i}">${q.id} · ${q.label}</option>`).join('');
+  seqSel.onchange=()=>selectShot(+seqSel.value,0); shotSel.onchange=()=>selectShot(curSeq,+shotSel.value); syncShotPicker(); }
+function syncShotPicker(){ const q=SEQS[curSeq];
+  seqSel.value=String(curSeq); shotSel.innerHTML=q.shots.map((s,i)=>`<option value="${i}">${s.id} · ${s.label}</option>`).join(''); shotSel.value=String(curShotI);
+  $('#shotNote').textContent = q.kind==='fire'
+    ? 'Hand-built stand-in for the ember demo. The real node would rebuild this shot from its utility pass, like the attic.'
+    : 'Stand-in set: this shot\'s utility pass is rendered in your browser. The real node finds the pass for the shot you pick in the pipeline and rebuilds the scene from it.'; }
+const shotName=()=>{ const q=SEQS[curSeq]; return `${q.id}_${q.shots[curShotI].id}`; };
 function shotInfoHTML(){
   if(!SHOT) return '<p class="note">No shot loaded.</p>';
   const s=SHOT, st=shotStats, yes=(v,l)=>v?`<span class="ok">✓</span> ${l}`:`<span class="no">–</span> ${l}`;
-  const rows=[['Source',s.label],['Resolution',`${s.W} × ${s.H}`],
-    ['Position',s.layers.P?yes(1,s.layers.P):yes(0,'rebuilt from depth')],['Normals',s.layers.N?yes(1,s.layers.N):yes(0,'from rebuilt surface')],
-    ['Surface colour',s.layers.C?yes(1,s.layers.C):yes(0,'clay')],['Depth',s.layers.Z?yes(1,s.layers.Z):yes(0,'not needed')],
-    ['Camera',`${s.camSrc} · ${(s.cam.hfov*180/Math.PI).toFixed(1)}° wide${s.clean?` · fits P to ${s.clean.med.toFixed(2)} px`:''}`],['Units',`${s.units}${s.up==='z'?' · Z up':''}`],
+  const rows=[['Shot',`${s.seq.id} / ${s.shot.id} · ${s.shot.label}`],['Pass',`<span class="no">${s.path}</span>`],['Status','placeholder pass, rendered from a stand-in set'],['Resolution',`${s.W} × ${s.H}`],
+    ['Layers',[s.layers.P,s.layers.N,s.layers.C,s.layers.Z].filter(Boolean).map(l=>yes(1,l)).join('  ')],
+    ['Camera',`${s.camSrc} · ${s.cam.focal}mm · ${(s.cam.hfov*180/Math.PI).toFixed(1)}° wide`],['Units',s.units],
     ['Key light depth',s.lightPass?yes(1,'sun depth pass'):yes(0,'shadows from rebuilt geometry')]];
-  if(st) rows.push(['Rebuilt',`${Math.round(st.tris).toLocaleString()} triangles · every ${st.step===1?'pixel':st.step+' px'} · ${Math.round(st.broken*100)}% at edges${s.clean&&s.clean.dropped?` · ${(s.clean.dropped/(s.W*s.H)*100).toFixed(1)}% filtered edge pixels dropped`:''}`]);
+  if(st) rows.push(['Rebuilt',`${Math.round(st.tris).toLocaleString()} triangles · every ${st.step===1?'pixel':st.step+' px'} · ${Math.round(st.broken*100)}% at edges`]);
   return '<dl>'+rows.map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join('')+'</dl>';
 }
 
@@ -2277,7 +2118,7 @@ canvas.addEventListener('pointercancel',()=>{drag=null;});
 canvas.addEventListener('wheel',e=>{ e.preventDefault(); cam.dist=clamp(cam.dist*Math.exp(e.deltaY*0.0012),0.3,GEO.maxDist||9); },{passive:false});
 
 function hud(count){
-  $('#ovTL').innerHTML=`MoteField1 › Viewer1 · <b>${VIEWS[viewMode].toLowerCase()}</b> · bounce ${giN} spp`;
+  $('#ovTL').innerHTML=`${shotName()} · MoteField1 · <b>${VIEWS[viewMode].toLowerCase()}</b> · bounce ${giN} spp`;
   $('#ovTR').textContent=`${count.toLocaleString()} motes · ${counter.fps.toFixed(0)} fps`;
   $('#ovBL').textContent=`f ${String(Math.floor(simTime*S.fps)+1001).padStart(4,'0')} · ${DW} × ${DH}${W<DW?' (plate '+W+')':''} · ${S.format}${S.proxy?' · proxy':''}`;
   $('#ovBR').textContent=`${Math.round(S.focal)}mm  T${S.fstop.toFixed(1)}  ${focusCur.toFixed(2)} m  ${Math.round(S.shutter)}°  ${S.fps}fps  ${FILMS[S.film].label}`;
@@ -2301,9 +2142,7 @@ const TABS=[
  {id:'shot',label:'Shot',scenes:['shot'],groups:[
   ['Utility pass',[
    {t:'info'},
-   {t:'btn',label:'Load utility EXRs…',act:()=>$('#fileIn').click()},
-   {t:'btn',label:'Use the demo shot',act:()=>loadDemo()},
-   {t:'note',text:'Drop the render\'s utility passes on the viewer: world position (P), normals, surface colour, depth. One multi-layer EXR or several files. The camera comes from the EXR header, or is solved from P. Files are read in your browser and never uploaded.'}
+   {t:'note',text:'Pick the sequence and shot at the top of the page. The real node looks up that shot\'s utility pass (world position, normals, surface colour, depth) in the pipeline, reads the camera from its header and rebuilds the scene from it. The shots here are placeholders: their passes are rendered in your browser from stand-in sets.'}
   ]],
   ['Rebuild',[
    {t:'seg',k:'meshStep',label:'Mesh detail',opts:[[0,'Auto'],[1,'Full'],[2,'½'],[4,'¼']]},
@@ -2311,7 +2150,6 @@ const TABS=[
    {k:'shell',label:'Shell thickness',min:0.02,max:3,step:0.01,unit:'m',dec:2,log:true},
    {k:'dustFar',label:'Dust depth',min:0,max:80,step:0.1,unit:'m',dec:1,fmt:v=>v<=0?'auto':v.toFixed(1)},
    {t:'seg',k:'shade',label:'Show as',opts:[['clay','Clay'],['color','Colour'],['normals','Normals']]},
-   {t:'seg',k:'upAxis',label:'Up axis',opts:[['y','Y up'],['z','Z up']]},
    {t:'toggle',k:'enclosed',label:'Interior'},
    {t:'note',text:'Edge break splits the surface where depth jumps between neighbouring pixels, so foreground objects don\'t stretch into the background. Shell thickness gives the one-sided surfaces some depth for bounce light and shadows. Interior treats what the camera can\'t see as more room rather than open sky. Dust fills the camera\'s view out to the dust depth.'}
   ]],
@@ -2604,16 +2442,16 @@ window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,selec
   else if(e.key==='Escape') setPlacing(null);
   else if(e.key==='l'||e.key==='L') setLoupe(!loupeOn); });
 
-const presetEl=$('#presets'), sceneSeg=$('#sceneseg');
+const presetEl=$('#presets');
 function markPreset(id){ [...presetEl.querySelectorAll('.chip')].forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id)); }
 const REBUILD_KEYS=['meshStep','edgeBreak','shell','dustFar','shade','upAxis','enclosed'];
 function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; const inf={}; for(const k in S) if(/^(gust|mov)/.test(k)||REBUILD_KEYS.includes(k)) inf[k]=S[k];
-  Object.assign(S,DEF,SCENES[S.scene].def,S.scene==='shot'?shotDefaults():{},pr.p,keep,inf);
+  Object.assign(S,DEF,SCENES[S.scene].def,S.scene==='shot'?{...seqDef(),...shotDefaults()}:{},pr.p,keep,inf);
   if(S.scene==='shot'){ applyShotCam(); if(pr.cam==='closeup') closeupCam(); } else setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
   updateLight(); resetGI=true; resetDOF=true; layout(); buildKnobs(); markPreset(pr.id); mover=null; gust=null; blobs.length=0; if(started) prewarmEmbers(); }
 function buildPresets(){ presetEl.querySelectorAll('.chip').forEach(c=>c.remove());
   for(const pr of PRESETS[S.scene]){ const b=document.createElement('button'); b.className='chip'; b.dataset.id=pr.id; b.textContent=typeof pr.label==='function'?pr.label():pr.label; b.onclick=()=>applyLook(pr); presetEl.appendChild(b); } }
-function buildSceneSeg(){ sceneSeg.innerHTML=''; for(const k in SCENES){ const b=document.createElement('button'); b.textContent=SCENES[k].label; b.setAttribute('aria-pressed',S.scene===k); b.onclick=()=>switchScene(k); sceneSeg.appendChild(b); } }
+function buildSceneSeg(){ syncShotPicker(); }
 async function switchScene(name){
   if(!started||switching||name===S.scene) return;
   if(name==='shot'){ if(!SHOT) return; switching=true; setPlacing(false); const ld=$('#loader'); ld.classList.remove('done'); progress(0.2,'Rebuilding the shot from its utility pass'); await nextFrame();
@@ -2632,26 +2470,18 @@ async function switchScene(name){
   progress(0.92,'Warming up the embers'); await nextFrame(); prewarmEmbers();
   progress(1,'Ready'); ld.classList.add('done'); switching=false;
 }
-buildSceneSeg(); buildPresets();
+buildShotPicker(); buildPresets();
 buildTabs(); buildKnobs(); syncSceneUI(); markPreset('default'); layout();
-// loading utility passes: the button, or drop files on the viewer
-$('#btnLoad').onclick=()=>$('#fileIn').click();
-$('#fileIn').onchange=e=>{ const f=[...e.target.files]; e.target.value=''; loadFiles(f); };
-const dropEl=$('#drop'), hasFiles=e=>[...(e.dataTransfer?.types||[])].includes('Files');
-vpEl.addEventListener('dragenter',e=>{ if(hasFiles(e)){ e.preventDefault(); dropEl.hidden=false; } });
-vpEl.addEventListener('dragover',e=>{ if(hasFiles(e)){ e.preventDefault(); e.dataTransfer.dropEffect='copy'; dropEl.hidden=false; } });
-dropEl.addEventListener('dragleave',()=>{ dropEl.hidden=true; });
-vpEl.addEventListener('drop',e=>{ if(!hasFiles(e)) return; e.preventDefault(); dropEl.hidden=true; loadFiles(e.dataTransfer.files); });
-
 /* =================== boot with a progress bar =================== */
 (async function boot(){
   try{
     progress(0.03,'Compiling shaders'); await nextFrame();
     await compileAll(0.03,0.66);
-    progress(0.68,'Rendering the demo shot\'s utility pass'); await nextFrame();
-    makeShadow(); await makeDemoPass();
-    progress(0.74,'Rebuilding the shot from its utility pass'); await nextFrame();
-    Object.assign(S,DEF,SCENES.shot.def,shotDefaults(),{shade:'color',enclosed:!!SHOT.enclosed}); reconstruct(); applyShotCam();
+    const q0=SEQS[0], s0=q0.shots[0];
+    progress(0.68,`Looking up the utility pass for ${q0.id} / ${s0.id} (placeholder)`); await nextFrame();
+    makeShadow(); SHOT=shotCache[q0.id+'/'+s0.id]=makePlaceholderPass(q0,s0);
+    progress(0.74,'Rebuilding the scene from the utility pass'); await nextFrame();
+    Object.assign(S,DEF,SCENES.shot.def,seqDef(),shotDefaults(),{shade:'color',enclosed:!!SHOT.enclosed}); reconstruct(); if(SHOT.autoInfl) autoInfluence(); applyShotCam();
     started=true; layout(); syncKnob('focal'); syncKnob('format');
     progress(0.82,`Seeding ${MAXN.toLocaleString()} motes`); await nextFrame();
     sim=[0,1].map(()=>{ const p=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST), v=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST); return {p,v,fb:mkFB([p,v])}; });
@@ -2666,7 +2496,7 @@ vpEl.addEventListener('drop',e=>{ if(!hasFiles(e)) return; e.preventDefault(); d
     progress(1,'Ready'); $('#loader').classList.add('done');
   }catch(err){ if(!failed){ console.error(err); fail('Loading stopped: '+(err&&err.message||err)); } }
 })();
-window.__mf={S,setView,setCam,switchScene,applyLook,PRESETS,fireGust,runMover,loadFiles,loadDemo,applyShotCam,get SHOT(){return SHOT;},get stats(){return shotStats;},get GEO(){return GEO;},pickAt};
+window.__mf={S,setView,setCam,switchScene,applyLook,PRESETS,fireGust,runMover,selectShot,applyShotCam,get SHOT(){return SHOT;},get stats(){return shotStats;},get GEO(){return GEO;},pickAt};
 })();
 
 </script>
