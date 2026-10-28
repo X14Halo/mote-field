@@ -125,6 +125,14 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 .sw input:focus-visible+span{outline:2px solid var(--dust);outline-offset:2px}
 .kbtn{grid-column:1/-1;justify-self:start;background:var(--bin-2);border:1px solid var(--rule);border-radius:3px;padding:5px 12px;font-family:var(--f-cond);font-size:13px;cursor:pointer}
 .kbtn:hover{border-color:var(--dust)}
+.drop{position:absolute;inset:8px;z-index:5;display:flex;align-items:center;justify-content:center;text-align:center;background:rgba(11,11,10,.82);border:1.5px dashed var(--dust);border-radius:6px;color:var(--text);font-family:var(--f-cond);font-size:18px;letter-spacing:.04em}
+.drop small{display:block;margin-top:6px;color:var(--mute);font-size:13px;letter-spacing:0}
+.shotinfo{grid-column:1/-1;font-size:12.5px}
+.shotinfo dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:2px 0 6px}
+.shotinfo dt{color:var(--mute)}
+.shotinfo dd{margin:0;font-family:var(--f-num);font-size:11.5px;overflow-wrap:anywhere}
+.shotinfo .ok{color:var(--dust)} .shotinfo .no{color:var(--mute)}
+.shotinfo .err{color:#e48a6b;margin:0 0 6px}
 .note{font-size:12.5px;color:var(--mute);margin:4px 0 2px;max-width:40ch;line-height:1.45}
 .ring{margin:6px 0 4px}
 .ring canvas{width:100%;height:78px;display:block;cursor:ew-resize;touch-action:none;border:1px solid var(--rule);border-radius:3px;background:#0f0f0d}
@@ -173,7 +181,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 }
 @media (prefers-reduced-motion:reduce){ .reticle,.loader,.lbar i{transition:none} }
 </style>
-<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust and ember node. Physically based dust motes in light shafts and fire embers with real bokeh, shutter motion blur and depth holdouts.">
+<meta name="description" content="MoteField: a live WebGL mockup of a camera-aware Nuke dust and ember node. It rebuilds a rough 3D scene from a render's utility pass, then adds physically based dust motes in light shafts and fire embers with real bokeh, shutter motion blur and depth holdouts.">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
 </head>
 <body>
@@ -199,6 +207,8 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
       <div class="vbar">
         <div class="seg" id="viewseg" role="group" aria-label="Viewer channel"></div>
         <div class="vbar-r">
+          <button class="tbtn" id="btnLoad" title="Load the render's utility pass EXRs: position, normals, depth, surface colour">Load passes</button>
+          <input type="file" id="fileIn" accept=".exr" multiple hidden>
           <button class="tbtn tog" id="btnLoupe" aria-pressed="false" title="Magnify the pixels under the cursor">Loupe <kbd>L</kbd></button>
           <button class="tbtn" id="btnGust" title="Fire the placed gust of wind">Gust <kbd>G</kbd></button>
           <button class="tbtn" id="btnRun" title="Run the placed moving object along its path">Run object <kbd>R</kbd></button>
@@ -224,6 +234,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
           </div>
         </div>
         <div class="glerr" id="glerr" hidden><p></p></div>
+        <div class="drop" id="drop" hidden><div>Drop utility pass EXRs<small>position · normals · depth · surface colour. Files are read in your browser and never uploaded.</small></div></div>
       </div>
       <div class="status">
         <span id="readout">Hover the viewer to read P and depth under the cursor</span>
@@ -232,7 +243,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     </section>
 
     <aside class="props" aria-label="MoteField properties">
-      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.9</span></div>
+      <div class="nodehead"><span class="nodename">MoteField1</span><span class="nodeclass">MOTEFIELD · v0.10</span></div>
       <div class="tabs" role="tablist" id="tabs"></div>
       <div class="knobs" id="knobs" role="tabpanel"></div>
     </aside>
@@ -242,7 +253,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
 <section class="pitch" aria-labelledby="pitch-h">
   <p class="eyebrow">THE PITCH</p>
   <h2 id="pitch-h">Dust that lives in the comp, driven by the shot camera and the lighting scene</h2>
-  <p class="lede">Today dust motes are a 3D particle render. Every note on density, size, drift or focus means another render, and nobody sees the result until it comes back. MoteField moves the motes into Nuke as a node that reads the shot's camera, a P pass and the key light's depth map, then renders physically based motes in seconds. The viewer above is a working mockup of that node: the path-traced clay room, light and camera are stand-ins, but the optics and the light math are the real thing.</p>
+  <p class="lede">Today dust motes are a 3D particle render. Every note on density, size, drift or focus means another render, and nobody sees the result until it comes back. MoteField moves the motes into Nuke as a node that reads the shot's camera, the render's utility pass and the key light's depth map, then renders physically based motes in seconds. From the utility pass it rebuilds a rough 3D model of the shot in about a second, so artists can see exactly where the dust, the gusts and the moving objects sit. The viewer above is a working mockup of that node: the scene is rebuilt from a utility pass (a built-in demo, or your own EXRs via Load passes), and the optics and the light math are the real thing.</p>
 
   <div class="graph" aria-label="Proposed node graph">
     <svg viewBox="0 0 760 210" role="img" aria-label="Plate, P pass, camera and key light depth feed MoteField, whose output is merged over the plate">
@@ -253,7 +264,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
         <rect x="10" y="14" width="150" height="34" rx="3" fill="#2b2a26" stroke="#4a463e"/>
         <text x="22" y="35">Read · beauty plate</text>
         <rect x="10" y="62" width="150" height="34" rx="3" fill="#2b2a26" stroke="#4a463e"/>
-        <text x="22" y="83">Read · P / depth AOV</text>
+        <text x="22" y="83">Read · utility pass</text>
         <rect x="10" y="110" width="150" height="34" rx="3" fill="#24303a" stroke="#4d6578"/>
         <text x="22" y="131">Camera3 · shot cam</text>
         <rect x="10" y="158" width="150" height="34" rx="3" fill="#2b2a26" stroke="#4a463e"/>
@@ -306,6 +317,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
   </div>
 
   <dl class="spec">
+    <div class="row"><dt>Scene from passes</dt><dd><h3>The shot rebuilds itself from its utility pass</h3>Load the render's utility EXRs and MoteField turns world position into a rough 3D model of the shot: every pixel or few becomes a vertex, neighbours join into triangles, and the surface breaks wherever depth jumps, so a chair stays separate from the wall behind it. Normals and surface colour shade it, and a voxel copy feeds the bounce light. The camera comes from the EXR header, or is solved from the position pass when the header has none; depth alone also works when the header has a camera. Units and up axis are detected. Orbit around the rebuilt scene to place the dust volume, gusts and moving objects, then snap back to the shot camera. It only knows the surfaces the camera saw, which is enough for placement and holdouts; shadows come from each light's own depth pass. The demo shot is a utility pass rendered in the browser from a built-in loft; the tool itself only ever reads the pass.</dd></div>
     <div class="row"><dt>What dust is</dt><dd><h3>Four kinds of mote, not one sphere</h3>Household dust is mostly fine mineral grit, flakes of skin and paper, textile lint and small clumps of fluff. Each type has its own size range, shape, scattering and drag. Grit is a sub-pixel point of light at most distances. Flakes tumble, change brightness with their angle to the sun and throw brief glints. Lint is a curling strand, millimetres long, often dyed. Fluff is a loose, wispy clump. Shapes only resolve when a mote is large, close and in focus, exactly as in a real plate. Use the Loupe or the Close-up look to see them.</dd></div>
     <div class="row"><dt>Light selection</dt><dd><h3>Choose which lights the dust appears in</h3>Because each light brings its own depth pass, every light becomes a checkbox on the node: dust in the key sun's shaft, not in the window fill, glowing near a practical lamp. Each light gets its own strength and tint. Turning a light off removes its beam from the dust instantly, with no new render. Distant lights such as the sun are the simplest case: their depth pass is a flat, parallel projection, exactly what this mockup uses. For a quicker setup without the extra passes, a per-light-group volume render or a hand-placed beam shape can stand in, with less accuracy in depth.</dd></div>
     <div class="row"><dt>Defocus</dt><dd><h3>Every mote renders its own bokeh</h3>Circle of confusion comes from focal length, T-stop, focus distance and film back. Each mote's shape is spread through the lens aperture, with blade count, rotation and cat's eye toward the frame edge. A defocused lint fibre becomes a soft streak, not a disc. Energy is conserved, so an out-of-focus mote gets larger and dimmer, never brighter.</dd></div>
@@ -320,9 +332,216 @@ input[type=range]::-moz-range-thumb{width:9px;height:9px;border-radius:50%;backg
     <div><span class="ph">PHASE 2</span><h4>Deterministic sim cache</h4><p>Seeded per shot and frame-addressable, so scrubbing, the farm and the artist's viewer all see the same motes. Motion vectors out for re-blur.</p></div>
     <div><span class="ph">PHASE 3</span><h4>NDK node + presets</h4><p>C++ node with show presets (dusty attic, cathedral, exterior pollen), multi-light support and deep output for deep comps.</p></div>
   </div>
-  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, press G for a gust and R to run the moving object, press L for a pixel loupe, and try the Looks along the top. Switch the Scene to Campfire for the ember tool. The ID channel colours each mote by type.</p>
+  <p class="foot">The mockup renders in WebGL in the browser. Click the viewer to rack focus, press G for a gust and R to run the moving object, press L for a pixel loupe, and try the Looks along the top. Switch the Scene to Campfire for the ember tool. Drop your own utility pass EXRs on the viewer (ZIP, ZIPS, RLE or uncompressed) to rebuild your shot. The ID channel colours each mote by type.</p>
 </section>
 
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+<script>
+/* ---------- EXR reader for utility passes (scanline, multi-part or single-part; NONE / RLE / ZIPS / ZIP) ---------- */
+const EXR = (() => {
+  const H2F = new Float32Array(65536);
+  for (let h = 0; h < 65536; h++) { const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 31, m = h & 1023;
+    H2F[h] = e === 0 ? s * 6.103515625e-5 * (m / 1024) : e === 31 ? (m ? NaN : s * Infinity) : s * Math.pow(2, e - 15) * (1 + m / 1024); }
+  const COMP = ['NONE', 'RLE', 'ZIPS', 'ZIP', 'PIZ', 'PXR24', 'B44', 'B44A', 'DWAA', 'DWAB'];
+  const LINES = { 0: 1, 1: 1, 2: 1, 3: 16, 4: 32, 5: 16, 6: 32, 7: 32, 8: 32, 9: 256 };
+  const td = new TextDecoder();
+  function cstr(u8, o) { let e = o; while (u8[e] !== 0) e++; return [td.decode(u8.subarray(o, e)), e + 1]; }
+  function readAttr(dv, u8, o, type, size) {
+    switch (type) {
+      case 'chlist': { const ch = []; let p = o; while (u8[p] !== 0) { const [n, q] = cstr(u8, p); ch.push({ name: n, type: dv.getInt32(q, true), xs: dv.getInt32(q + 8, true), ys: dv.getInt32(q + 12, true) }); p = q + 16; } return ch; }
+      case 'compression': case 'lineOrder': case 'envmap': case 'deepImageState': return u8[o];
+      case 'box2i': return [dv.getInt32(o, true), dv.getInt32(o + 4, true), dv.getInt32(o + 8, true), dv.getInt32(o + 12, true)];
+      case 'int': return dv.getInt32(o, true);
+      case 'float': return dv.getFloat32(o, true);
+      case 'double': return dv.getFloat64(o, true);
+      case 'string': return td.decode(u8.subarray(o, o + size));
+      case 'm44f': { const a = []; for (let i = 0; i < 16; i++) a.push(dv.getFloat32(o + i * 4, true)); return a; }
+      case 'm44d': { const a = []; for (let i = 0; i < 16; i++) a.push(dv.getFloat64(o + i * 8, true)); return a; }
+      case 'v2f': return [dv.getFloat32(o, true), dv.getFloat32(o + 4, true)];
+      case 'v3f': return [dv.getFloat32(o, true), dv.getFloat32(o + 4, true), dv.getFloat32(o + 8, true)];
+      case 'v2i': return [dv.getInt32(o, true), dv.getInt32(o + 4, true)];
+      default: return null;
+    }
+  }
+  function readHeader(dv, u8, o) {
+    const h = {};
+    for (;;) { const [name, a] = cstr(u8, o); if (name === '') return [h, a];
+      const [type, b] = cstr(u8, a); const size = dv.getInt32(b, true); h[name] = readAttr(dv, u8, b + 4, type, size); o = b + 4 + size; }
+  }
+  function inflate(u8) { if (typeof fflate !== 'undefined') return fflate.unzlibSync(u8); throw new Error('No zlib decoder available'); }
+  function unRLE(src, outLen) { const out = new Uint8Array(outLen); let i = 0, o = 0;
+    while (i < src.length && o < outLen) { let c = (src[i] << 24) >> 24; i++;
+      if (c < 0) { c = -c; out.set(src.subarray(i, i + c), o); o += c; i += c; } else { const v = src[i++]; out.fill(v, o, o + c + 1); o += c + 1; } }
+    return out; }
+  function unPredict(t) { const out = new Uint8Array(t.length);
+    for (let i = 1; i < t.length; i++) t[i] = (t[i - 1] + t[i] - 128) & 255;
+    const half = (t.length + 1) >> 1; let a = 0, b = half;
+    for (let o = 0; o < t.length; o++) out[o] = (o & 1) ? t[b++] : t[a++];
+    return out; }
+
+  function open(buf) {
+    const u8 = new Uint8Array(buf), dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 20000630) throw new Error('Not an OpenEXR file');
+    const ver = dv.getUint32(4, true), tiled = !!(ver & 0x200), deep = !!(ver & 0x800), multi = !!(ver & 0x1000);
+    if (deep) throw new Error('Deep EXR files are not supported here; use a flat utility pass');
+    let o = 8; const parts = [];
+    if (multi) { for (;;) { if (u8[o] === 0) { o++; break; } const [h, n] = readHeader(dv, u8, o); parts.push({ header: h }); o = n; } }
+    else { const [h, n] = readHeader(dv, u8, o); parts.push({ header: h }); o = n; }
+    for (const p of parts) {
+      const h = p.header, dw = h.dataWindow;
+      p.name = h.name || ''; p.x0 = dw[0]; p.y0 = dw[1]; p.width = dw[2] - dw[0] + 1; p.height = dw[3] - dw[1] + 1;
+      p.channels = h.channels || []; p.comp = h.compression; p.lines = LINES[p.comp] || 1;
+      p.tiled = tiled || (h.type && String(h.type).includes('tiled'));
+      p.chunkCount = h.chunkCount || Math.ceil(p.height / p.lines);
+      p.offsets = new Array(p.chunkCount);
+      for (let i = 0; i < p.chunkCount; i++) { p.offsets[i] = Number(dv.getBigUint64(o, true)); o += 8; }
+    }
+    function read(pi, want) {
+      const p = parts[pi];
+      if (p.tiled) throw new Error('Tiled EXR parts are not supported; write scanline images');
+      if (![0, 1, 2, 3].includes(p.comp)) throw new Error(`"${p.name || 'image'}" uses ${COMP[p.comp] || p.comp} compression. Write utility passes with ZIP, ZIPS, RLE or no compression.`);
+      const W = p.width, Hh = p.height, chs = p.channels;
+      const bps = chs.map(c => c.type === 1 ? 2 : 4), lineBytes = bps.reduce((a, b) => a + b, 0) * W;
+      const out = {}; for (const n of want) out[n] = new Float32Array(W * Hh);
+      const wantIdx = chs.map(c => want.includes(c.name));
+      for (let ci = 0; ci < p.chunkCount; ci++) {
+        let q = p.offsets[ci]; if (multi) q += 4;
+        const y = dv.getInt32(q, true), size = dv.getInt32(q + 4, true); q += 8;
+        const ly = y - p.y0, nl = Math.min(p.lines, Hh - ly), expect = lineBytes * nl;
+        let data = u8.subarray(q, q + size);
+        if (size < expect) { if (p.comp === 1) data = unPredict(unRLE(data, expect)); else if (p.comp >= 2) data = unPredict(inflate(data)); }
+        const ddv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        let r = 0;
+        for (let l = 0; l < nl; l++) {
+          const row = (ly + l) * W;
+          for (let c = 0; c < chs.length; c++) {
+            if (wantIdx[c]) { const dst = out[chs[c].name], t = chs[c].type;
+              if (t === 1) for (let x = 0; x < W; x++) dst[row + x] = H2F[ddv.getUint16(r + x * 2, true)];
+              else if (t === 2) for (let x = 0; x < W; x++) dst[row + x] = ddv.getFloat32(r + x * 4, true);
+              else for (let x = 0; x < W; x++) dst[row + x] = ddv.getUint32(r + x * 4, true); }
+            r += bps[c] * W;
+          }
+        }
+      }
+      return out;
+    }
+    return { parts, read, multi };
+  }
+
+  /* ---- which channels are what ---- */
+  const ROLE = {
+    P: ['pos', 'p', 'pworld', 'position', 'worldposition', 'worldpos', 'pw', 'wp', 'ppass', 'world', 'positionworld', 'pworldspace', 'worldp'],
+    N: ['normal', 'n', 'nworld', 'normals', 'worldnormal', 'nw', 'normalworld', 'nn', 'worldnormals'],
+    Z: ['depth', 'z', 'zdepth', 'depthnofilter', 'distance'],
+    C: ['surfacecolor', 'albedo', 'diffusealbedo', 'basecolor', 'diffusecolor', 'diffcolor', 'surfacealbedo', 'diffusefilter', 'dfilter']
+  };
+  const compIndex = c => { c = c.toLowerCase(); return 'rxu'.includes(c) ? 0 : 'gyv'.includes(c) ? 1 : 'bzw'.includes(c) ? 2 : -1; };
+  function survey(files) {
+    // files: [{name, exr}] → role → {file, part, names:[3] or [1]}
+    const found = {}, all = [];
+    for (const f of files) f.exr.parts.forEach((p, pi) => { for (const c of p.channels) {
+      let layer, comp; const k = c.name.lastIndexOf('.');
+      if (k >= 0) { layer = c.name.slice(0, k); comp = c.name.slice(k + 1); } else if (c.name.length === 1 && 'ZRGBA'.includes(c.name) && p.name) { layer = c.name === 'Z' ? 'depth' : p.name; comp = c.name; } else { layer = c.name; comp = ''; }
+      all.push({ f, pi, ch: c.name, key: layer.toLowerCase().replace(/[^a-z0-9]/g, ''), comp, w: p.width, h: p.height });
+    } });
+    for (const role of ['P', 'N', 'C']) for (const key of ROLE[role]) { if (found[role]) break;
+      const g = all.filter(a => a.key === key); const names = [null, null, null];
+      for (const a of g) { const i = compIndex(a.comp); if (i >= 0 && !names[i]) names[i] = a; }
+      if (names.every(Boolean) && names[0].f === names[1].f && names[1].f === names[2].f && names[0].pi === names[1].pi && names[1].pi === names[2].pi) found[role] = { f: names[0].f, pi: names[0].pi, names: names.map(a => a.ch), w: names[0].w, h: names[0].h, label: g[0].ch.split('.')[0] }; }
+    for (const key of ROLE.Z) { if (found.Z) break; const a = all.find(a => a.key === key && (a.comp === '' || /^(z|r|y)$/i.test(a.comp))) || (key === 'z' && all.find(a => a.ch === 'Z'));
+      if (a) found.Z = { f: a.f, pi: a.pi, names: [a.ch], w: a.w, h: a.h, label: a.ch }; }
+    return { found, all };
+  }
+
+  /* ---- camera from header metadata ---- */
+  const nums = v => Array.isArray(v) ? v.map(Number) : typeof v === 'string' ? (v.match(/-?\d+\.?\d*(?:e[-+]?\d+)?/gi) || []).map(Number) : typeof v === 'number' ? [v] : [];
+  function inv4(m) { // row-major 4x4 inverse
+    const a = m, o = new Array(16); const s0 = a[0] * a[5] - a[4] * a[1], s1 = a[0] * a[6] - a[4] * a[2], s2 = a[0] * a[7] - a[4] * a[3], s3 = a[1] * a[6] - a[5] * a[2], s4 = a[1] * a[7] - a[5] * a[3], s5 = a[2] * a[7] - a[6] * a[3];
+    const c5 = a[10] * a[15] - a[14] * a[11], c4 = a[9] * a[15] - a[13] * a[11], c3 = a[9] * a[14] - a[13] * a[10], c2 = a[8] * a[15] - a[12] * a[11], c1 = a[8] * a[14] - a[12] * a[10], c0 = a[8] * a[13] - a[12] * a[9];
+    const d = 1 / (s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0);
+    o[0] = (a[5] * c5 - a[6] * c4 + a[7] * c3) * d; o[1] = (-a[1] * c5 + a[2] * c4 - a[3] * c3) * d; o[2] = (a[13] * s5 - a[14] * s4 + a[15] * s3) * d; o[3] = (-a[9] * s5 + a[10] * s4 - a[11] * s3) * d;
+    o[4] = (-a[4] * c5 + a[6] * c2 - a[7] * c1) * d; o[5] = (a[0] * c5 - a[2] * c2 + a[3] * c1) * d; o[6] = (-a[12] * s5 + a[14] * s2 - a[15] * s1) * d; o[7] = (a[8] * s5 - a[10] * s2 + a[11] * s1) * d;
+    o[8] = (a[4] * c4 - a[5] * c2 + a[7] * c0) * d; o[9] = (-a[0] * c4 + a[1] * c2 - a[3] * c0) * d; o[10] = (a[12] * s4 - a[13] * s2 + a[15] * s0) * d; o[11] = (-a[8] * s4 + a[9] * s2 - a[11] * s0) * d;
+    o[12] = (-a[4] * c3 + a[5] * c1 - a[6] * c0) * d; o[13] = (a[0] * c3 - a[1] * c1 + a[2] * c0) * d; o[14] = (-a[12] * s3 + a[13] * s1 - a[14] * s0) * d; o[15] = (a[8] * s3 - a[9] * s1 + a[10] * s0) * d;
+    return o; }
+  function cameraFromHeaders(headers) {
+    const cam = {};
+    for (const h of headers) for (const k in h) { const kl = k.toLowerCase(), v = h[k];
+      if (!cam.toWorld && /(camtoworld|cameratoworld)$/.test(kl)) { const n = nums(v); if (n.length >= 16) cam.toWorld = n.slice(0, 16), cam.src = k; }
+      else if (!cam.toWorld && !cam.w2c && /worldtocamera$/.test(kl)) { const n = nums(v); if (n.length >= 16) cam.w2c = n.slice(0, 16), cam.src = k; }
+      else if (cam.hfov == null && /horizontalfov/.test(kl)) cam.hfov = nums(v)[0];
+      else if (cam.focal == null && /focallength$/.test(kl)) cam.focal = nums(v)[0];
+      else if (cam.fstop == null && /(fstop|fnumber)$/.test(kl)) cam.fstop = nums(v)[0];
+      else if (cam.focus == null && /focusdistance$/.test(kl)) cam.focus = nums(v)[0];
+      else if (cam.aperture == null && /(horizontalaperture|filmbackwidth|aperturewidth|hfilmaperture)$/.test(kl)) cam.aperture = nums(v)[0];
+    }
+    if (!cam.toWorld && cam.w2c) cam.toWorld = inv4(cam.w2c);
+    if (!cam.toWorld) return null;
+    let M = cam.toWorld;
+    // row-vector convention keeps translation in the last row; otherwise transpose
+    const lastRow = Math.abs(M[12]) + Math.abs(M[13]) + Math.abs(M[14]), lastCol = Math.abs(M[3]) + Math.abs(M[7]) + Math.abs(M[11]);
+    if (lastCol > lastRow) M = [M[0], M[4], M[8], M[12], M[1], M[5], M[9], M[13], M[2], M[6], M[10], M[14], M[3], M[7], M[11], M[15]];
+    const n3 = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+    const out = { right: n3(M.slice(0, 3)), up: n3(M.slice(4, 7)), back: n3(M.slice(8, 11)), pos: M.slice(12, 15), src: cam.src };
+    if (cam.hfov) out.hfov = cam.hfov * Math.PI / 180;
+    else if (cam.focal && cam.aperture) out.hfov = 2 * Math.atan(cam.aperture * (cam.aperture < 5 ? 25.4 : 1) / (2 * cam.focal));
+    out.fstop = cam.fstop; out.focus = cam.focus; out.focal = cam.focal;
+    return out;
+  }
+
+  /* ---- camera solved from the position pass alone (DLT), for files without camera metadata ---- */
+  function jacobiMin(A, n) { // smallest eigenvector of a symmetric n×n matrix
+    const a = A.map(r => r.slice()), V = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => i === j ? 1 : 0));
+    for (let sweep = 0; sweep < 60; sweep++) { let off = 0; for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) off += a[p][q] * a[p][q]; if (off < 1e-22) break;
+      for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) { if (Math.abs(a[p][q]) < 1e-30) continue;
+        const th = (a[q][q] - a[p][p]) / (2 * a[p][q]), t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1)), c = 1 / Math.sqrt(t * t + 1), s = t * c;
+        for (let k = 0; k < n; k++) { const akp = a[k][p], akq = a[k][q]; a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq; }
+        for (let k = 0; k < n; k++) { const apk = a[p][k], aqk = a[q][k]; a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk; }
+        for (let k = 0; k < n; k++) { const vkp = V[k][p], vkq = V[k][q]; V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq; } } }
+    let mi = 0; for (let i = 1; i < n; i++) if (a[i][i] < a[mi][mi]) mi = i; return V.map(r => r[mi]); }
+  function solveCamera(P, W, H, valid) {
+    const pts = []; const step = Math.max(1, Math.floor(Math.sqrt(W * H / 900)));
+    for (let y = step >> 1; y < H; y += step) for (let x = step >> 1; x < W; x += step) { const i = y * W + x; if (valid(i)) pts.push([x + 0.5, y + 0.5, P[i * 3], P[i * 3 + 1], P[i * 3 + 2]]); }
+    if (pts.length < 12) return null;
+    const mean = k => pts.reduce((s, p) => s + p[k], 0) / pts.length;
+    const mu = mean(0), mv = mean(1), mx = mean(2), my = mean(3), mz = mean(4);
+    const s2 = Math.SQRT2 / (pts.reduce((s, p) => s + Math.hypot(p[0] - mu, p[1] - mv), 0) / pts.length);
+    const s3 = Math.sqrt(3) / (pts.reduce((s, p) => s + Math.hypot(p[2] - mx, p[3] - my, p[4] - mz), 0) / pts.length);
+    const T2i = [[1 / s2, 0, mu], [0, 1 / s2, mv], [0, 0, 1]], T3 = [[s3, 0, 0, -s3 * mx], [0, s3, 0, -s3 * my], [0, 0, s3, -s3 * mz], [0, 0, 0, 1]];
+    const mm = (A, B) => A.map(r => B[0].map((_, j) => r.reduce((s, a, k) => s + a * B[k][j], 0)));
+    const nrm = pts.map(p => [(p[0] - mu) * s2, (p[1] - mv) * s2, (p[2] - mx) * s3, (p[3] - my) * s3, (p[4] - mz) * s3]);
+    const dlt = idx => { const AtA = Array.from({ length: 12 }, () => new Array(12).fill(0));
+      for (const i of idx) { const q = nrm[i], X = [q[2], q[3], q[4], 1];
+        const r1 = [...X, 0, 0, 0, 0, ...X.map(a => -q[0] * a)], r2 = [0, 0, 0, 0, ...X, ...X.map(a => -q[1] * a)];
+        for (const r of [r1, r2]) for (let i2 = 0; i2 < 12; i2++) { const ri = r[i2]; if (ri) for (let j = 0; j < 12; j++) AtA[i2][j] += ri * r[j]; } }
+      const h = jacobiMin(AtA, 12); return mm(mm(T2i, [h.slice(0, 4), h.slice(4, 8), h.slice(8, 12)]), T3); };
+    const errs = Pm => pts.map(p => { const w = Pm[2][0] * p[2] + Pm[2][1] * p[3] + Pm[2][2] * p[4] + Pm[2][3];
+      return Math.hypot((Pm[0][0] * p[2] + Pm[0][1] * p[3] + Pm[0][2] * p[4] + Pm[0][3]) / w - p[0], (Pm[1][0] * p[2] + Pm[1][1] * p[3] + Pm[1][2] * p[4] + Pm[1][3]) / w - p[1]); });
+    // robust: blended edge pixels don't fit any pinhole camera, so keep the camera most pixels agree with
+    let seed = 12345; const rnd = n => { seed = (seed * 16807) % 2147483647; return seed % n; };
+    let best = null;
+    for (let it = 0; it < 300; it++) { const idx = new Set(); while (idx.size < 6) idx.add(rnd(pts.length));
+      const Pm = dlt([...idx]); const e = errs(Pm); let n = 0; for (const v of e) if (v < 3) n++; if (!best || n > best.n) best = { n, Pm }; }
+    let Pm = best.Pm;
+    for (let k = 0; k < 4; k++) { const e = errs(Pm), inl = []; e.forEach((v, i) => { if (v < (k ? 2 : 3)) inl.push(i); }); if (inl.length < 6) break; Pm = dlt(inl); }
+    const M3 = Pm.map(r => r.slice(0, 3)), p4 = Pm.map(r => r[3]);
+    const det3 = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const inv3 = m => { const d = det3(m); return [[(m[1][1] * m[2][2] - m[1][2] * m[2][1]) / d, (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / d, (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / d], [(m[1][2] * m[2][0] - m[1][0] * m[2][2]) / d, (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / d, (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / d], [(m[1][0] * m[2][1] - m[1][1] * m[2][0]) / d, (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / d, (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / d]]; };
+    const Mi = inv3(M3), C = [0, 1, 2].map(i => -(Mi[i][0] * p4[0] + Mi[i][1] * p4[1] + Mi[i][2] * p4[2]));
+    // rows of M3 are fx·right + cx·fwd, fy·down + cy·fwd, fwd (up to scale)
+    let r3 = M3[2]; const l3 = Math.hypot(...r3); let fwd = r3.map(a => a / l3);
+    const t = pts[pts.length >> 1]; if ((t[2] - C[0]) * fwd[0] + (t[3] - C[1]) * fwd[1] + (t[4] - C[2]) * fwd[2] < 0) fwd = fwd.map(a => -a);
+    const sgn = r3[0] * fwd[0] + r3[1] * fwd[1] + r3[2] * fwd[2] > 0 ? 1 : -1;
+    const row = k => M3[k].map(a => a * sgn / l3);
+    const cx = row(0).reduce((s, a, i) => s + a * fwd[i], 0), cy = row(1).reduce((s, a, i) => s + a * fwd[i], 0);
+    const rx = row(0).map((a, i) => a - cx * fwd[i]), dn = row(1).map((a, i) => a - cy * fwd[i]);
+    const fx = Math.hypot(...rx); const right = rx.map(a => a / fx), down = dn.map(a => a / Math.hypot(...dn));
+    return { right, up: down.map(a => -a), back: fwd.map(a => -a), pos: C, hfov: 2 * Math.atan(W / (2 * fx)), src: 'solved from position pass' };
+  }
+  return { open, survey, cameraFromHeaders, solveCamera, COMP };
+})();
+if (typeof module !== 'undefined') module.exports = EXR;
+</script>
 <script>
 (() => {
 'use strict';
@@ -342,7 +561,9 @@ canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); failed=tr
 
 /* =================== parameters =================== */
 const DEF = {
-  scene:'room',
+  scene:'shot',
+  // rebuilding the shot from its utility pass
+  meshStep:0, edgeBreak:0.03, shell:0.25, dustFar:0, shade:'color', upAxis:'y', enclosed:true,
   density:180, sizeMin:4, sizeMax:60, sizeBias:2.4, flakes:18, fibers:1.2, fluff:0.4, flakeScale:1, fiberScale:1, fluffScale:0.6, fluffBright:0.5,
   bright:1.0, g:0.65, ambVis:0.35, glint:0.4, tumble:1, tint:'neutral', tintCustom:'#d9b88f',
   speed:1, drift:1.2, driftDir:200, lift:0, turb:3.0, eddy:1.4, micro:0.8, thermal:1.5, settle:0.5, puffAmt:1.2,
@@ -367,24 +588,24 @@ const FIRE_DEF = {
   embers:true, emitX:0, emitY:0.06, emitZ:0, eRad:0.3, eHeight:0.55, flames:true, flameH:0.85, fireI:1, flick:0.5
 };
 const S = {...DEF};
-const FILMS = {s35:{w:24.89,label:'Super 35'}, a35:{w:27.99,label:'ALEXA 35'}, ff:{w:36.0,label:'Full frame'}, lf:{w:36.70,label:'ALEXA LF'}};
-const FORMATS = {'2.39':2.39, '1.85':1.85, '16:9':16/9};
+const FILMS = {plate:{w:24.89,label:'Plate back'}, s35:{w:24.89,label:'Super 35'}, a35:{w:27.99,label:'ALEXA 35'}, ff:{w:36.0,label:'Full frame'}, lf:{w:36.70,label:'ALEXA LF'}};
+const FORMATS = {plate:2.39, '2.39':2.39, '1.85':1.85, '16:9':16/9};
 const TINTS = {neutral:[1,1,1], warm:[1.0,0.78,0.55], pollen:[1.0,0.82,0.25], ash:[0.62,0.74,1.0]};
 function hexRGB(h){ const n=parseInt(h.slice(1),16); return [((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255].map(v=>Math.pow(v,2.2)); }
 function tintRGB(){ let c=S.tint==='custom'?hexRGB(S.tintCustom):TINTS[S.tint]; const l=0.2126*c[0]+0.7152*c[1]+0.0722*c[2]||1; return c.map(v=>v/l*0.9); }
 const VIEWS = ['Comp','Dust','Plate','Shafts','P','Z','ID'];
 let viewMode = 0;
 // parameters that change the plate (room image) and so restart its accumulation
-const PLATE_KEYS = new Set(['sunAz','sunEl','sunI','sunK','cookie','atmos','haze','hazeVar','gi','fill','focal','film','format','focus','fstop','dof','blades','bladeRot','round','cat','proxy','fireI','emitX','emitY','emitZ']);
-const LIGHT_KEYS = new Set(['sunAz','sunEl','sunI','sunK','cookie','fill','fireI','emitX','emitY','emitZ']);
+const PLATE_KEYS = new Set(['enclosed','sunAz','sunEl','sunI','sunK','cookie','atmos','haze','hazeVar','gi','fill','focal','film','format','focus','fstop','dof','blades','bladeRot','round','cat','proxy','fireI','emitX','emitY','emitZ']);
+const LIGHT_KEYS = new Set(['enclosed','sunAz','sunEl','sunI','sunK','cookie','fill','fireI','emitX','emitY','emitZ']);
 
 const CAM_DEFAULT = {E:[2.4,1.55,2.6], T:[-1.2,1.25,-3.0]};
 const CAM_FIRE = {E:[1.15,0.95,4.3], T:[0,0.78,0]};
-const SCENES = {room:{label:'Sunlit room', def:{}}, fire:{label:'Campfire', def:FIRE_DEF}};
+const SCENES = {shot:{label:'Dust shot', def:{format:'plate', fill:0.7}}, fire:{label:'Campfire', def:FIRE_DEF}};
 const PRESETS = {
- room:[
-  {id:'loft', label:'Sunlit loft', p:{}, cam:CAM_DEFAULT},
-  {id:'closeup', label:'Close-up', p:{focal:50, fstop:2.8, focus:1.3, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:{E:[-1.6,1.15,1.0], T:[-3.0,1.5,-3.5]}}
+ shot:[
+  {id:'default', label:()=>SHOT&&!SHOT.demo?'Shot camera':'Sunlit loft', p:{}, cam:null},
+  {id:'closeup', label:'Close-up', p:{fstop:2.8, density:360, flakes:28, fibers:5, fluff:1.5, glint:0.5, haze:0.25, turb:1.5, speed:0.7}, cam:'closeup'}
  ],
  fire:[
   {id:'campfire', label:'Campfire', p:{}, cam:CAM_FIRE},
@@ -589,12 +810,12 @@ const SCENE_GEO = {
 let GEO=SCENE_GEO.room;
 function buildScene(){
   GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
-  GEO=SCENE_GEO[S.scene]; VMIN=GEO.vmin; VDIM=GEO.vsize.map(v=>Math.ceil(v/VS)); BMIN=GEO.bmin; BMAX=GEO.bmax;
+  VS=0.04; GEO=SCENE_GEO[S.scene]; VMIN=GEO.vmin; VDIM=GEO.vsize.map(v=>Math.ceil(v/VS)); BMIN=GEO.bmin; BMAX=GEO.bmax;
   if(S.scene==='fire') buildFire(); else buildRoom();
 }
 
 /* =================== voxel grid for the path tracer =================== */
-const VS=0.04; let VMIN=[-4.3,-0.06,-6.3], VDIM=[Math.ceil(8.6/VS),Math.ceil(3.96/VS),Math.ceil(10.1/VS)];
+let VS=0.04; let VMIN=[-4.3,-0.06,-6.3], VDIM=[Math.ceil(8.6/VS),Math.ceil(3.96/VS),Math.ceil(10.1/VS)];
 let voxTex=null;
 function voxelize(){
   const [DX,DY,DZ]=VDIM, vox=new Uint8Array(DX*DY*DZ);
@@ -651,11 +872,18 @@ float leaves(vec2 uv){
 }
 vec3 lightUV(vec3 p){ return (uLightVP*vec4(p,1.)).xyz*0.5+0.5; }
 bool outL(vec3 s){ return s.x<0.||s.y<0.||s.x>1.||s.y>1.; }
-float sunVis(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 1.;
-  float v=texture(uShadow,vec3(s.xy,s.z-0.0004)); if(uCookie==2 && v>0.) v*=leaves(s.xy); return v; }
-float sunVisSoft(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 1.; float t=1.6/2048.; float z=s.z-0.0004;
+// a rebuilt interior only knows the surfaces the camera saw, so sunlight may only come in through openings the camera saw as sky
+uniform sampler2D uSkyMask; uniform mat4 uShotVP; uniform float uOpenOnly; uniform vec3 uSunDir, uBoxLo, uBoxHi;
+float openVis(vec3 p){ if(uOpenOnly<0.5) return 1.;
+  vec3 d=vec3(abs(uSunDir.x)<1e-5?1e-5:uSunDir.x, abs(uSunDir.y)<1e-5?1e-5:uSunDir.y, abs(uSunDir.z)<1e-5?1e-5:uSunDir.z);
+  vec3 tb=(mix(uBoxLo,uBoxHi,step(0.,d))-p)/d; float te=max(min(tb.x,min(tb.y,tb.z)),0.);
+  vec4 c=uShotVP*vec4(p+uSunDir*te,1.); if(c.w<=0.) return 0.; vec2 uv=c.xy/c.w*0.5+0.5;
+  if(uv.x<=0.||uv.y<=0.||uv.x>=1.||uv.y>=1.) return 0.; return texture(uSkyMask,vec2(uv.x,1.-uv.y)).r; }
+float sunVis(vec3 p){ vec3 s=lightUV(p); float o=openVis(p); if(outL(s)) return o;
+  float v=texture(uShadow,vec3(s.xy,s.z-0.0004)); if(uCookie==2 && v>0.) v*=leaves(s.xy); return v*o; }
+float sunVisSoft(vec3 p){ vec3 s=lightUV(p); float o=openVis(p); if(outL(s)) return o; float t=1.6/2048.; float z=s.z-0.0004;
   float v=texture(uShadow,vec3(s.xy,z))*0.36+(texture(uShadow,vec3(s.xy+vec2(t,0.),z))+texture(uShadow,vec3(s.xy-vec2(t,0.),z))+texture(uShadow,vec3(s.xy+vec2(0.,t),z))+texture(uShadow,vec3(s.xy-vec2(0.,t),z)))*0.16;
-  if(uCookie==2 && v>0.) v*=leaves(s.xy); return v; }
+  if(uCookie==2 && v>0.) v*=leaves(s.xy); return v*o; }
 `;
 const COC = `
 uniform float uF, uN, uFocus, uFilmW, uResX, uDofOn;
@@ -793,16 +1021,17 @@ depth: [HDR+`layout(location=0) in vec3 aPos; uniform mat4 uVP; void main(){ gl_
 // raster pass: direct sun on clay + G-buffer for the path tracer, the defocus and the holdouts
 raster: [MESH_VS, HDR+NOISE+SHADOW+`
 in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; in float vD;
-layout(location=0) out vec4 oDirect; layout(location=1) out vec4 oPos; layout(location=2) out vec4 oNrm;
-uniform vec3 uCam, uL, uSunCol, uSkyLo, uSkyHi, uSkyGnd, uCoal; uniform float uSunI, uSkyI, uFill;
-float pcf(vec3 p){ vec3 s=lightUV(p); if(outL(s)) return 1.; float t=1.4/2048., z=s.z-0.0005, v=0.;
+layout(location=0) out vec4 oDirect; layout(location=1) out vec4 oPos; layout(location=2) out vec4 oNrm; layout(location=3) out vec4 oAlb;
+uniform vec3 uCam, uL, uSunCol, uSkyLo, uSkyHi, uSkyGnd, uCoal; uniform float uSunI, uSkyI, uFill, uHideSkirt; uniform int uShade;
+float pcf(vec3 p){ vec3 s=lightUV(p); float o=openVis(p); if(outL(s)) return o; float t=1.4/2048., z=s.z-0.0005, v=0.;
   for(int x=-1;x<=1;x++) for(int y=-1;y<=1;y++) v+=texture(uShadow,vec3(s.xy+vec2(x,y)*t,z));
-  v/=9.; if(uCookie==2 && v>0.) v*=leaves(s.xy); return v; }
+  v/=9.; if(uCookie==2 && v>0.) v*=leaves(s.xy); return v*o; }
 void main(){
   vec3 V=normalize(uCam-vP); oPos=vec4(vP,vD);
   if(vMat==6){ vec3 d=-V; vec3 c=mix(uSkyLo,uSkyHi,smoothstep(0.,0.6,d.y)); if(d.y<0.02) c=uSkyGnd;
-    oDirect=vec4(c,0.); oNrm=vec4(0.); return; }
-  vec3 N=dot(vN,vN)>1e-10?normalize(vN):vec3(0.,1.,0.); if((vMat==9||vMat==10) && dot(N,V)<0.) N=-N;
+    oDirect=vec4(c,0.); oNrm=vec4(0.); oAlb=vec4(0.); return; }
+  vec3 N=dot(vN,vN)>1e-10?normalize(vN):vec3(0.,1.,0.); if(vMat==21 && uHideSkirt>0.5) discard;
+  if((vMat==9||vMat==10||vMat>=20) && dot(N,V)<0.) N=-N;
   float nl=dot(N,uL); float vis=nl>0.?pcf(vP+N*0.02):0.;
   vec3 E=uSunCol*uSunI*max(nl,0.)*vis;
   if(vMat==9) E+=uSunCol*uSunI*max(-nl,0.)*pcf(vP-N*0.03)*0.3;
@@ -813,8 +1042,17 @@ void main(){
     alb=mix(0.17,0.05,g); em=uCoal*g*g*(0.5+0.9*vnoise(vP*80.)); }
   else if(vMat==13){ float n=vnoise(vP*55.)*0.65+vnoise(vP*140.)*0.35; float g=smoothstep(0.6,0.72,n)*(1.-smoothstep(0.05,0.24,vP.y));
     em=uCoal*g*0.45; alb*=0.8+0.4*vnoise(vP*90.); }
-  oDirect=vec4(alb*E+em,alb); oNrm=vec4(N,1.);
+  vec3 albC=vec3(alb);
+  if(vMat>=20){ albC = uShade==1 ? clamp(vCol,0.,1.) : uShade==2 ? (N*0.5+0.5)*0.6 : vec3(0.3); alb=max(dot(albC,vec3(0.2126,0.7152,0.0722)),1e-4); }
+  oDirect=vec4(albC*E+em,alb); oNrm=vec4(N,1.); oAlb=vec4(albC,1.);
 }`],
+
+// writes a utility pass: world position, world normal and surface colour (the demo shot's EXR stand-in)
+util: [MESH_VS, HDR+`
+in vec3 vP; in vec3 vN; in vec3 vCol; flat in int vMat; in float vD;
+layout(location=0) out vec4 oP; layout(location=1) out vec4 oN; layout(location=2) out vec4 oC;
+uniform vec3 uCam;
+void main(){ vec3 N=normalize(vN); if(dot(N,uCam-vP)<0.) N=-N; oP=vec4(vP,1.); oN=vec4(N,1.); oC=vec4(vCol,1.); }`],
 
 // two-bounce path tracing through the voxelised room, one path per half-res pixel per frame, accumulated over time
 gi: [FSQ_VS, HDR+NOISE+SHADOW+HISTORY+`
@@ -827,6 +1065,14 @@ vec3 cosDir(vec3 n, inout uint s){ float u=rnd(s), v=rnd(s); float r=sqrt(u), a=
   vec3 t=normalize(abs(n.y)<0.99?cross(n,vec3(0.,1.,0.)):cross(n,vec3(1.,0.,0.))); vec3 b=cross(n,t);
   return normalize(t*(r*cos(a))+b*(r*sin(a))+n*sqrt(max(1.-u,0.))); }
 vec3 outside(vec3 d){ return d.y>0.02 ? mix(uSkyLo,uSkyHi,smoothstep(0.,0.6,d.y)) : uGround; }
+uniform float uShotOn, uEnclosed; uniform vec3 uUnseen;
+// a ray that leaves the rebuilt scene: open sky if the shot camera saw sky that way, otherwise unseen surroundings
+vec3 env(vec3 p, vec3 d){ vec3 o=outside(d); if(uShotOn<0.5) return o; vec3 alt=uEnclosed>0.5?uUnseen:o;
+  vec3 dd=vec3(abs(d.x)<1e-5?1e-5:d.x, abs(d.y)<1e-5?1e-5:d.y, abs(d.z)<1e-5?1e-5:d.z);
+  vec3 bmx=uVoxMin+vec3(uVoxDim)*uVoxS; vec3 tb=(mix(uVoxMin,bmx,step(0.,dd))-p)/dd; float te=max(min(tb.x,min(tb.y,tb.z)),0.);
+  vec4 c=uShotVP*vec4(p+d*te,1.); if(c.w>0.){ vec2 uv=c.xy/c.w*0.5+0.5;
+    if(uv.x>0.&&uv.y>0.&&uv.x<1.&&uv.y<1.) return mix(alt,o,texture(uSkyMask,vec2(uv.x,1.-uv.y)).r); }
+  return alt; }
 bool blocked(vec3 ro, vec3 tg){
   vec3 rd=tg-ro; float Ld=length(rd); rd/=Ld; float lim=(Ld-0.22)/uVoxS; if(lim<=0.) return false;
   rd=vec3(abs(rd.x)<1e-5?1e-5:rd.x, abs(rd.y)<1e-5?1e-5:rd.y, abs(rd.z)<1e-5?1e-5:rd.z);
@@ -844,7 +1090,7 @@ int trace(vec3 ro, vec3 rd, out vec3 hp, out vec3 hn, out float alb){
   rd=vec3(abs(rd.x)<1e-5?1e-5:rd.x, abs(rd.y)<1e-5?1e-5:rd.y, abs(rd.z)<1e-5?1e-5:rd.z);
   vec3 p=(ro-uVoxMin)/uVoxS; ivec3 c=ivec3(floor(p)); ivec3 st=ivec3(sign(rd));
   vec3 tD=abs(1./rd); vec3 tM=(vec3(c)+step(vec3(0.),rd)-p)/rd; float t=0.;
-  for(int i=0;i<240;i++){
+  for(int i=0;i<300;i++){
     if(c.x<0||c.y<0||c.z<0||c.x>=uVoxDim.x||c.y>=uVoxDim.y||c.z>=uVoxDim.z) return 0;
     float a=texelFetch(uVox,c,0).r;
     if(a>0.){ hp=ro+rd*(t*uVoxS); alb=a; return 1; }
@@ -873,12 +1119,12 @@ void main(){
   vec3 hp,hn; float a;
   vec3 d=cosDir(N,s);
   int r=trace(P.xyz+N*(uVoxS*1.6),d,hp,hn,a);
-  if(r==0) E=outside(d);
+  if(r==0) E=env(P.xyz,d);
   else if(r==1 && dot(hn,hn)>0.5){
     vec3 E1=sunAt(hp,hn)+fireAt(hp,hn,s);
     vec3 hp2,hn2; float a2; vec3 d2=cosDir(hn,s);
     int r2=trace(hp+hn*(uVoxS*1.2),d2,hp2,hn2,a2);
-    if(r2==0) E1+=outside(d2);
+    if(r2==0) E1+=env(hp,d2);
     else if(r2==1 && dot(hn2,hn2)>0.5) E1+=a2*(sunAt(hp2,hn2)+uTail);
     E=a*E1; }
   float l=dot(E,vec3(0.3,0.6,0.1)); if(l>8.) E*=8./l;   // tame fireflies
@@ -889,14 +1135,14 @@ void main(){
 }`],
 
 haze: [FSQ_VS, HDR+NOISE+SHADOW+`
-uniform sampler2D uPosTex; uniform mat4 uInvVP; uniform vec3 uCam, uFwd, uL, uSunCol, uAmbE, uFireP, uFireCol; uniform float uSunI, uHaze, uHazeVar, uG, uFill, uFrame, uRoom, uFireOn; uniform vec2 uRes, uFull;
+uniform sampler2D uPosTex; uniform mat4 uInvVP; uniform vec3 uCam, uFwd, uL, uSunCol, uAmbE, uFireP, uFireCol; uniform float uSunI, uHaze, uHazeVar, uG, uFill, uFrame, uFireOn, uHazeFar; uniform vec3 uBoxMin, uBoxMax; uniform vec2 uRes, uFull;
 out vec4 o;
 void main(){
   vec2 uv=gl_FragCoord.xy/uRes;
   vec4 w=uInvVP*vec4(uv*2.-1.,1.,1.); vec3 rd=normalize(w.xyz/w.w-uCam);
   float depth=texelFetch(uPosTex, ivec2(uv*uFull), 0).w;
-  float tmax=min(depth/max(dot(rd,uFwd),1e-3), 16.);
-  if(uRoom>0.5 && rd.x<0.) tmax=min(tmax,(-4.0-uCam.x)/rd.x);
+  float tmax=min(depth/max(dot(rd,uFwd),1e-3), uHazeFar);
+  vec3 tb=(mix(uBoxMin,uBoxMax,step(0.,rd))-uCam)/rd; tmax=max(min(tmax,min(tb.x,min(tb.y,tb.z))),0.);
   const int N=32; float dt=tmax/float(N); float j=fract(ign(gl_FragCoord.xy)+uFrame*0.618034);
   float acc=0., fg=0.;
   for(int i=0;i<N;i++){ float t=(float(i)+j)*dt; vec3 p=uCam+rd*t; float v=sunVis(p);
@@ -909,7 +1155,7 @@ void main(){
 
 // plate = direct + albedo × (path-traced bounce, upsampled with depth/normal weights) + atmosphere
 plate: [FSQ_VS, HDR+`
-uniform sampler2D uDirect, uGI, uNrmTex, uPosTex, uHazeTex; uniform vec2 uHazeTexel, uRes; uniform ivec2 uGIDim; uniform float uHazeOn, uGIAmt; uniform vec3 uTail; out vec4 o;
+uniform sampler2D uDirect, uGI, uNrmTex, uPosTex, uHazeTex, uAlb; uniform vec2 uHazeTexel, uRes; uniform ivec2 uGIDim; uniform float uHazeOn, uGIAmt; uniform vec3 uTail; out vec4 o;
 void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec2 uv=gl_FragCoord.xy/uRes;
   vec4 D=texelFetch(uDirect,ip,0); vec3 c=D.rgb;
   if(D.a>0.){
@@ -920,7 +1166,7 @@ void main(){ ivec2 ip=ivec2(gl_FragCoord.xy); vec2 uv=gl_FragCoord.xy/uRes;
       ivec2 fq=min(gc*2,ivec2(uRes)-1); float d=texelFetch(uPosTex,fq,0).w; vec3 n=texelFetch(uNrmTex,fq,0).xyz;
       float w=(i==0?1.-f.x:f.x)*(j==0?1.-f.y:f.y)*exp(-abs(d-d0)/(0.03*d0+0.02))*pow(max(dot(n,n0),0.),6.)+1e-5;
       s+=texelFetch(uGI,gc,0).rgb*w; ws+=w; }
-    c+=D.a*(s/ws+uTail)*uGIAmt; }
+    c+=texelFetch(uAlb,ip,0).rgb*(s/ws+uTail)*uGIAmt; }
   vec3 h=vec3(0.); float ws2=0.;
   for(int x=-1;x<=1;x++) for(int y=-1;y<=1;y++){ float w=(2.-abs(float(x)))*(2.-abs(float(y))); h+=texture(uHazeTex,uv+vec2(x,y)*uHazeTexel*1.25).rgb*w; ws2+=w; }
   o=vec4(c+h/ws2*uHazeOn,1.); }`],
@@ -1315,23 +1561,26 @@ function mkMesh(arr){ const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
   gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,3,gl.FLOAT,false,st,24);
   gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3,1,gl.FLOAT,false,st,36);
   gl.bindVertexArray(null); return {vao, buf:b, n:arr.length/10}; }
-function freeMesh(m){ if(m){ gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.buf); } }
+function freeMesh(m){ if(m){ gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.buf); if(m.ibuf) gl.deleteBuffer(m.ibuf); } }
 function rebuildMeshes(){ freeMesh(meshMain); freeMesh(meshBlinds); freeMesh(meshSky); meshMain=mkMesh(GM); meshBlinds=mkMesh(GB); meshSky=mkMesh(GS); }
 let meshMain, meshBlinds, meshSky; const emptyVAO=gl.createVertexArray();
-function draw(m){ gl.bindVertexArray(m.vao); gl.drawArrays(gl.TRIANGLES,0,m.n); }
+const blackTex=mkTex(1,1,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,gl.NEAREST,new Uint8Array(4)), IDENT=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+function draw(m){ if(!m) return; gl.bindVertexArray(m.vao); if(m.idx) gl.drawElements(gl.TRIANGLES,m.n,gl.UNSIGNED_INT,0); else gl.drawArrays(gl.TRIANGLES,0,m.n); }
 function fsq(){ gl.bindVertexArray(emptyVAO); gl.drawArrays(gl.TRIANGLES,0,3); }
-function drawScene(withSky){ draw(meshMain); if(S.cookie===1) draw(meshBlinds); if(withSky) draw(meshSky); }
+function drawScene(withSky){ if(S.scene==='shot') draw(meshShot); else { draw(meshMain); if(S.cookie===1) draw(meshBlinds); } if(withSky) draw(meshSky); }
 
 /* =================== targets =================== */
-const SH=2048; let shadowTex, shadowFB;
-function makeShadow(){
-  shadowTex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+const SH=2048; let shadowTex, shadowFB, curShadow=null, onLightPass=false;
+function makeShadow(){ const s=mkShadowTarget(); shadowTex=s.tex; shadowFB=s.fb; }
+function mkShadowTarget(){
+  const shadowTex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,shadowTex);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,SH,SH,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_COMPARE_MODE,gl.COMPARE_REF_TO_TEXTURE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_COMPARE_FUNC,gl.LEQUAL);
-  shadowFB=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFB);
+  const shadowFB=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFB);
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,shadowTex,0); gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE);
+  return {tex:shadowTex, fb:shadowFB};
 }
 const TW=512, TH=256, MAXN=TW*TH;
 // embers: rows 0-47 are the steady stream, rows 48-63 are held back for pops (crackle bursts)
@@ -1371,8 +1620,8 @@ function freeT(){ const del=o=>{ if(o instanceof WebGLTexture) gl.deleteTexture(
   for(const k in T) del(T[k]); T={}; }
 function allocTargets(){
   freeT();
-  T.depth=depthRB(W,H); T.direct=hf(W,H,gl.NEAREST); T.nrm=hf(W,H,gl.NEAREST);
-  T.pos=[hf32(W,H),hf32(W,H)]; T.rFB=T.pos.map(p=>mkFB([T.direct,p,T.nrm],T.depth));
+  T.depth=depthRB(W,H); T.direct=hf(W,H,gl.NEAREST); T.nrm=hf(W,H,gl.NEAREST); T.alb=hf(W,H,gl.NEAREST); pickFB=null;
+  T.pos=[hf32(W,H),hf32(W,H)]; T.rFB=T.pos.map(p=>mkFB([T.direct,p,T.nrm,T.alb],T.depth));
   T.gw=Math.ceil(W/2); T.gh=Math.ceil(H/2);
   T.gi=[hf32(T.gw,T.gh),hf32(T.gw,T.gh)]; T.giFB=T.gi.map(t=>mkFB([t]));
   T.gf=[hf(T.gw,T.gh,gl.NEAREST),hf(T.gw,T.gh,gl.NEAREST)]; T.gfFB=T.gf.map(t=>mkFB([t]));
@@ -1390,14 +1639,14 @@ function allocTargets(){
 }
 
 /* =================== camera =================== */
-const cam={T:[0,0,0],yaw:0,pitch:0,dist:5};
-function setCam(E,Tg){ const d=sub(E,Tg); cam.T=[...Tg]; cam.dist=len(d); cam.pitch=Math.asin(d[1]/cam.dist); cam.yaw=Math.atan2(d[0],d[2]); }
+const cam={T:[0,0,0],yaw:0,pitch:0,dist:5,up:[0,1,0]};
+function setCam(E,Tg,up){ const d=sub(E,Tg); cam.T=[...Tg]; cam.dist=len(d); cam.pitch=Math.asin(clamp(d[1]/cam.dist,-1,1)); cam.yaw=Math.atan2(d[0],d[2]); cam.up=up?[...up]:[0,1,0]; }
 setCam(CAM_DEFAULT.E, CAM_DEFAULT.T);
 function camAt(t){
   let Tg=[...cam.T]; const cp=Math.cos(cam.pitch);
   let E=[Tg[0]+cam.dist*cp*Math.sin(cam.yaw), Tg[1]+cam.dist*Math.sin(cam.pitch), Tg[2]+cam.dist*cp*Math.cos(cam.yaw)];
   E=[0,1,2].map(k=>clamp(E[k],GEO.cmin[k],GEO.cmax[k]));
-  const f=nrm(sub(Tg,E)), r=nrm(cross(f,[0,1,0])); let up=[0,1,0]; const a=S.moveAmt;
+  const f=nrm(sub(Tg,E)), r=nrm(cross(f,[0,1,0])); let up=cam.up||[0,1,0]; const a=S.moveAmt;
   if(S.move==='push'){ const o=0.7*a*Math.sin(2*Math.PI*t/14); E=add(E,scl(f,o)); Tg=add(Tg,scl(f,o)); }
   else if(S.move==='truck'){ const o=1.0*a*Math.sin(2*Math.PI*t/12); E=add(E,scl(r,o)); Tg=add(Tg,scl(r,o)); }
   else if(S.move==='handheld'){
@@ -1413,7 +1662,7 @@ function camAt(t){
 }
 const film=()=>FILMS[S.film].w, aspect=()=>FORMATS[S.format];
 function hfov(){ return 2*Math.atan(film()/(2*S.focal)); }
-function camMats(c,jx=0,jy=0){ const view=lookAt(c.E,c.T,c.up); const vf=2*Math.atan(Math.tan(hfov()/2)/aspect()); const proj=persp(vf,aspect(),0.03,80);
+function camMats(c,jx=0,jy=0){ const view=lookAt(c.E,c.T,c.up); const vf=2*Math.atan(Math.tan(hfov()/2)/aspect()); const proj=persp(vf,aspect(),GEO.near||0.03,GEO.far||80);
   const pj=proj.slice(); pj[8]+=jx*2/W; pj[9]+=jy*2/H;
   return {view,vp:mul(proj,view),vpJ:mul(pj,view),E:c.E,f:c.f}; }
 
@@ -1432,7 +1681,7 @@ const vplP=new Float32Array(NVM*4), vplN=new Float32Array(NVM*4), vplF=new Float
 function updateLight(){
   const az=S.sunAz*Math.PI/180, el=S.sunEl*Math.PI/180;
   sunL=[-Math.cos(az)*Math.cos(el), Math.sin(el), -Math.sin(az)*Math.cos(el)];
-  const C=GEO.lightC; lightVP=mul(ortho(-8.5,8.5,-8.5,8.5,1,50), lookAt(add(C,scl(sunL,25)),C,[0,1,0]));
+  const C=GEO.lightC, R=GEO.lightR||8.5, D=R*1.6+8; lightVP=mul(ortho(-R,R,-R,R,1,D+R*1.3), lookAt(add(C,scl(sunL,D)),C,[0,1,0]));
   sunCol=kelvin(S.sunK);
   const skyI=S.sunI*0.45; skyCol=[0.66*skyI,0.76*skyI,0.95*skyI];
   fireCol=scl(kelvin(1850),3.2*S.fireI); coalCol=scl(kelvin(1250),5*S.fireI);
@@ -1441,6 +1690,8 @@ function updateLight(){
 // a coarse bounce estimate for lighting the motes themselves (the room uses the path tracer)
 function bakeMoteFill(){
   if(S.scene==='fire'){ vplP.fill(0); vplN.fill(0); vplF.fill(0); ambE=[0.006*S.fill,0.008*S.fill,0.013*S.fill]; return; }
+  // the rebuilt shot: a rough average of the bounce and sky light the motes sit in
+  if(S.scene==='shot'){ vplP.fill(0); vplN.fill(0); vplF.fill(0); const k=S.sunI*0.005*S.fill; ambE=[sunCol[0]*k+skyCol[0]*0.004*S.fill,sunCol[1]*k+skyCol[1]*0.004*S.fill,sunCol[2]*k+skyCol[2]*0.004*S.fill]; return; }
   const travel=scl(sunL,-1), E=S.sunI, ck=S.cookie===1?0.45:S.cookie===2?0.5:1, cosW=Math.max(-sunL[0],0), cells=new Map(); let tot=[0,0,0];
   const NZ=20, NY=26;
   for(const [z0,z1] of WINS){ const dA=((z1-z0)/NZ)*((WY1-WY0)/NY);
@@ -1470,11 +1721,11 @@ const blobs=[]; let gust=null, mover=null, gustTimer=0;
 const MAXBLOB=24, blobP=new Float32Array(MAXBLOB*4), blobV=new Float32Array(MAXBLOB*4);
 function addBlob(b){ blobs.push(b); while(blobs.length>MAXBLOB) blobs.shift(); }
 function gustDir(){ return nrm([S.gustDX,S.gustDY,S.gustDZ]); }
-function fireGust(){ if(S.scene!=='room') return; gust={t:0,next:0}; }
+function fireGust(){ if(S.scene!=='shot') return; gust={t:0,next:0}; }
 function moverPos(){ if(!mover) return null; const A=[S.movAX,S.movAY,S.movAZ], B=[S.movBX,S.movBY,S.movBZ], L=Math.max(len(sub(B,A)),1e-3);
   let u=mover.d/L; if(S.movMode==='pingpong'){ u=u%2; if(u>1) u=2-u; } else if(S.movMode==='loop') u=u%1; else u=Math.min(u,1);
   return add(A,scl(sub(B,A),u)); }
-function runMover(){ if(S.scene!=='room') return; mover={d:0,prev:null,v:[0,0,0],wake:0,done:false}; }
+function runMover(){ if(S.scene!=='shot') return; mover={d:0,prev:null,v:[0,0,0],wake:0,done:false}; }
 function stepInfluence(dt){
   if(gust){ const dur=S.gustDur, dir=gustDir(), o=[S.gustX,S.gustY,S.gustZ];
     while(gust.next<=gust.t && gust.t<dur){ const env=Math.sin(Math.PI*Math.min(gust.next/dur,1))*0.5+0.5;
@@ -1525,16 +1776,22 @@ function render(now){
   const camKey=cm.E.map(v=>v.toFixed(4)).join()+cm.f.map(v=>v.toFixed(4)).join(); camMoving=camKey!==lastCamKey; lastCamKey=camKey;
   const invVP=inv(cm.vp), resScale=W/1600;
   const coc={uF:S.focal,uN:S.fstop,uFocus:focusCur,uFilmW:film(),uResX:W,uDofOn:S.dof?1:0};
-  const shadowU={uShadow:0,uLightVP:lightVP,uCookie:S.cookie,uTime:simTime};
+  if(lightDirty){ const lp=S.scene==='shot'&&SHOT&&SHOT.lightPass, was=onLightPass;
+    onLightPass=!!(lp&&Math.abs(S.sunAz-lp.az)<1e-3&&Math.abs(S.sunEl-lp.el)<1e-3);
+    if(onLightPass){ lightVP=lp.vp; curShadow=lp.tex; } else { renderShadow(); curShadow=shadowTex; }
+    if(was&&lp&&!onLightPass&&started) $('#readout').textContent='The key light moved off its depth pass, so shadows now come from the rebuilt geometry (surfaces the camera saw).';
+    bakeMoteFill(); lightDirty=false; resetGI=true; resetDOF=true; }
+  const shotOn=S.scene==='shot'&&!!skyMaskTex, vmax=[0,1,2].map(k=>VMIN[k]+VDIM[k]*VS);
+  const shadowU={uShadow:0,uLightVP:lightVP,uCookie:S.cookie,uTime:simTime,uSkyMask:7,uShotVP:shotVP||IDENT,uOpenOnly:shotOn&&S.enclosed&&!onLightPass?1:0,uSunDir:sunL,uBoxLo:VMIN,uBoxHi:vmax};
   const typeU={uFlake:S.flakes/100,uFiber:S.fibers/100,uFluff:S.fluff/100};
-  const count=S.scene==='room'?Math.min(MAXN, Math.round(S.density*(BMAX[0]-BMIN[0])*(BMAX[1]-BMIN[1])*(BMAX[2]-BMIN[2]))):0;
+  const count=S.scene==='shot'?Math.min(MAXN, Math.round(S.density*(BMAX[0]-BMIN[0])*(BMAX[1]-BMIN[1])*(BMAX[2]-BMIN[2]))):0;
   const foliage=S.cookie===2;
   gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
   for(let i=0;i<7;i++) tex(i,null);
+  tex(7,(S.scene==='shot'&&skyMaskTex)||blackTex);
   gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_3D,voxTex);
 
-  if(lightDirty){ renderShadow(); bakeMoteFill(); lightDirty=false; resetGI=true; resetDOF=true; }
-  tex(0,shadowTex);
+  tex(0,curShadow||shadowTex);
 
   if(playing && dt>0 && count>0){
     const rows=Math.ceil(count/TW); const src=sim[simCur], dst=sim[1-simCur];
@@ -1558,10 +1815,11 @@ function render(now){
 
   // 1. raster: direct light + G-buffer, with a sub-pixel jitter that the accumulation turns into anti-aliasing
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.rFB[posIdx]); gl.viewport(0,0,W,H);
-  gl.clearBufferfv(gl.COLOR,0,[0,0,0,0]); gl.clearBufferfv(gl.COLOR,1,[0,0,0,1e4]); gl.clearBufferfv(gl.COLOR,2,[0,0,0,0]); gl.depthMask(true); gl.clearBufferfv(gl.DEPTH,0,[1]);
+  gl.clearBufferfv(gl.COLOR,0,[0,0,0,0]); gl.clearBufferfv(gl.COLOR,1,[0,0,0,1e4]); gl.clearBufferfv(gl.COLOR,2,[0,0,0,0]); gl.clearBufferfv(gl.COLOR,3,[0,0,0,0]); gl.depthMask(true); gl.clearBufferfv(gl.DEPTH,0,[1]);
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS);
-  use(P.raster,{...shadowU,uVP:cm.vpJ,uView:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uSunI:S.sunI,uSkyI:S.sunI*0.45,uFill:S.fill,uSkyLo:skyLo,uSkyHi:skyHi,uSkyGnd:skyGnd,uCoal:coalCol});
-  drawScene(true); gl.disable(gl.DEPTH_TEST);
+  const voidK=S.scene==='shot'&&!atShot()?0.012:1;
+  use(P.raster,{...shadowU,uVP:cm.vpJ,uView:cm.view,uCam:cm.E,uL:sunL,uSunCol:sunCol,uSunI:S.sunI,uSkyI:S.sunI*0.45,uFill:S.fill,uSkyLo:scl(skyLo,voidK),uSkyHi:scl(skyHi,voidK),uSkyGnd:scl(skyGnd,voidK),uCoal:coalCol,uShade:S.shade==='color'?1:S.shade==='normals'?2:0,uHideSkirt:voidK<1?1:0});
+  drawScene(true); gl.disable(gl.DEPTH_TEST); pickFB=T.rFB[posIdx];
 
   // 2. path-traced bounce light (half res), reprojected and accumulated
   const ck=S.cookie===1?0.45:S.cookie===2?0.5:1;
@@ -1572,6 +1830,7 @@ function render(now){
   use(P.gi,{...shadowU,uPosTex:1,uNrmTex:2,uHist:3,uPrevPos:4,uVox:6,uVoxMin:VMIN,uVoxS:VS,uVoxDim:VDIM,uL:sunL,uSunCol:sunCol,uSunI:S.sunI,
     uSkyLo:skyLo,uSkyHi:skyHi,uGround:giGround||[groundE*sunCol[0],groundE*sunCol[1],groundE*sunCol[2]],uTail:scl(ambE,0.5),
     uFireOn:fireOn,uFireP:fireP,uFireCol:fireCol,uFireR:Math.max(S.eRad*0.6,0.08),
+    uShotOn:S.scene==='shot'&&skyMaskTex?1:0,uEnclosed:S.enclosed?1:0,uUnseen:[0,1,2].map(k=>sunCol[k]*S.sunI*0.012*S.fill+skyCol[k]*0.01*S.fill),
     uRes:[T.gw,T.gh],uFull:[W,H],uSeed:frameNo,uPrevVP:prevVP||cm.vp,uMaxN:giMax,uReset:(resetGI||!prevVP)?1:0,uStatic:camMoving?0:1});
   fsq(); giIdx=1-giIdx; giN=(resetGI||!prevVP)?1:Math.min(giN+1,giMax);
   tex(3,null); tex(4,null);
@@ -1582,16 +1841,17 @@ function render(now){
   // 3. atmosphere
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.hazeFB); gl.viewport(0,0,T.gw,T.gh);
   tex(1,posC);
-  use(P.haze,{...shadowU,uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uL:sunL,uSunCol:sunCol,uAmbE:ambE,uSunI:S.sunI,uHaze:S.haze,uHazeVar:S.hazeVar,uG:S.g,uFill:S.gi,uFrame:frameNo%997,uRes:[T.gw,T.gh],uFull:[W,H],uRoom:fireScene?0:1,uFireOn:fireOn,uFireP:fireP,uFireCol:fireCol});
+  use(P.haze,{...shadowU,uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uL:sunL,uSunCol:sunCol,uAmbE:ambE,uSunI:S.sunI,uHaze:S.haze,uHazeVar:S.hazeVar,uG:S.g,uFill:S.gi,uFrame:frameNo%997,uRes:[T.gw,T.gh],uFull:[W,H],uFireOn:fireOn,uFireP:fireP,uFireCol:fireCol,uHazeFar:GEO.hazeFar||16,uBoxMin:GEO.hmin||[-1e4,-1e4,-1e4],uBoxMax:GEO.hmax||[1e4,1e4,1e4]});
   fsq();
   if(S.flames){ gl.bindFramebuffer(gl.FRAMEBUFFER,T.flameFB); gl.viewport(0,0,W,H);
     use(P.flame,{uPosTex:1,uInvVP:invVP,uCam:cm.E,uFwd:cm.f,uFireP:[S.emitX,S.emitY,S.emitZ],uFlameH:S.flameH*(0.9+0.1*fl),uFlameR:Math.max(S.eRad*0.95,0.05),uTime:simTime,uGain:4e6*Math.max(S.fireI,0.25)*(0.75+0.25*fl),uRes:[W,H],uFull:[W,H]}); fsq(); }
 
   // 4. plate
   gl.bindFramebuffer(gl.FRAMEBUFFER,T.plateFB); gl.viewport(0,0,W,H);
-  tex(2,T.direct); tex(3,T.giOut); tex(4,T.nrm); tex(5,T.haze);
-  use(P.plate,{uDirect:2,uGI:3,uNrmTex:4,uPosTex:1,uHazeTex:5,uHazeTexel:[1/T.gw,1/T.gh],uRes:[W,H],uGIDim:[T.gw,T.gh],uHazeOn:S.atmos?1:0,uGIAmt:S.gi,uTail:scl(ambE,0.5)}); fsq();
-  for(let i=2;i<6;i++) tex(i,null);
+  tex(2,T.direct); tex(3,T.giOut); tex(4,T.nrm); tex(5,T.haze); tex(6,T.alb);
+  use(P.plate,{uDirect:2,uGI:3,uNrmTex:4,uPosTex:1,uHazeTex:5,uAlb:6,uHazeTexel:[1/T.gw,1/T.gh],uRes:[W,H],uGIDim:[T.gw,T.gh],uHazeOn:S.atmos?(S.scene==='shot'&&!atShot()?0.25:1):0,uGIAmt:S.gi,uTail:scl(ambE,0.5)}); fsq();
+  for(let i=2;i<7;i++) tex(i,null);
+  gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_3D,voxTex);
 
   // 5. defocus (fresh random pattern each frame)
   const maxR=S.dof?Math.min(Math.max(Math.abs(cocPxJS(0.7)),Math.abs(cocPxJS(13)))*0.5, 30*resScale):0;
@@ -1665,7 +1925,8 @@ function drawGizmo(){
   const fire=S.scene==='fire';
   const showE=fire && S.embers && S.showEmitter && (curTab==='embers'||placing==='emitter');
   const showI=!fire && (S.showInfl || curTab==='influence' || (placing&&placing!=='emitter'));
-  const want=(showE||showI) && lastCam;
+  const showF=S.scene==='shot' && SHOT && lastCam && !atShot();
+  const want=(showE||showI||showF) && lastCam;
   const r=gz.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
   if(gz.width!==Math.round(r.width*dpr)){ gz.width=Math.round(r.width*dpr); gz.height=Math.round(r.height*dpr); }
   if(!want){ if(gzOn){ gctx.clearRect(0,0,gz.width,gz.height); gzOn=false; } return; }
@@ -1675,6 +1936,10 @@ function drawGizmo(){
   const circle=(c,ax,rad,dash)=>{ const t=nrm(Math.abs(ax[1])<0.95?cross(ax,[0,1,0]):cross(ax,[1,0,0])), b=cross(ax,t), pts=[]; for(let i=0;i<=48;i++){ const a=i/48*2*Math.PI; pts.push(add(c,add(scl(t,Math.cos(a)*rad),scl(b,Math.sin(a)*rad)))); } poly(pts,dash); };
   const pt=(p,rad)=>{ const q=proj(p); if(q){ gctx.beginPath(); gctx.arc(q[0],q[1],rad,0,Math.PI*2); gctx.fill(); } };
   gctx.lineWidth=1.25;
+  if(showF){ const c=SHOT.cam, d=Math.min(SHOT.medDepth*0.35,2.5), th=Math.tan(c.hfov/2), tv=th*SHOT.H/SHOT.W, fw=scl(c.back,-d);
+    const cr=[[-1,-1],[1,-1],[1,1],[-1,1]].map(([x,y])=>add(c.pos,add(fw,add(scl(c.right,x*th*d),scl(c.up,y*tv*d)))));
+    gctx.strokeStyle='rgba(147,178,204,0.9)'; poly([...cr,cr[0]]); for(const q of cr) poly([c.pos,q]);
+    poly([add(c.pos,add(fw,scl(c.up,tv*d*1.05))),add(c.pos,add(fw,scl(c.up,tv*d*1.3)))]); gctx.fillStyle='#93b2cc'; pt(c.pos,2.5); }
   if(showE){
     gctx.strokeStyle='rgba(228,186,107,0.9)'; circle([S.emitX,S.emitY,S.emitZ],[0,1,0],S.eRad);
     if(S.eHeight>0.005){ gctx.strokeStyle='rgba(228,186,107,0.5)'; circle([S.emitX,S.emitY+S.eHeight,S.emitZ],[0,1,0],S.eRad,[4,4]); }
@@ -1709,6 +1974,264 @@ function placeAt(p,n){
   markPreset(null);
 }
 
+/* =================== the shot: a scene rebuilt from a utility pass =================== */
+// SHOT holds only what a render's utility pass provides: world position (P), normals (N), surface colour (C), and the camera.
+let SHOT=null, DEMO_SHOT=null, meshShot=null, shotStats=null, rebuildTimer=0, skyMaskTex=null, shotVP=null;
+const validAt=(P,k)=>{ const x=P[k*3],y=P[k*3+1],z=P[k*3+2]; return Number.isFinite(x)&&Number.isFinite(y)&&Number.isFinite(z)&&(x!==0||y!==0||z!==0); };
+function mkIndexedMesh(vb,ib){ const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,vb,gl.STATIC_DRAW); const st=40;
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,st,0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,st,12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,3,gl.FLOAT,false,st,24);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3,1,gl.FLOAT,false,st,36);
+  const ib2=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib2); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,ib,gl.STATIC_DRAW);
+  gl.bindVertexArray(null); return {vao,buf:b,ibuf:ib2,n:ib.length,idx:true}; }
+function shotFocal(){ return SHOT? film()/(2*Math.tan(SHOT.cam.hfov/2)) : S.focal; }
+function autoDustFar(){ return SHOT? clamp(SHOT.medDepth*1.3,2.5,15) : 8; }
+function shotDefaults(){ if(!SHOT) return {}; const o={}; if(SHOT.cam.fstop) o.fstop=clamp(SHOT.cam.fstop,1.2,22); if(SHOT.cam.focus) o.focus=clamp(SHOT.cam.focus*SHOT.scale,0.3,20); return o; }
+
+function reconstruct(){
+  const {W,H,P,N,C,cam}=SHOT, cp=cam.pos;
+  const st=Math.max(S.meshStep||Math.round(Math.max(W,H)/720), Math.ceil(Math.sqrt(W*H/2.2e6)), 1);
+  const gw=Math.ceil((W-1)/st)+1, gh=Math.ceil((H-1)/st)+1, nV=gw*gh;
+  let vb=new Float32Array(nV*10); const ok=new Uint8Array(nV), dist=new Float32Array(nV), shade=S.shade;
+  for(let j=0;j<gh;j++) for(let i=0;i<gw;i++){ const v=j*gw+i, k=Math.min(j*st,H-1)*W+Math.min(i*st,W-1), o=v*10;
+    if(!validAt(P,k)) continue; ok[v]=1;
+    const x=P[k*3],y=P[k*3+1],z=P[k*3+2]; vb[o]=x; vb[o+1]=y; vb[o+2]=z; dist[v]=Math.hypot(x-cp[0],y-cp[1],z-cp[2]);
+    if(N){ const nx=N[k*3],ny=N[k*3+1],nz=N[k*3+2], l=Math.hypot(nx,ny,nz); if(l>0.2&&Number.isFinite(l)){ vb[o+3]=nx/l; vb[o+4]=ny/l; vb[o+5]=nz/l; } }
+    if(C){ vb[o+6]=clamp(C[k*3],0,1); vb[o+7]=clamp(C[k*3+1],0,1); vb[o+8]=clamp(C[k*3+2],0,1); } else { vb[o+6]=vb[o+7]=vb[o+8]=0.45; }
+    vb[o+9]=20; }
+  // connect neighbouring pixels into triangles, but break the surface where depth jumps (an object edge)
+  const eb=S.edgeBreak*st, skirtQ=[]; let idx=new Uint32Array((gw-1)*(gh-1)*6), ni=0, broken=0, quads=0;
+  const near=(a,b)=>Math.abs(dist[a]-dist[b])<=eb*Math.min(dist[a],dist[b]);
+  for(let j=0;j<gh-1;j++) for(let i=0;i<gw-1;i++){ const a=j*gw+i,b=a+1,c=a+gw,d=c+1;
+    if(!(ok[a]&&ok[b]&&ok[c]&&ok[d])){ if(ok[a]||ok[b]||ok[c]||ok[d]) broken++; }
+    else quads++;
+    const t1=ok[a]&&ok[b]&&ok[c]&&near(a,b)&&near(a,c)&&near(b,c), t2=ok[b]&&ok[c]&&ok[d]&&near(b,d)&&near(c,d)&&near(b,c);
+    if(t1&&t2){ idx[ni++]=a; idx[ni++]=c; idx[ni++]=b; idx[ni++]=b; idx[ni++]=c; idx[ni++]=d; continue; }
+    if(ok[a]&&ok[b]&&ok[c]&&ok[d]){ broken++; skirtQ.push(a); }
+    if(t1){ idx[ni++]=a; idx[ni++]=c; idx[ni++]=b; } if(t2){ idx[ni++]=b; idx[ni++]=c; idx[ni++]=d; }
+    if(!t1&&!t2){ if(ok[a]&&ok[b]&&ok[d]&&near(a,b)&&near(b,d)&&near(a,d)){ idx[ni++]=a; idx[ni++]=d; idx[ni++]=b; }
+      if(ok[a]&&ok[c]&&ok[d]&&near(a,c)&&near(c,d)&&near(a,d)){ idx[ni++]=a; idx[ni++]=c; idx[ni++]=d; } } }
+  // fill in normals the pass didn't provide from the rebuilt surface, facing the camera
+  const fn=new Float32Array(nV*3);
+  for(let t=0;t<ni;t+=3){ const a=idx[t]*10,b=idx[t+1]*10,c=idx[t+2]*10;
+    const ux=vb[b]-vb[a],uy=vb[b+1]-vb[a+1],uz=vb[b+2]-vb[a+2], wx=vb[c]-vb[a],wy=vb[c+1]-vb[a+1],wz=vb[c+2]-vb[a+2];
+    const nx=uy*wz-uz*wy, ny=uz*wx-ux*wz, nz=ux*wy-uy*wx; for(const q of [idx[t],idx[t+1],idx[t+2]]){ fn[q*3]+=nx; fn[q*3+1]+=ny; fn[q*3+2]+=nz; } }
+  for(let v=0;v<nV;v++){ const o=v*10; if(!ok[v]) continue;
+    if(vb[o+3]===0&&vb[o+4]===0&&vb[o+5]===0){ let nx=fn[v*3],ny=fn[v*3+1],nz=fn[v*3+2]; const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+      if(nx*(cp[0]-vb[o])+ny*(cp[1]-vb[o+1])+nz*(cp[2]-vb[o+2])<0){ nx=-nx; ny=-ny; nz=-nz; } if(l===1&&!fn[v*3]&&!fn[v*3+1]){ nx=0; ny=1; nz=0; } vb[o+3]=nx; vb[o+4]=ny; vb[o+5]=nz; } }
+  // where the surface breaks, hang a skirt at the far side's depth behind the near edge, so the shot camera sees no cracks
+  if(skirtQ.length){ const sk=[], skI=[]; let nx=nV;
+    for(const a of skirtQ){ const q=[a,a+1,a+gw,a+gw+1]; let far=a; for(const v of q) if(dist[v]>dist[far]) far=v;
+      const m=q.map(v=>{ if(near(v,far)) return v; const o=v*10, k=dist[far]/dist[v];
+        sk.push(cp[0]+(vb[o]-cp[0])*k, cp[1]+(vb[o+1]-cp[1])*k, cp[2]+(vb[o+2]-cp[2])*k); for(let t=3;t<9;t++) sk.push(vb[far*10+t]); sk.push(21); return nx++; });
+      skI.push(m[0],m[2],m[1],m[1],m[2],m[3]); }
+    const vb2=new Float32Array(vb.length+sk.length); vb2.set(vb); vb2.set(sk,vb.length); vb=vb2;
+    const id2=new Uint32Array(ni+skI.length); id2.set(idx.subarray(0,ni)); id2.set(skI,ni); idx=id2; ni=id2.length; }
+  freeMesh(meshShot); meshShot=mkIndexedMesh(vb, idx.subarray(0,ni));
+  // extent of the scene (robust to stray far pixels)
+  const pick=[]; const sstep=Math.max(1,Math.floor(nV/30000)); for(let v=0;v<nV;v+=sstep) if(ok[v]) pick.push(v);
+  if(pick.length<50) throw new Error('The position pass has almost no valid pixels.');
+  const pct=(k,q)=>{ const a=pick.map(v=>vb[v*10+k]).sort((x,y)=>x-y); return a[Math.min(a.length-1,Math.max(0,Math.floor(q*(a.length-1))))]; };
+  let lo=[0,1,2].map(k=>pct(k,0.01)), hi=[0,1,2].map(k=>pct(k,0.99));
+  const ext=[0,1,2].map(k=>hi[k]-lo[k]); const mg=Math.max(...ext)*0.05+0.05; lo=lo.map(x=>x-mg); hi=hi.map(x=>x+mg);
+  const ctr=lo.map((x,k)=>(x+hi[k])/2), R=0.5*Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2]);
+  // voxel copy of the rebuilt shell for the bounce-light path tracer; surfaces get a little thickness behind them
+  VS=Math.max(Math.max(...ext)/170,0.02); VMIN=lo.map(x=>x-VS*2); VDIM=[0,1,2].map(k=>Math.ceil((hi[k]-lo[k])/VS)+4);
+  const [DX,DY,DZ]=VDIM, vox=new Uint8Array(DX*DY*DZ), thick=S.shell;
+  const put=(x,y,z,a)=>{ const ix=Math.floor((x-VMIN[0])/VS), iy=Math.floor((y-VMIN[1])/VS), iz=Math.floor((z-VMIN[2])/VS);
+    if(ix<0||iy<0||iz<0||ix>=DX||iy>=DY||iz>=DZ) return; const q=ix+iy*DX+iz*DX*DY; if(!vox[q]) vox[q]=a; };
+  for(let t=0;t<ni;t+=3){ const a=idx[t]*10,b=idx[t+1]*10,c=idx[t+2]*10;
+    const L=Math.max(Math.hypot(vb[b]-vb[a],vb[b+1]-vb[a+1],vb[b+2]-vb[a+2]),Math.hypot(vb[c]-vb[a],vb[c+1]-vb[a+1],vb[c+2]-vb[a+2]));
+    const n=Math.max(1,Math.ceil(L/(VS*0.7))), alb=Math.max(2,Math.round(255*(shade==='color'?(0.2126*vb[a+6]+0.7152*vb[a+7]+0.0722*vb[a+8]):0.45)));
+    for(let s1=0;s1<=n;s1++) for(let s2=0;s2<=n-s1;s2++){ const u=s1/n, w=s2/n;
+      const x=vb[a]+(vb[b]-vb[a])*u+(vb[c]-vb[a])*w, y=vb[a+1]+(vb[b+1]-vb[a+1])*u+(vb[c+1]-vb[a+1])*w, z=vb[a+2]+(vb[b+2]-vb[a+2])*u+(vb[c+2]-vb[a+2])*w;
+      put(x,y,z,alb);
+      if(thick>VS*0.5){ const dx=x-cp[0],dy=y-cp[1],dz=z-cp[2], dl=Math.hypot(dx,dy,dz)||1; for(let d=VS*0.7; d<=thick; d+=VS*0.7) put(x+dx/dl*d,y+dy/dl*d,z+dz/dl*d,alb); } } }
+  if(voxTex) gl.deleteTexture(voxTex);
+  voxTex=gl.createTexture(); gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_3D,voxTex); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage3D(gl.TEXTURE_3D,0,gl.R8,DX,DY,DZ,0,gl.RED,gl.UNSIGNED_BYTE,vox);
+  for(const p of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D,p,gl.NEAREST);
+  for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D,p,gl.CLAMP_TO_EDGE);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT,4);
+  // dust fills the shot camera's view out to a chosen depth, clipped to the scene
+  const far=S.dustFar||autoDustFar(), fwd=scl(cam.back,-1), th=Math.tan(cam.hfov/2), tv=th/(W/H), corners=[];
+  for(const dd of [0.3,far]) for(const sx of [-1,1]) for(const sy of [-1,1]) corners.push(add(cp,add(scl(fwd,dd),add(scl(cam.right,sx*th*dd),scl(cam.up,sy*tv*dd)))));
+  let bmin=[0,1,2].map(k=>Math.min(...corners.map(c=>c[k]))), bmax=[0,1,2].map(k=>Math.max(...corners.map(c=>c[k])));
+  const imin=bmin.map((x,k)=>Math.max(x,lo[k])), imax=bmax.map((x,k)=>Math.min(x,hi[k]));
+  if(imin.every((x,k)=>x<imax[k]-0.2)){ bmin=imin; bmax=imax; }
+  const clo=[0,1,2].map(k=>Math.min(lo[k]-R*1.5,cp[k]-1)), chi=[0,1,2].map(k=>Math.max(hi[k]+R*1.5,cp[k]+1));
+  SCENE_GEO.shot={vmin:VMIN, vsize:VDIM.map(d=>d*VS), bmin, bmax, cmin:clo, cmax:chi, lightC:ctr, lightR:R*1.05, near:clamp(SHOT.medDepth*0.004,0.02,0.5), far:Math.max(80,R*8), maxDist:Math.max(9,R*3),
+    hmin:lo, hmax:hi, hazeFar:clamp(SHOT.medDepth*2,16,80)};
+  GEO=SCENE_GEO.shot; BMIN=bmin; BMAX=bmax;
+  GS.length=0; box(GS,ctr.map(x=>x-R*6),ctr.map(x=>x+R*6),[1,1,1],6,false,false); freeMesh(meshSky); meshSky=mkMesh(GS);
+  if(skyMaskTex) gl.deleteTexture(skyMaskTex);
+  { const mk=new Uint8Array(W*H); for(let k=0;k<W*H;k++) mk[k]=validAt(P,k)?0:255; gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+    skyMaskTex=mkTex(W,H,gl.R8,gl.RED,gl.UNSIGNED_BYTE,gl.LINEAR,mk); gl.pixelStorei(gl.UNPACK_ALIGNMENT,4); }
+  { const fw=scl(cam.back,-1), vf=2*Math.atan(Math.tan(cam.hfov/2)/(W/H)); shotVP=mul(persp(vf,W/H,0.05,1e4), lookAt(cp,add(cp,fw),cam.up)); }
+  shotStats={tris:ni/3, step:st, verts:nV, broken:quads? broken/(quads+broken):0, grid:VDIM.join(' × '), vs:VS};
+  updateLight(); resetGI=true; resetDOF=true; prevVP=null;
+  const el=$('#shotInfo'); if(el) el.innerHTML=shotInfoHTML();
+}
+function scheduleRebuild(reseed){ clearTimeout(rebuildTimer); rebuildTimer=setTimeout(()=>{ if(!SHOT||S.scene!=='shot'||switching) return; reconstruct(); if(reseed) seedSim(); },220); }
+function applyShotCam(){ if(!SHOT) return; const c=SHOT.cam;
+  setCam(c.pos, add(c.pos, scl(c.back,-Math.max(S.focus,0.5))), c.up);
+  if(c.focal>1){ FILMS.plate.w=c.focal*2*Math.tan(c.hfov/2); S.film='plate'; }
+  S.focal=+shotFocal().toFixed(2); FORMATS.plate=SHOT.W/SHOT.H; S.format='plate';
+  focusAnim=null; focusCur=S.focus; resetDOF=true; resetGI=true; if(started) layout(); syncKnob('focal'); syncKnob('format'); syncKnob('film'); }
+function closeupCam(){ if(!SHOT) return; const c=SHOT.cam;
+  const fx=SHOT.demo?0.24:0.5, fy=SHOT.demo?0.56:0.5, th=Math.tan(c.hfov/2), tv=th*SHOT.H/SHOT.W;
+  const dir=nrm(add(scl(c.back,-1),add(scl(c.right,(fx*2-1)*th),scl(c.up,(1-fy*2)*tv)))), h=shotPoint(fx,fy);
+  const dd=h? len(sub(h.p,c.pos))*(SHOT.demo?0.72:0.5) : SHOT.medDepth*0.45, tg=add(c.pos,scl(dir,dd));
+  setCam(c.pos,tg,c.up); S.focal=+(shotFocal()*2.2).toFixed(1); S.focus=+clamp(len(sub(tg,c.pos)),0.3,20).toFixed(2); focusCur=S.focus; resetDOF=true; resetGI=true; }
+function atShot(){ if(!SHOT||!lastCam) return true; return len(sub(lastCam.E,SHOT.cam.pos))<1e-3*Math.max(1,SHOT.medDepth) && Math.abs(S.focal-shotFocal())<0.05; }
+function shotPoint(fx,fy){ const {W,H,P,N}=SHOT;
+  for(let r=0;r<60;r++) for(const sg of [1,-1]){ const y=clamp(Math.round((fy-sg*r*0.01)*H),0,H-1), x=clamp(Math.round(fx*W),0,W-1), k=y*W+x;
+    if(validAt(P,k)) return {p:[P[k*3],P[k*3+1],P[k*3+2]], n:N?nrm([N[k*3],N[k*3+1],N[k*3+2]]):null}; }
+  return null; }
+function autoInfluence(){ const f=v=>+v.toFixed(3);
+  const A=shotPoint(0.3,0.86), B=shotPoint(0.72,0.86), src=shotPoint(0.06,0.5), mid=shotPoint(0.5,0.55);
+  if(A&&B){ [S.movAX,S.movAY,S.movAZ]=A.p.map(f); [S.movBX,S.movBY,S.movBZ]=B.p.map(f); }
+  if(src&&mid){ const toCam=nrm(sub(SHOT.cam.pos,src.p)), n=src.n&&dot(src.n,toCam)>0?src.n:toCam; const o=add(src.p,scl(n,0.25)); const d=nrm(sub(mid.p,o));
+    [S.gustX,S.gustY,S.gustZ]=o.map(f); [S.gustDX,S.gustDY,S.gustDZ]=d.map(f); } }
+
+/* ---- the demo shot: a utility pass rendered from a built-in scene; the tool only ever sees the pass ---- */
+async function makeDemoPass(){
+  const RW=1280, RH=536, saved={focal:S.focal,film:S.film,format:S.format};
+  GM.length=0; GB.length=0; GS.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0; buildRoom();
+  // give the clay a believable surface colour pass (the render's albedo)
+  const PAL=[[0.4,[0.46,0.42,0.37]],[0.22,[0.30,0.20,0.12]],[0.18,[0.23,0.14,0.08]],[0.46,[0.56,0.54,0.50]],[0.3,[0.34,0.27,0.18]],[0.42,[0.50,0.45,0.37]],[0.06,[0.05,0.05,0.05]],[0.52,[0.62,0.58,0.52]],[0.19,[0.26,0.08,0.06]],[0.36,[0.30,0.36,0.40]],[0.32,[0.40,0.38,0.34]]];
+  for(let i=0;i<GM.length;i+=10){ const g=GM[i+6]; let c=null; for(const [v,col] of PAL) if(Math.abs(g-v)<1e-4){ c=col; break; }
+    if(!c){ const h=Math.sin(g*9137.1)*43758.5; const u=h-Math.floor(h), k=g*1.15; c=[k*(0.7+0.6*Math.abs(Math.sin(u*6.28))),k*(0.6+0.5*Math.abs(Math.sin(u*6.28+2.1))),k*(0.6+0.6*Math.abs(Math.sin(u*6.28+4.2)))]; }
+    GM[i+6]=c[0]; GM[i+7]=c[1]; GM[i+8]=c[2]; }
+  const m=mkMesh(GM); S.focal=32; S.film='s35'; S.format='2.39'; setCam(CAM_DEFAULT.E,CAM_DEFAULT.T,[0,1,0]);
+  const c=camAt(0), view=lookAt(c.E,c.T,c.up), proj=persp(2*Math.atan(Math.tan(hfov()/2)/(RW/RH)),RW/RH,0.03,80), vp=mul(proj,view);
+  const tx=[0,1,2].map(()=>mkTex(RW,RH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST)), d=depthRB(RW,RH), fb=mkFB(tx,d);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fb); gl.viewport(0,0,RW,RH); for(let i=0;i<3;i++) gl.clearBufferfv(gl.COLOR,i,[0,0,0,0]); gl.clearBufferfv(gl.DEPTH,0,[1]);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); use(P.util,{uVP:vp,uView:view,uCam:c.E}); draw(m); gl.disable(gl.DEPTH_TEST);
+  const rb=tx.map((_,i)=>{ const b=new Float32Array(RW*RH*4); gl.readBuffer(gl.COLOR_ATTACHMENT0+i); gl.readPixels(0,0,RW,RH,gl.RGBA,gl.FLOAT,b); return b; });
+  const Pp=new Float32Array(RW*RH*3), Nn=new Float32Array(RW*RH*3), Cc=new Float32Array(RW*RH*3);
+  for(let y=0;y<RH;y++) for(let x=0;x<RW;x++){ const s=((RH-1-y)*RW+x)*4, o=(y*RW+x)*3; if(rb[0][s+3]<0.5) continue;
+    for(let k=0;k<3;k++){ Pp[o+k]=rb[0][s+k]; Nn[o+k]=rb[1][s+k]; Cc[o+k]=rb[2][s+k]; } }
+  tx.forEach(t=>gl.deleteTexture(t)); gl.deleteRenderbuffer(d); gl.deleteFramebuffer(fb);
+  // the key light's depth pass, as a lighting render would supply it per light
+  const az=S.sunAz*Math.PI/180, el=S.sunEl*Math.PI/180, sl=[-Math.cos(az)*Math.cos(el), Math.sin(el), -Math.sin(az)*Math.cos(el)], LC=[0,1.6,-1.5];
+  const lvp=mul(ortho(-8.5,8.5,-8.5,8.5,1,50), lookAt(add(LC,scl(sl,25)),LC,[0,1,0])), ls=mkShadowTarget();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,ls.fb); gl.viewport(0,0,SH,SH); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5,3.0); use(P.depth,{uVP:lvp}); draw(m); gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.DEPTH_TEST);
+  freeMesh(m);
+  GM.length=0; rayBoxes.length=0; raySpheres.length=0; voxPrims.length=0;
+  const camInfo={pos:c.E, right:[view[0],view[4],view[8]], up:[view[1],view[5],view[9]], back:[view[2],view[6],view[10]], hfov:hfov(), focal:32, fstop:4, focus:4.5, src:'from header'};
+  Object.assign(S,saved);
+  setShot({W:RW,H:RH,P:Pp,N:Nn,C:Cc,cam:camInfo,scale:1,label:'Demo shot (built-in loft)',demo:true,up:'y',
+    layers:{P:'P',N:'N',C:'surfaceColor',Z:'depth'}, units:'metres', camSrc:'from header', lightPass:{tex:ls.tex,fb:ls.fb,az:S.sunAz,el:S.sunEl,vp:lvp}});
+  DEMO_SHOT=SHOT;
+}
+function setShot(sh){
+  const {W,H,P,cam}=sh; const ds=[]; const stp=Math.max(1,Math.floor(W*H/20000));
+  for(let k=0;k<W*H;k+=stp) if(validAt(P,k)) ds.push(Math.hypot(P[k*3]-cam.pos[0],P[k*3+1]-cam.pos[1],P[k*3+2]-cam.pos[2]));
+  ds.sort((a,b)=>a-b); sh.medDepth=ds.length?ds[ds.length>>1]:5; sh.validFrac=ds.length*stp/(W*H);
+  // open sky across the top of frame means an exterior; otherwise treat what the camera can't see as more room
+  let sky=0, tot=0; for(let y=0;y<Math.max(1,Math.floor(H*0.15));y+=2) for(let x=0;x<W;x+=4){ tot++; if(!validAt(P,y*W+x)) sky++; }
+  sh.enclosed = sky/Math.max(tot,1) < 0.35;
+  SHOT=sh;
+}
+// swap between Y-up and Z-up worlds (Z-up files are turned so Y is up)
+function setUpAxis(ax,quiet){ if(!SHOT||SHOT.up===ax) return; const toY=ax==='z';
+  const f=(a,i)=>{ const y=a[i+1], z=a[i+2]; if(toY){ a[i+1]=z; a[i+2]=-y; } else { a[i+1]=-z; a[i+2]=y; } };
+  const n=SHOT.W*SHOT.H; for(let i=0;i<n*3;i+=3){ f(SHOT.P,i); if(SHOT.N) f(SHOT.N,i); }
+  const c=SHOT.cam; for(const k of ['pos','right','up','back']){ c[k]=[...c[k]]; f(c[k],0); }
+  SHOT.up=ax; S.upAxis=ax; if(!quiet&&S.scene==='shot'&&started){ reconstruct(); if(!SHOT.demo) autoInfluence(); applyShotCam(); seedSim(); } }
+function enterShot(){
+  const keep={proxy:S.proxy}; Object.assign(S,DEF,SCENES.shot.def,shotDefaults(),keep,{scene:'shot',shade:SHOT.C?'color':'clay',upAxis:SHOT.up||'y',enclosed:!!SHOT.enclosed});
+  reconstruct(); if(!SHOT.demo) autoInfluence(); applyShotCam(); seedSim(); updateLight();
+  mover=null; gust=null; blobs.length=0; curTab='shot';
+  buildSceneSeg(); buildPresets(); buildTabs(); buildKnobs(); syncSceneUI(); markPreset('default'); layout();
+}
+async function loadDemo(){ if(!started||switching||!DEMO_SHOT) return; if(SHOT===DEMO_SHOT&&S.scene==='shot') return;
+  switching=true; setPlacing(null); const ld=$('#loader'); ld.classList.remove('done'); progress(0.3,'Rebuilding the demo shot'); await nextFrame();
+  try{ SHOT=DEMO_SHOT; enterShot(); $('#readout').textContent='Demo shot: a utility pass rendered from a built-in loft'; }
+  finally{ progress(1,'Ready'); ld.classList.add('done'); switching=false; } }
+
+// antialiased P blends an edge pixel with whatever is behind it (or with 0 where there is nothing), which puts
+// that point off its own pixel's view ray; drop those so they don't become spikes flying toward the origin
+function dropFilteredEdges(P,W,H,cam){
+  const th=Math.tan(cam.hfov/2), tv=th*H/W, pa=2*th/W, fw=scl(cam.back,-1), err=new Float32Array(W*H).fill(-1), smp=[];
+  for(let y=0;y<H;y++){ const sy=(1-(y+0.5)/H*2)*tv; for(let x=0;x<W;x++){ const k=y*W+x; if(!validAt(P,k)) continue;
+    const sx=((x+0.5)/W*2-1)*th, dx=fw[0]+cam.right[0]*sx+cam.up[0]*sy, dy=fw[1]+cam.right[1]*sx+cam.up[1]*sy, dz=fw[2]+cam.right[2]*sx+cam.up[2]*sy;
+    const vx=P[k*3]-cam.pos[0], vy=P[k*3+1]-cam.pos[1], vz=P[k*3+2]-cam.pos[2];
+    const cx=dy*vz-dz*vy, cy=dz*vx-dx*vz, cz=dx*vy-dy*vx, e=Math.hypot(cx,cy,cz)/(Math.hypot(dx,dy,dz)*Math.hypot(vx,vy,vz)+1e-12)/pa;
+    err[k]=e; if((k&63)===0) smp.push(e); } }
+  smp.sort((a,b)=>a-b); const med=smp.length?smp[smp.length>>1]:0; if(med>2) return {dropped:0,med};
+  const lim=Math.max(2.5,med*4); let n=0; for(let k=0;k<W*H;k++) if(err[k]>lim){ P[k*3]=P[k*3+1]=P[k*3+2]=0; n++; }
+  return {dropped:n,med}; }
+
+/* ---- loading utility EXRs dropped in by the artist ---- */
+async function loadFiles(list){
+  list=[...list].filter(f=>/\.exr$/i.test(f.name)); if(!list.length){ $('#readout').textContent='Drop .exr utility passes (position, normals, depth, surface colour)'; return; }
+  if(!started||switching) return; switching=true; setPlacing(null);
+  const ld=$('#loader'); ld.classList.remove('done');
+  try{
+    const files=[];
+    for(let i=0;i<list.length;i++){ progress(0.05+0.3*i/list.length,`Reading ${list[i].name}`); await nextFrame();
+      const buf=await list[i].arrayBuffer(); files.push({name:list[i].name, exr:EXR.open(buf)}); }
+    progress(0.4,'Finding position, normal, depth and colour layers'); await nextFrame();
+    const {found}=EXR.survey(files);
+    if(!found.P && !found.Z) throw new Error('No world position or depth found. Expected a layer named like pos, P, Pworld or depth.');
+    const ref=found.P||found.Z, W=ref.w, H=ref.h, n=W*H;
+    const grab3=f=>{ if(!f||f.w!==W||f.h!==H) return null; const d=f.f.exr.read(f.pi,f.names), o=new Float32Array(n*3); for(let i=0;i<n;i++) for(let k=0;k<3;k++) o[i*3+k]=d[f.names[k]][i]; return o; };
+    progress(0.5,'Decoding layers'); await nextFrame();
+    let Pp=grab3(found.P); const Nn=grab3(found.N), Cc=grab3(found.C);
+    const headers=files.flatMap(f=>f.exr.parts.map(p=>p.header));
+    let cam=EXR.cameraFromHeaders(headers), camSrc=cam?'from header':'';
+    if(!Pp){ // depth alone: rebuild positions from the camera
+      if(!cam||!cam.hfov) throw new Error('This file has depth but no world position, and no camera in its header to turn depth into positions.');
+      const Z=found.Z.f.exr.read(found.Z.pi,found.Z.names)[found.Z.names[0]], th=Math.tan(cam.hfov/2), tv=th*H/W; Pp=new Float32Array(n*3);
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=y*W+x, z=Z[i]; if(!(z>0)||!Number.isFinite(z)||z>1e9) continue;
+        const sx=((x+0.5)/W*2-1)*th, sy=(1-(y+0.5)/H*2)*tv, dir=nrm(add(scl(cam.back,-1),add(scl(cam.right,sx),scl(cam.up,sy))));
+        for(let k=0;k<3;k++) Pp[i*3+k]=cam.pos[k]+dir[k]*z; } }
+    if(!cam||!cam.hfov){ progress(0.6,'No camera in the header: solving it from the position pass'); await nextFrame();
+      const solved=EXR.solveCamera(Pp,W,H,k=>validAt(Pp,k)); if(!solved) throw new Error('Could not work out the camera from the position pass.');
+      cam=Object.assign(cam||{},solved); camSrc='solved from the position pass'; }
+    // world normals or camera-space normals? keep whichever faces the camera
+    if(Nn){ let w=0,c=0,t=0; for(let k=0;k<n;k+=Math.max(1,Math.floor(n/4000))){ if(!validAt(Pp,k)) continue; t++;
+        const v=sub(cam.pos,[Pp[k*3],Pp[k*3+1],Pp[k*3+2]]), nv=[Nn[k*3],Nn[k*3+1],Nn[k*3+2]];
+        if(dot(nv,v)>0) w++; const nw=add(scl(cam.right,nv[0]),add(scl(cam.up,nv[1]),scl(cam.back,nv[2]))); if(dot(nw,v)>0) c++; }
+      if(c>w*1.15) for(let i=0;i<n;i++){ const a=Nn[i*3],b=Nn[i*3+1],d=Nn[i*3+2]; for(let k=0;k<3;k++) Nn[i*3+k]=cam.right[k]*a+cam.up[k]*b+cam.back[k]*d; } }
+    // units: the tool works in metres
+    const prev=SHOT, tmp={W,H,P:Pp,cam}; setShot(tmp); SHOT=prev; const med=tmp.medDepth;
+    const scale=med>4000?0.001:med>40?0.01:1, units=scale===0.01?'centimetres':scale===0.001?'millimetres':'metres';
+    if(scale!==1){ for(let i=0;i<n*3;i++) Pp[i]*=scale; cam.pos=cam.pos.map(v=>v*scale); }
+    if(Cc){ for(let i=0;i<n*3;i++) if(!Number.isFinite(Cc[i])) Cc[i]=0; }
+    // normals that point away from the camera everywhere are probably flipped; the raster flips per pixel anyway
+    if(Cc){ let mx=0; for(let i=0;i<n*3;i+=7) if(Cc[i]>mx) mx=Cc[i]; if(mx<=0) Cc=null; }
+    progress(0.7,'Removing filtered edge pixels'); await nextFrame();
+    const clean=dropFilteredEdges(Pp,W,H,cam);
+    const prevShot=SHOT;
+    setShot({W,H,P:Pp,N:Nn,C:Cc,cam,scale,label:files.map(f=>f.name).join(' + '),demo:false,up:'y',
+      layers:{P:found.P?found.P.label:'', N:found.N?found.N.label:'', C:Cc&&found.C?found.C.label:'', Z:found.Z?found.Z.label:''}, units, camSrc, clean});
+    // a camera whose up vector leans along Z means the scene was built Z-up
+    const zUp=Math.abs(cam.up[2])>Math.abs(cam.up[1])+0.1;
+    progress(0.75,'Rebuilding the scene from the pass'); await nextFrame();
+    try{ if(zUp){ SHOT.up='y'; setUpAxis('z',true); } enterShot(); }
+    catch(e){ SHOT=prevShot; if(SHOT) enterShot(); throw e; }
+    $('#readout').textContent=`Loaded ${SHOT.label}${zUp?' · Z-up scene turned to Y-up':''}`;
+  }catch(err){ console.error(err); $('#readout').textContent='Could not load: '+(err.message||err); const el=$('#shotInfo'); if(el) el.innerHTML=`<p class="err">${(err.message||String(err)).replace(/</g,'&lt;')}</p>`+shotInfoHTML(); }
+  finally{ progress(1,'Ready'); ld.classList.add('done'); switching=false; }
+}
+function shotInfoHTML(){
+  if(!SHOT) return '<p class="note">No shot loaded.</p>';
+  const s=SHOT, st=shotStats, yes=(v,l)=>v?`<span class="ok">✓</span> ${l}`:`<span class="no">–</span> ${l}`;
+  const rows=[['Source',s.label],['Resolution',`${s.W} × ${s.H}`],
+    ['Position',s.layers.P?yes(1,s.layers.P):yes(0,'rebuilt from depth')],['Normals',s.layers.N?yes(1,s.layers.N):yes(0,'from rebuilt surface')],
+    ['Surface colour',s.layers.C?yes(1,s.layers.C):yes(0,'clay')],['Depth',s.layers.Z?yes(1,s.layers.Z):yes(0,'not needed')],
+    ['Camera',`${s.camSrc} · ${(s.cam.hfov*180/Math.PI).toFixed(1)}° wide${s.clean?` · fits P to ${s.clean.med.toFixed(2)} px`:''}`],['Units',`${s.units}${s.up==='z'?' · Z up':''}`],
+    ['Key light depth',s.lightPass?yes(1,'sun depth pass'):yes(0,'shadows from rebuilt geometry')]];
+  if(st) rows.push(['Rebuilt',`${Math.round(st.tris).toLocaleString()} triangles · every ${st.step===1?'pixel':st.step+' px'} · ${Math.round(st.broken*100)}% at edges${s.clean&&s.clean.dropped?` · ${(s.clean.dropped/(s.W*s.H)*100).toFixed(1)}% filtered edge pixels dropped`:''}`]);
+  return '<dl>'+rows.map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join('')+'</dl>';
+}
+
 /* =================== loupe =================== */
 const loupe=$('#loupe'), lctx=loupe.getContext('2d');
 function drawLoupe(){ const r=canvas.getBoundingClientRect(); const sx=loupePos.x/r.width*DW, sy=loupePos.y/r.height*DH; const z=6, n=192/z;
@@ -1724,30 +2247,39 @@ function rayFromEvent(e){ const r=canvas.getBoundingClientRect(); const x=(e.cli
   return {ro:lastCam.E, rd:nrm(sub(pb,pa)), sx:e.clientX-r.left, sy:e.clientY-r.top}; }
 function showReticle(x,y,isPuff){ const el=$('#reticle'); el.style.left=x+'px'; el.style.top=y+'px'; el.classList.toggle('puff',!!isPuff);
   el.classList.add('on'); requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.remove('on'))); }
+// what is under the cursor comes straight from the render's position and normal buffers
+let pickFB=null, pickT=0;
+function pickAt(sx,sy){ if(!pickFB||!lastCam) return null; const r=canvas.getBoundingClientRect();
+  const x=clamp(Math.floor(sx/r.width*W),0,W-1), y=clamp(Math.floor((1-sy/r.height)*H),0,H-1), b=new Float32Array(4);
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER,pickFB); gl.readBuffer(gl.COLOR_ATTACHMENT2); gl.readPixels(x,y,1,1,gl.RGBA,gl.FLOAT,b);
+  if(!(b[3]>0.5)){ gl.bindFramebuffer(gl.READ_FRAMEBUFFER,null); return null; } let n=nrm([b[0],b[1],b[2]]);
+  gl.readBuffer(gl.COLOR_ATTACHMENT1); gl.readPixels(x,y,1,1,gl.RGBA,gl.FLOAT,b); gl.bindFramebuffer(gl.READ_FRAMEBUFFER,null);
+  const p=[b[0],b[1],b[2]]; if(dot(n,sub(lastCam.E,p))<0) n=scl(n,-1); return {p,n,d:b[3]}; }
 let drag=null;
 canvas.addEventListener('pointerdown',e=>{ drag={x:e.clientX,y:e.clientY,yaw:cam.yaw,pitch:cam.pitch,moved:false,thr:e.pointerType==='mouse'?4:14}; canvas.setPointerCapture(e.pointerId); });
 canvas.addEventListener('pointermove',e=>{
   const r=canvas.getBoundingClientRect(); loupePos={x:e.clientX-r.left,y:e.clientY-r.top}; if(loupeOn) placeLoupe(loupePos.x,loupePos.y);
   if(drag){ const dx=e.clientX-drag.x, dy=e.clientY-drag.y; if(Math.hypot(dx,dy)>drag.thr) drag.moved=true;
     if(drag.moved){ cam.yaw=drag.yaw-dx*0.0035; cam.pitch=clamp(drag.pitch+dy*0.0035,-1.1,1.1); } return; }
-  if(!lastCam) return; const {ro,rd}=rayFromEvent(e); const t=rayHit(ro,rd).t;
-  if(!isFinite(t)){ $('#readout').textContent='Exterior · outside the room'; return; }
-  const p=add(ro,scl(rd,t)); const d=t*dot(rd,lastCam.f); const c=cocPxJS(d);
+  if(!lastCam||placing) return; const now=performance.now(); if(now-pickT<60) return; pickT=now;
+  const h=pickAt(e.clientX-r.left,e.clientY-r.top);
+  if(!h){ $('#readout').textContent=S.scene==='shot'?'Nothing here in the position pass (sky or empty)':'Sky'; return; }
+  const p=h.p, d=h.d, c=cocPxJS(d);
   const f=v=>(v>=0?' ':'−')+Math.abs(v).toFixed(2);
   $('#readout').textContent=`P ${f(p[0])} ${f(p[1])} ${f(p[2])}   depth ${d.toFixed(2)} m   CoC ${Math.abs(c).toFixed(1)} px ${Math.abs(c)<1?'(in focus)':c<0?'(front)':'(behind)'}`;
 });
 canvas.addEventListener('pointerleave',()=>{ if(!drag) loupePos=null; });
 canvas.addEventListener('pointerup',e=>{ if(!drag) return; const wasDrag=drag.moved; drag=null; if(wasDrag||!lastCam) return;
-  const {ro,rd,sx,sy}=rayFromEvent(e); const t=rayHit(ro,rd).t;
-  if(placing){ const h=rayHit(ro,rd); if(isFinite(h.t)){ placeAt(add(ro,scl(rd,h.t)),h.n); showReticle(sx,sy,true); $('#readout').textContent='Placed'; } setPlacing(null); return; }
-  { rackFocus(isFinite(t)?t*dot(rd,lastCam.f):20); showReticle(sx,sy,false); } });
+  const r=canvas.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top, h=pickAt(sx,sy);
+  if(placing){ if(h){ placeAt(h.p,h.n); showReticle(sx,sy,true); $('#readout').textContent='Placed'; } setPlacing(null); return; }
+  { rackFocus(h?h.d:20); showReticle(sx,sy,false); } });
 canvas.addEventListener('pointercancel',()=>{drag=null;});
-canvas.addEventListener('wheel',e=>{ e.preventDefault(); cam.dist=clamp(cam.dist*Math.exp(e.deltaY*0.0012),0.4,9); },{passive:false});
+canvas.addEventListener('wheel',e=>{ e.preventDefault(); cam.dist=clamp(cam.dist*Math.exp(e.deltaY*0.0012),0.3,GEO.maxDist||9); },{passive:false});
 
 function hud(count){
   $('#ovTL').innerHTML=`MoteField1 › Viewer1 · <b>${VIEWS[viewMode].toLowerCase()}</b> · bounce ${giN} spp`;
   $('#ovTR').textContent=`${count.toLocaleString()} motes · ${counter.fps.toFixed(0)} fps`;
-  $('#ovBL').textContent=`f ${String(Math.floor(simTime*S.fps)+1001).padStart(4,'0')} · ${DW} × ${DH}${W<DW?' (room '+W+')':''} · ${S.format}${S.proxy?' · proxy':''}`;
+  $('#ovBL').textContent=`f ${String(Math.floor(simTime*S.fps)+1001).padStart(4,'0')} · ${DW} × ${DH}${W<DW?' (plate '+W+')':''} · ${S.format}${S.proxy?' · proxy':''}`;
   $('#ovBR').textContent=`${Math.round(S.focal)}mm  T${S.fstop.toFixed(1)}  ${focusCur.toFixed(2)} m  ${Math.round(S.shutter)}°  ${S.fps}fps  ${FILMS[S.film].label}`;
 }
 function layout(){
@@ -1766,7 +2298,29 @@ new ResizeObserver(()=>layout()).observe(vpEl);
 
 /* =================== UI =================== */
 const TABS=[
- {id:'dust',label:'Dust',scenes:['room'],groups:[
+ {id:'shot',label:'Shot',scenes:['shot'],groups:[
+  ['Utility pass',[
+   {t:'info'},
+   {t:'btn',label:'Load utility EXRs…',act:()=>$('#fileIn').click()},
+   {t:'btn',label:'Use the demo shot',act:()=>loadDemo()},
+   {t:'note',text:'Drop the render\'s utility passes on the viewer: world position (P), normals, surface colour, depth. One multi-layer EXR or several files. The camera comes from the EXR header, or is solved from P. Files are read in your browser and never uploaded.'}
+  ]],
+  ['Rebuild',[
+   {t:'seg',k:'meshStep',label:'Mesh detail',opts:[[0,'Auto'],[1,'Full'],[2,'½'],[4,'¼']]},
+   {k:'edgeBreak',label:'Edge break',min:0.005,max:0.2,step:0.001,dec:3,log:true},
+   {k:'shell',label:'Shell thickness',min:0.02,max:3,step:0.01,unit:'m',dec:2,log:true},
+   {k:'dustFar',label:'Dust depth',min:0,max:80,step:0.1,unit:'m',dec:1,fmt:v=>v<=0?'auto':v.toFixed(1)},
+   {t:'seg',k:'shade',label:'Show as',opts:[['clay','Clay'],['color','Colour'],['normals','Normals']]},
+   {t:'seg',k:'upAxis',label:'Up axis',opts:[['y','Y up'],['z','Z up']]},
+   {t:'toggle',k:'enclosed',label:'Interior'},
+   {t:'note',text:'Edge break splits the surface where depth jumps between neighbouring pixels, so foreground objects don\'t stretch into the background. Shell thickness gives the one-sided surfaces some depth for bounce light and shadows. Interior treats what the camera can\'t see as more room rather than open sky. Dust fills the camera\'s view out to the dust depth.'}
+  ]],
+  ['View',[
+   {t:'btn',label:'Back to shot camera',act:()=>applyShotCam()},
+   {t:'note',text:'Orbit away to see the rebuilt scene in 3D and place things; the blue frustum is the shot camera. Only surfaces the camera saw exist, so the far side of objects is open.'}
+  ]]
+ ]},
+ {id:'dust',label:'Dust',scenes:['shot'],groups:[
   ['Population',[
    {k:'density',label:'Density',min:20,max:500,step:1,unit:'/m³',log:true,dec:0},
    {k:'flakes',label:'Skin & paper flakes',min:0,max:60,step:0.5,unit:'%',dec:1},
@@ -1794,7 +2348,7 @@ const TABS=[
   ]],
   ['',[{t:'note',text:'At real size, almost every mote is smaller than a pixel, so in focus it reads as a point of light and out of focus it takes the shape of the lens aperture. Only large lint and fluff that is close and in focus shows its own shape; press L for a pixel loupe.'},{t:'btn',label:'Reseed motes',act:()=>seedSim()}]]
  ]},
- {id:'motion',label:'Motion',scenes:['room'],groups:[
+ {id:'motion',label:'Motion',scenes:['shot'],groups:[
   ['Air',[
    {k:'speed',label:'Playback speed',min:0,max:3,step:0.01,unit:'×',dec:2},
    {k:'drift',label:'Drift',min:0,max:20,step:0.1,unit:'cm/s',dec:1},
@@ -1810,7 +2364,7 @@ const TABS=[
   ]],
   ['',[{t:'note',text:'Grit settles; lint and fluff hang in the air. For gusts and things moving through the dust, use the Influence tab.'}]]
  ]},
- {id:'influence',label:'Influence',scenes:['room'],groups:[
+ {id:'influence',label:'Influence',scenes:['shot'],groups:[
   ['Gust of wind',[
    {t:'btn',label:'Place gust source',id:'placeGust',act:()=>setPlacing(placing==='gust'?null:'gust')},
    {t:'btn',label:'Aim gust at a point',id:'aimGust',act:()=>setPlacing(placing==='gustAim'?null:'gustAim')},
@@ -1872,16 +2426,17 @@ const TABS=[
  ]},
  {id:'light',label:'Light',groups:[
   ['Key light (stand-in sun)',[
-   {k:'sunAz',label:'Azimuth',min:-40,max:75,step:0.5,unit:'°',dec:1},
-   {k:'sunEl',label:'Elevation',min:10,max:70,step:0.5,unit:'°',dec:1},
+   {k:'sunAz',label:'Azimuth',min:-180,max:180,step:0.5,unit:'°',dec:1},
+   {k:'sunEl',label:'Elevation',min:5,max:85,step:0.5,unit:'°',dec:1},
    {k:'sunI',label:'Intensity',min:0,max:14,step:0.05,dec:2},
    {k:'sunK',label:'Colour temp',min:2500,max:8000,step:50,unit:'K',dec:0},
-   {t:'seg',k:'cookie',label:'Window',opts:[[0,'Open'],[1,'Blinds'],[2,'Foliage']]},
+   {t:'seg',k:'cookie',label:'Breakup',opts:[[0,'None'],[2,'Leaves']]},
+   {t:'note',scenes:['shot'],text:'In the demo, shadows come from the key light\'s own depth pass, as they would in production. Move the light and they fall back to the rebuilt geometry, which only knows the surfaces the camera saw.'}
   ]],
-  ['Room',[
+  ['Bounce',[
    {k:'gi',label:'Bounce light',min:0,max:2,step:0.01,unit:'×',dec:2},
    {k:'fill',label:'Sky & ground fill',min:0,max:2,step:0.01,unit:'×',dec:2},
-   {t:'note',text:'The clay room is path traced: two bounces of sunlight and the sky and ground outside the windows, refined over a second or two. It starts grainy and resolves; moving the light restarts it.'}
+   {t:'note',text:'The scene is path traced through a voxel copy: two bounces of the key light plus the sky, refined over a second or two. It starts grainy and resolves; moving the light restarts it.'}
   ]],
   ['Atmosphere',[
    {t:'toggle',k:'atmos',label:'God-ray pass'},
@@ -1892,11 +2447,11 @@ const TABS=[
  {id:'camera',label:'Camera',groups:[
   ['Shot camera',[
    {k:'focal',label:'Focal length',min:14,max:150,step:0.5,unit:'mm',dec:0,log:true},
-   {t:'seg',k:'film',label:'Film back',opts:[['s35','S35'],['a35','A35'],['ff','FF'],['lf','LF']]},
-   {t:'seg',k:'format',label:'Format',opts:[['2.39','2.39'],['1.85','1.85'],['16:9','16:9']]},
+   {t:'seg',k:'film',label:'Film back',opts:[['plate','Plate'],['s35','S35'],['a35','A35'],['ff','FF'],['lf','LF']]},
+   {t:'seg',k:'format',label:'Format',opts:[['plate','Plate'],['2.39','2.39'],['1.85','1.85'],['16:9','16:9']]},
   ]],
   ['View',[
-   {t:'btn',label:'Reset camera',act:()=>{ const c=PRESETS[S.scene][0].cam; setCam(c.E,c.T); }},
+   {t:'btn',label:'Reset camera',act:()=>{ if(S.scene==='shot') applyShotCam(); else { const c=PRESETS[S.scene][0].cam; setCam(c.E,c.T); } }},
    {t:'note',text:'Drag in the viewer to orbit, scroll to dolly. Motion blur uses the camera at shutter open and close, so a moving shot camera would blur the motes exactly.'}
   ]]
  ]},
@@ -1931,7 +2486,7 @@ const TABS=[
   ]]
  ]}
 ];
-const knobEls={}; let curTab='dust';
+const knobEls={}; let curTab='shot';
 const tabsEl=$('#tabs'), knobsEl=$('#knobs');
 function sliderPos(it,v){ return it.log ? Math.log(v/it.min)/Math.log(it.max/it.min) : (v-it.min)/(it.max-it.min); }
 function sliderVal(it,p){ let v=it.log ? it.min*Math.pow(it.max/it.min,p) : it.min+p*(it.max-it.min); return Math.round(v/it.step)*it.step; }
@@ -1945,6 +2500,9 @@ function onParam(k){
   if(k==='format'||k==='proxy') layout();
   if(['focus','fstop','focal','film','dof'].includes(k)) drawRing();
   if(k==='focus') focusAnim=null;
+  if(['meshStep','edgeBreak','shell','shade'].includes(k)) scheduleRebuild(false);
+  if(k==='dustFar') scheduleRebuild(true);
+  if(k==='upAxis') setUpAxis(S.upAxis);
   markPreset(null);
 }
 const visTabs=()=>TABS.filter(t=>!t.scenes||t.scenes.includes(S.scene));
@@ -1959,6 +2517,8 @@ function buildKnobs(){
   for(const [title,items] of tab.groups){
     const g=document.createElement('div'); g.className='grp'; if(title){ const h=document.createElement('h3'); h.textContent=title; g.appendChild(h); }
     for(const it of items){
+      if(it.scenes && !it.scenes.includes(S.scene)) continue;
+      if(it.t==='info'){ const d=document.createElement('div'); d.className='shotinfo'; d.id='shotInfo'; d.innerHTML=shotInfoHTML(); g.appendChild(d); continue; }
       if(it.t==='note'){ const p=document.createElement('p'); p.className='note'; p.textContent=it.text; g.appendChild(p); continue; }
       if(it.t==='legend'){ const d=document.createElement('div'); d.className='legend'; d.innerHTML='<span><i style="background:#ffdb99"></i>grit</span><span><i style="background:#59ccff"></i>flakes</span><span><i style="background:#ff5980"></i>lint</span><span><i style="background:#8cff73"></i>fluff</span><span>· ID channel colours</span>'; g.appendChild(d); continue; }
       if(it.t==='ring'){ const d=document.createElement('div'); d.className='ring'; d.innerHTML='<canvas id="ringc" aria-label="Focus ring with depth of field scale"></canvas><div class="rd"><span id="ringFocus"></span><span id="ringDof"></span></div>'; g.appendChild(d); continue; }
@@ -2033,7 +2593,7 @@ function setPlay(p){ playing=p; playBtn.setAttribute('aria-pressed',p); playBtn.
 playBtn.onclick=()=>setPlay(!playing); setPlay(playing);
 $('#btnGust').onclick=()=>{ if(started) fireGust(); };
 $('#btnRun').onclick=()=>{ if(started) runMover(); };
-function syncSceneUI(){ const room=S.scene==='room'; $('#btnGust').hidden=!room; $('#btnRun').hidden=!room;
+function syncSceneUI(){ const room=S.scene==='shot'; $('#btnGust').hidden=!room; $('#btnRun').hidden=!room;
   $('.hints').textContent=room?'Click focus · Drag orbit · Scroll dolly · G gust · R run object · L loupe':'Click focus · Drag orbit · Scroll dolly · L loupe'; }
 $('#btnLoupe').onclick=()=>setLoupe(!loupeOn);
 window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,select')) return;
@@ -2046,13 +2606,19 @@ window.addEventListener('keydown',e=>{ if(e.target.closest('input,textarea,selec
 
 const presetEl=$('#presets'), sceneSeg=$('#sceneseg');
 function markPreset(id){ [...presetEl.querySelectorAll('.chip')].forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id)); }
-function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; const inf={}; for(const k in S) if(/^(gust|mov)/.test(k)) inf[k]=S[k]; Object.assign(S,DEF,SCENES[S.scene].def,pr.p,keep,inf); setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
+const REBUILD_KEYS=['meshStep','edgeBreak','shell','dustFar','shade','upAxis','enclosed'];
+function applyLook(pr){ const keep={proxy:S.proxy,scene:S.scene}; const inf={}; for(const k in S) if(/^(gust|mov)/.test(k)||REBUILD_KEYS.includes(k)) inf[k]=S[k];
+  Object.assign(S,DEF,SCENES[S.scene].def,S.scene==='shot'?shotDefaults():{},pr.p,keep,inf);
+  if(S.scene==='shot'){ applyShotCam(); if(pr.cam==='closeup') closeupCam(); } else setCam(pr.cam.E,pr.cam.T); focusAnim=null; focusCur=S.focus;
   updateLight(); resetGI=true; resetDOF=true; layout(); buildKnobs(); markPreset(pr.id); mover=null; gust=null; blobs.length=0; if(started) prewarmEmbers(); }
 function buildPresets(){ presetEl.querySelectorAll('.chip').forEach(c=>c.remove());
-  for(const pr of PRESETS[S.scene]){ const b=document.createElement('button'); b.className='chip'; b.dataset.id=pr.id; b.textContent=pr.label; b.onclick=()=>applyLook(pr); presetEl.appendChild(b); } }
+  for(const pr of PRESETS[S.scene]){ const b=document.createElement('button'); b.className='chip'; b.dataset.id=pr.id; b.textContent=typeof pr.label==='function'?pr.label():pr.label; b.onclick=()=>applyLook(pr); presetEl.appendChild(b); } }
 function buildSceneSeg(){ sceneSeg.innerHTML=''; for(const k in SCENES){ const b=document.createElement('button'); b.textContent=SCENES[k].label; b.setAttribute('aria-pressed',S.scene===k); b.onclick=()=>switchScene(k); sceneSeg.appendChild(b); } }
 async function switchScene(name){
-  if(!started||switching||name===S.scene) return; switching=true; setPlacing(false);
+  if(!started||switching||name===S.scene) return;
+  if(name==='shot'){ if(!SHOT) return; switching=true; setPlacing(false); const ld=$('#loader'); ld.classList.remove('done'); progress(0.2,'Rebuilding the shot from its utility pass'); await nextFrame();
+    enterShot(); progress(1,'Ready'); ld.classList.add('done'); switching=false; return; }
+  switching=true; setPlacing(false);
   const ld=$('#loader'); ld.classList.remove('done'); progress(0.05,'Building the '+SCENES[name].label.toLowerCase()+' scene'); await nextFrame();
   const keepProxy=S.proxy; Object.assign(S,DEF,SCENES[name].def); S.proxy=keepProxy;
   buildScene(); progress(0.3,'Uploading geometry'); await nextFrame();
@@ -2067,21 +2633,26 @@ async function switchScene(name){
   progress(1,'Ready'); ld.classList.add('done'); switching=false;
 }
 buildSceneSeg(); buildPresets();
-buildTabs(); buildKnobs(); syncSceneUI(); markPreset('loft'); layout();
+buildTabs(); buildKnobs(); syncSceneUI(); markPreset('default'); layout();
+// loading utility passes: the button, or drop files on the viewer
+$('#btnLoad').onclick=()=>$('#fileIn').click();
+$('#fileIn').onchange=e=>{ const f=[...e.target.files]; e.target.value=''; loadFiles(f); };
+const dropEl=$('#drop'), hasFiles=e=>[...(e.dataTransfer?.types||[])].includes('Files');
+vpEl.addEventListener('dragenter',e=>{ if(hasFiles(e)){ e.preventDefault(); dropEl.hidden=false; } });
+vpEl.addEventListener('dragover',e=>{ if(hasFiles(e)){ e.preventDefault(); e.dataTransfer.dropEffect='copy'; dropEl.hidden=false; } });
+dropEl.addEventListener('dragleave',()=>{ dropEl.hidden=true; });
+vpEl.addEventListener('drop',e=>{ if(!hasFiles(e)) return; e.preventDefault(); dropEl.hidden=true; loadFiles(e.dataTransfer.files); });
 
 /* =================== boot with a progress bar =================== */
 (async function boot(){
   try{
-    progress(0.03,'Building the clay room'); await nextFrame();
-    buildScene();
-    progress(0.07,'Uploading geometry'); await nextFrame();
-    meshMain=mkMesh(GM); meshBlinds=mkMesh(GB); meshSky=mkMesh(GS);
-    progress(0.1,'Voxelising the room for the path tracer'); await nextFrame();
-    voxelize();
-    progress(0.16,'Compiling shaders'); await nextFrame();
-    await compileAll(0.16,0.74);
-    progress(0.77,'Allocating render targets'); await nextFrame();
-    makeShadow(); started=true; layout();
+    progress(0.03,'Compiling shaders'); await nextFrame();
+    await compileAll(0.03,0.66);
+    progress(0.68,'Rendering the demo shot\'s utility pass'); await nextFrame();
+    makeShadow(); await makeDemoPass();
+    progress(0.74,'Rebuilding the shot from its utility pass'); await nextFrame();
+    Object.assign(S,DEF,SCENES.shot.def,shotDefaults(),{shade:'color',enclosed:!!SHOT.enclosed}); reconstruct(); applyShotCam();
+    started=true; layout(); syncKnob('focal'); syncKnob('format');
     progress(0.82,`Seeding ${MAXN.toLocaleString()} motes`); await nextFrame();
     sim=[0,1].map(()=>{ const p=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST), v=mkTex(TW,TH,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST); return {p,v,fb:mkFB([p,v])}; });
     seedSim();
@@ -2095,7 +2666,7 @@ buildTabs(); buildKnobs(); syncSceneUI(); markPreset('loft'); layout();
     progress(1,'Ready'); $('#loader').classList.add('done');
   }catch(err){ if(!failed){ console.error(err); fail('Loading stopped: '+(err&&err.message||err)); } }
 })();
-window.__mf={S,setView,setCam,switchScene,applyLook,PRESETS,fireGust,runMover};
+window.__mf={S,setView,setCam,switchScene,applyLook,PRESETS,fireGust,runMover,loadFiles,loadDemo,applyShotCam,get SHOT(){return SHOT;},get stats(){return shotStats;},get GEO(){return GEO;},pickAt};
 })();
 
 </script>
