@@ -689,7 +689,7 @@ DEFAULTS = dict(
     light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, bounce=1.0, shadows='stand-in geometry', interior=True,
     # lens (0 = use the camera from the utility pass headers)
     focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, blades=0, max_bokeh=110.0,
-    shutter=180.0, shutter_mode='centred', mb=True,
+    shutter=180.0, shutter_mode='backward', mb=True,       # matches the studio cameras: 180 degrees, backward
     # holdouts
     holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0,
     cache='', standin_json='',
