@@ -158,6 +158,9 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
         <button data-d="2d" class="on">2D</button><button data-d="3d">3D</button>
       </div>
       <div class="sep"></div>
+      <div class="seg" id="qualSeg" title="Preview: the dust simulated and drawn on your graphics card, in real time. Final: the Python render, exactly what the Nuke node writes.">
+        <button data-q="preview" class="on">Preview</button><button data-q="final">Final</button>
+      </div>
       <span class="v2" style="display:contents">
       <div class="seg" id="viewSeg" title="What the viewer shows">
         <button data-v="comp" class="on">Comp</button><button data-v="dust">Dust</button><button data-v="plate">Plate</button>
@@ -176,7 +179,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
         <label title="The motes of the current frame (shown once the frame is rendered)"><input type="checkbox" id="showMotes" checked> Motes</label>
       </span>
       <div class="sep"></div>
-      <label class="live" title="Re-render the current frame whenever a knob changes. The Nuke node only renders when you press a Render button.">
+      <label class="live" id="liveLab" title="Re-render the current frame whenever a knob changes. The Nuke node only renders when you press a Render button.">
         <input type="checkbox" id="live" checked> Live update</label>
     </div>
     <div class="stage" id="stage">
@@ -221,6 +224,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
 <input type="file" id="fileUtil" accept=".exr" multiple hidden>
 <input type="file" id="filePlate" accept=".exr" multiple hidden>
 
+<script src="preview.js"></script>
 <script>
 'use strict';
 // =====================================================================================================
@@ -339,6 +343,7 @@ function changed(commit) {
   $('rngLab').textContent = V.first + '–' + V.last;
   v3dirty();
   if (commit && dim === '3d') loadScene();
+  if (quality === 'preview') ensurePreview();
   drawHud(); drawTrack();
   if (commit) scheduleLive(350);
 }
@@ -516,8 +521,8 @@ async function onButton(what) {
     finally { setBusy(false); }
     return;
   }
-  if (what === 'frame') return renderFrame(frame, true);
-  if (what === 'range') return renderRange();
+  if (what === 'frame') { setQuality('final'); return renderFrame(frame, true); }
+  if (what === 'range') { setQuality('final'); return renderRange(); }
 }
 
 async function makeStandin() {
@@ -526,6 +531,8 @@ async function makeStandin() {
   try {
     const st = await call('standin', { width: standinWidth });
     shot.utility = st.utility; shot.plate = st.plate; shot.standin = true; shot.standinJson = st.set.standin_json;
+    pvs.boxes = st.boxes; pvs.plateLight = st.plate_light; pvs.camsKey = ''; pvs.lightKey = '';
+    if (pv && pv.ok) { pv.setBoxes(st.boxes); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
     shot.label = 'stand-in shot (' + st.width + ' × ' + st.height + ', browser memory)';
     for (const [k, v] of Object.entries(st.set)) if (k !== 'standin_json') setKnob(k, v);
     dust.clear(); plates.clear(); v3.sceneKey = ''; v3.framed = false;
@@ -549,6 +556,7 @@ async function pickFiles(kind, fileList) {
     const r = await call('files', { kind, files: data });
     if (kind === 'utility') {
       shot.utility = r.pattern; shot.standin = false; shot.standinJson = '';
+      pvs.camsKey = ''; pvs.lightKey = ''; if (pv && pv.ok) pv.clearFrameImages();
       shot.label = r.pattern.split('/').pop() + '  (' + r.count + ' frames, browser memory)';
       if (shot.plate && shot.plate.includes('/standin_')) shot.plate = '';
       setKnob('first', r.first); setKnob('last', r.last);
@@ -560,10 +568,12 @@ async function pickFiles(kind, fileList) {
         '.\nCheck the scene units, then press Fit box to shot.');
     } else {
       shot.plate = r.pattern; shot.plateLabel = r.pattern.split('/').pop() + '  (' + r.count + ' frames)';
+      if (pv && pv.ok) pv.clearFrameImages();
       plates.clear();
       setStatus('Plate: ' + r.count + ' frames.');
     }
     showUtility(); draw();
+    if (quality === 'preview') { ensurePreview(); if (kind === 'plate' && !shot.standin) { pvs.fetchKey = ''; prefetchFrames(); } }
   } catch (e) { setStatus((kind === 'utility' ? 'Utility pass' : 'Plate') + ': ' + e.message, true); }
   finally { setBusy(false); }
   scheduleLive(10);
@@ -665,7 +675,7 @@ function fresh(f) { const c = dust.get(f); return !!(c && c.key === settingsKey(
 function scheduleLive(ms) {
   clearTimeout(liveTimer);
   liveTimer = setTimeout(async () => {
-    if (busy || rangeRunning || playing) return;
+    if (busy || rangeRunning || playing || quality !== 'final') return;
     if ($('live').checked && shot.utility && !fresh(frame) && failed !== settingsKey() + '@' + frame) await renderFrame(frame, false);
     else if (shot.plate && !plates.has(frame)) { setBusy(true, 'Plate ' + frame + '…', 0.5); try { await fetchPlate(frame); } finally { setBusy(false); } }
   }, ms);
@@ -693,6 +703,7 @@ async function saveExr() {
 const cv = $('cv'), ctx = cv.getContext('2d');
 let img = null;
 function draw() {
+  if (quality !== 'final' || dim === '3d') { drawHud(); return; }
   const d = dust.get(frame), pl = plates.get(frame);
   const W = pl ? pl.w : d ? d.w : (cv.width || 960), H = pl ? pl.h : d ? d.h : (cv.height || 402);
   if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; img = null; }
@@ -719,6 +730,19 @@ function draw() {
   drawHud();
 }
 function drawHud() {
+  if (quality === 'preview' && typeof pvs !== 'undefined') {
+    let t = '<b>' + frame + '</b>  <span class="ok">preview</span> <span class="no">(GPU, real time)</span>';
+    if (!pv || !pv.ok) t += '\n<span class="st">GPU preview unavailable: use Final</span>';
+    else if (pvs.err) t += '\n<span class="st">' + pvs.err.replace(/</g, '&lt;') + '</span>';
+    else if (!previewReady()) t += '\n<span class="no">' + (pvs.lightNote || 'preparing…') + '</span>';
+    else {
+      t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
+      if (!shot.standin && pv.frameTex.size < V.last - V.first + 1) t += '\n<span class="no">reading frames for holdouts: ' + pv.frameTex.size + ' / ' + (V.last - V.first + 1) + '</span>';
+      if (pvs.lightNote) t += '\n<span class="no">' + pvs.lightNote + '</span>';
+    }
+    $('hud').innerHTML = t;
+    return;
+  }
   const d = dust.get(frame);
   const st = !d ? '<span class="no">dust: not rendered</span>' : d.key === settingsKey() ? '<span class="ok">dust: up to date</span>' : '<span class="st">dust: older settings</span>';
   let s = '<b>' + frame + '</b>  ' + st;
@@ -795,7 +819,7 @@ async function play() {
   const a = Math.round(V.first), b = Math.round(V.last);
   let missing = false;
   for (let f = a; f <= b; f++) if (!fresh(f) || (shot.plate && !plates.has(f))) { missing = true; break; }
-  if (missing && shot.utility) {
+  if (missing && shot.utility && quality === 'final') {
     while (busy || rangeRunning) { await sleep(100); if (!playing) return; }
     if (!playing) return;
     setStatus('Rendering frames ' + a + '–' + b + ' for playback (first pass only)…');
@@ -841,7 +865,7 @@ window.addEventListener('resize', drawTrack);
 // =====================================================================================================
 let dim = '2d';
 const nav2 = { s: 1, x: 0, y: 0 };
-function apply2d() { cv.style.transform = `translate(${nav2.x}px,${nav2.y}px) scale(${nav2.s})`; }
+function apply2d() { cv.style.transform = `translate(${nav2.x}px,${nav2.y}px) scale(${nav2.s})`; v3dirty(); }
 function fit2d() { nav2.s = 1; nav2.x = 0; nav2.y = 0; apply2d(); }
 
 const cv3 = $('cv3');
@@ -858,9 +882,10 @@ function setDim(d) {
   [...$('dimSeg').children].forEach(b => b.classList.toggle('on', b.dataset.d === d));
   document.querySelector('.vbar .v2').style.display = d === '2d' ? 'contents' : 'none';
   document.querySelector('.vbar .v3').style.display = d === '3d' ? 'flex' : 'none';
-  cv.hidden = d === '3d'; cv3.hidden = d !== '3d';
   keysHint();
-  if (d === '3d') { initGL(); loadScene(); v3dirty(); }
+  updateCanvases();
+  if (d === '3d') { initGL(); loadScene(); }
+  v3dirty();
   drawHud();
   try { localStorage.setItem('mf_dim', d); } catch (e) {}
 }
@@ -1018,6 +1043,8 @@ function initGL() {
   const gl = cv3.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) { setStatus('3D view needs WebGL2, which this browser doesn\'t have.', true); return; }
   v3.gl = gl;
+  try { pv = new MFPreview(gl); if (!pv.ok) setStatus('The GPU preview needs float render targets, which this browser doesn\'t offer. Use Final.', true); }
+  catch (e) { pv = null; console.error(e); setStatus('GPU preview failed to start: ' + e.message, true); }
   const sh = (t, src) => { const s2 = gl.createShader(t); gl.shaderSource(s2, src); gl.compileShader(s2); if (!gl.getShaderParameter(s2, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s2)); return s2; };
   const prog = (vs, fs) => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.bindAttribLocation(p, 0, 'aP'); gl.bindAttribLocation(p, 1, 'aC'); gl.linkProgram(p); return p; };
   glP = {
@@ -1057,6 +1084,7 @@ function uploadMotes() {
   glBuf.moteN = d.pts.length / 3; v3.motesFor = d;
 }
 function v3dirty() {
+  if (dim !== '3d' && quality === 'preview' && v3.gl) { if (!v3.raf) v3.raf = requestAnimationFrame(paintPreview2d); return; }
   if (dim !== '3d' || !v3.gl) return;
   if (v3.lock && v3.scene) lookThrough();
   if (!v3.raf) v3.raf = requestAnimationFrame(render3d);
@@ -1064,6 +1092,9 @@ function v3dirty() {
 function render3d() {
   v3.raf = 0;
   const gl = v3.gl; if (!gl || dim !== '3d') return;
+  const pready = previewReady(), pp = pready ? pparams() : null;
+  if (pready) { try { pv.simTo(frame, pp, simStepKey(pp)); } catch (e) { console.error(e); } }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const cw = Math.max(1, Math.round(cv3.clientWidth * dpr)), ch = Math.max(1, Math.round(cv3.clientHeight * dpr));
   if (cv3.width !== cw || cv3.height !== ch) { cv3.width = cw; cv3.height = ch; }
@@ -1100,7 +1131,11 @@ function render3d() {
     gl.uniform1f(U('uSize'), 2 * dpr); gl.uniform1f(U('uGain'), 0.9); gl.uniform1f(U('uRound'), 0);
     gl.drawArrays(gl.POINTS, 0, glBuf.cloudN);
   }
-  if ($('showMotes').checked) {
+  if ($('showMotes').checked && pready) {
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false);
+    pv.draw3d(M, pp, 3 * dpr);
+    gl.depthMask(true); gl.disable(gl.BLEND);
+  } else if ($('showMotes').checked) {
     uploadMotes();
     if (glBuf.moteN) {
       // one byte per mote: lit and inside the fade (bright, warm) down to in shadow or faded out (dim)
@@ -1170,6 +1205,167 @@ function buildLines() {
 }
 
 // =====================================================================================================
+//  GPU preview (preview.js): real-time playback with the same simulation and mote model
+// =====================================================================================================
+let quality = 'preview', pv = null;
+const pvs = { initKey: '', camsKey: '', lightKey: '', busy: false, again: false, boxes: null, plateLight: null, size: null,
+              n: 0, fetchKey: '', lastPaint: 0, fps: 0, err: '' };
+const INIT_KEYS = ['units', 'seed', 'box_center', 'box_size', 'box_rot', 'density', 'max_motes', 'size_min', 'size_max', 'size_bias',
+                   'flakes', 'fibers', 'fluff', 'eddy_size', 'drift', 'drift_dir', 'lift'];
+function initKey(p) { return JSON.stringify(INIT_KEYS.map(k => p[k])); }
+function lightMode(p) {
+  const m = String(p.shadows).toLowerCase();
+  if (m.startsWith('none')) return 0;
+  if (m.startsWith('stand') && shot.standin) return 1;      // stand-in geometry only belongs to the stand-in shot
+  return 2;
+}
+function lightKey(p) { return lightMode(p) === 2 ? JSON.stringify([shot.utility, p.units, p.light_az, p.light_el, p.first, p.last]) : 'm' + lightMode(p); }
+function simStepKey(p) {
+  return JSON.stringify([pvs.initKey, pvs.lightKey, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
+    'light_az', 'light_el', 'shadows', 'interior'].map(k => p[k])]);
+}
+function kelvinRGB(K) {          // motefield.kelvin_rgb
+  const t = K / 100;
+  let r, g, b;
+  if (t <= 66) { r = 255; g = 99.4708025861 * Math.log(t) - 161.1195681661; }
+  else { r = 329.698727446 * Math.pow(t - 60, -0.1332047592); g = 288.1221695283 * Math.pow(t - 60, -0.0755148492); }
+  b = t >= 66 ? 255 : (t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307);
+  const c = [r, g, b].map(v => Math.pow(Math.min(Math.max(v, 0), 255) / 255, 2.2));
+  const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  return c.map(v => v / l);
+}
+function pparams() {
+  const p = params();
+  const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
+  p.L = [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)];
+  p.sun = kelvinRGB(p.light_k).map(v => v * p.light_int);
+  p.amb = p.sun.map(v => v * 0.004 * p.bounce * p.shadow_fill * 1.5);
+  p.lightMode = lightMode(p);
+  return p;
+}
+function previewReady() {
+  if (!pv || !pv.ok || !shot.utility || !pv.init || !pv.cams || !pvs.size) return false;
+  const p = params();
+  if (pvs.initKey !== initKey(p) || pvs.camsKey !== JSON.stringify([shot.utility, p.units, p.first, p.last]) || pvs.lightKey !== lightKey(p)) return !!pvs.initKey;
+  if (lightMode(p) === 1 && !pv.boxes) return false;
+  return true;
+}
+// fetch whatever the preview is missing from Python (each piece is quick); the GPU does the rest every frame
+async function ensurePreview() {
+  if (!pv || !pv.ok || !shot.utility) return;
+  if (pvs.busy) { pvs.again = true; return; }
+  pvs.busy = true;
+  try {
+    for (let guard = 0; guard < 6; guard++) {
+      const p = params();
+      const ck = JSON.stringify([shot.utility, p.units, p.first, p.last]);
+      if (pvs.camsKey !== ck) {
+        const r = await call('scene', { p, cloud: false });
+        pv.setCams({ first: r.first, last: r.last, cams: new Float32Array(r.cams.buffer, r.cams.byteOffset, r.cams.length / 4), lens: r.lens });
+        pvs.size = r.size; pvs.camsKey = ck;
+        if (!shot.standin) prefetchFrames();
+        v3dirty(); continue;
+      }
+      const ik = initKey(p);
+      if (pvs.initKey !== ik) {
+        const r = await call('pinit', { p });
+        pv.setInit(r); pvs.n = r.n; pvs.initKey = ik;
+        v3dirty(); continue;
+      }
+      const lk = lightKey(p);
+      if (pvs.lightKey !== lk) {
+        if (lightMode(p) === 2) { pvs.lightNote = 'building the light map…'; drawHud(); pv.setLightMap(await call('plight', { p })); }
+        if (lightMode(p) === 1 && pvs.boxes && !pv.boxes) pv.setBoxes(pvs.boxes);
+        pvs.lightKey = lk; pvs.lightNote = '';
+        v3dirty(); continue;
+      }
+      break;
+    }
+    pvs.err = '';
+  } catch (e) { pvs.err = e.message; console.error(e.detail || e); }
+  finally {
+    pvs.busy = false; drawHud(); v3dirty();
+    if (pvs.again) { pvs.again = false; ensurePreview(); }
+  }
+}
+// picked utility passes: each frame's distance image (holdouts) and plate, read once in the background
+async function prefetchFrames() {
+  const key = pvs.camsKey + '|' + shot.plate;
+  if (pvs.fetchKey === key) return;
+  pvs.fetchKey = key;
+  const a = Math.round(V.first), b = Math.round(V.last);
+  while (pvs.fetchKey === key) {
+    let f = null;
+    if (!pv.frameTex.has(frame) && frame >= a && frame <= b) f = frame;          // the frame on screen first
+    else for (let g = a; g <= b; g++) if (!pv.frameTex.has(g)) { f = g; break; }
+    if (f === null) break;
+    try {
+      const r = await call('fimages', { p: params(), frame: f, pattern: shot.plate });
+      if (pvs.fetchKey !== key) break;
+      pv.setFrameImages(f, r);
+    } catch (e) { console.error(e); break; }
+    pvs.fetched = pv.frameTex.size;
+    if (f === frame) v3dirty();
+    drawHud();
+  }
+}
+function updateCanvases() {
+  const gpu2d = quality === 'preview' && dim === '2d';
+  cv.hidden = dim === '3d' || gpu2d;
+  cv3.hidden = !(dim === '3d' || gpu2d);
+  $('liveLab').style.display = quality === 'final' ? '' : 'none';
+}
+function setQuality(q) {
+  if (q === quality) return;
+  quality = q;
+  [...$('qualSeg').children].forEach(b => b.classList.toggle('on', b.dataset.q === q));
+  updateCanvases();
+  if (q === 'preview') { initGL(); ensurePreview(); }
+  draw(); v3dirty();
+  if (q === 'final') scheduleLive(50);
+  try { localStorage.setItem('mf_quality', q); } catch (e) {}
+}
+for (const b of $('qualSeg').children) b.onclick = () => setQuality(b.dataset.q);
+
+function paintPreview2d() {
+  v3.raf = 0;
+  const gl = v3.gl;
+  if (!gl || dim !== '2d' || quality !== 'preview') return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = Math.max(1, Math.round(cv3.clientWidth * dpr)), ch = Math.max(1, Math.round(cv3.clientHeight * dpr));
+  if (cv3.width !== cw || cv3.height !== ch) { cv3.width = cw; cv3.height = ch; }
+  const ready = previewReady();
+  let res = null;
+  if (ready) {
+    const p = pparams();
+    try {
+      pv.simTo(frame, p, simStepKey(p));
+      const [W0, H0] = pvs.size;
+      let plateTex = null, distTex = null;
+      if (shot.standin) { pv.standinPlate(frame, W0, H0, pvs.plateLight); plateTex = pv.pl.plate; distTex = pv.pl.dist; }
+      else { const fi = pv.frameTex.get(frame); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; } }
+      res = pv.renderDust(frame, p, W0, H0, distTex);
+      // place the image like the 2D canvas: fit inside the viewer, then the pan / zoom
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.disable(gl.SCISSOR_TEST); gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
+      gl.viewport(0, 0, cw, ch); gl.clearColor(0.051, 0.051, 0.051, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+      const fit = Math.min(1, cw / dpr / W0, ch / dpr / H0) * dpr;     // same size as the Final canvas
+      const w = W0 * fit * nav2.s, h = H0 * fit * nav2.s;
+      const cx = cw / 2 + nav2.x * dpr, cy = ch / 2 + nav2.y * dpr;
+      const x0 = cx - w / 2, x1 = cx + w / 2, yTop = cy - h / 2, yBot = cy + h / 2;
+      pv.composite([x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2], { view, layer, gain: Math.pow(2, gain) }, plateTex);
+    } catch (e) { console.error(e); pvs.err = e.message; }
+  } else {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, cw, ch); gl.clearColor(0.051, 0.051, 0.051, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+  const now = performance.now();
+  if (playing && pvs.lastPaint) pvs.fps = pvs.fps * 0.85 + 0.15 * (1000 / Math.max(now - pvs.lastPaint, 1));
+  pvs.lastPaint = now;
+  drawHud();
+}
+
+// =====================================================================================================
 //  Boot
 // =====================================================================================================
 function bootMsg(msg, x) { $('bootMsg').textContent = msg; $('bootBar').style.width = (x * 100) + '%'; }
@@ -1183,11 +1379,14 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
     bootMsg('Ready', 1);
     $('boot').hidden = true;
     keysHint();
+    initGL(); updateCanvases();
+    try { if (localStorage.getItem('mf_quality') === 'final') setQuality('final'); } catch (e) {}
     try { if (localStorage.getItem('mf_dim') === '3d') setDim('3d'); } catch (e) {}
     await makeStandin();
+    ensurePreview();
   } catch (e) { bootFail(e.message); console.error(e.detail || e); }
 })();
-window.__mfweb = { get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
+window.__mfweb = { get pv() { return pv; }, get pvs() { return pvs; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
 </script>
 </body>
 </html>

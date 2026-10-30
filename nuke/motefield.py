@@ -1183,7 +1183,7 @@ def render_frame(p, shot, frame, sim, progress=None):
 
     Pw_m = sim.world()
     P = Pw_m / su                                   # scene units
-    V = (sim.V @ sim.R.T) / su                      # scene units per second (world axes)
+    V = sim.V / su                                  # scene units per second (sim.V is in world axes already)
     weight = sim.edge_weight()
     d = P - cam.pos
     zc = -(d @ cam.back)

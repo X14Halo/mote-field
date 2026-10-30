@@ -92,7 +92,9 @@ def setup_standin(width=960):
     meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in mf.standin_boxes()], units='centimetres')
     with open(os.path.join(folder, 'standin.json'), 'w') as fh:
         json.dump(meta, fh)
-    return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr',
+    boxes = [list(b[0]) + list(b[1]) + list(b[2]) for b in mf.standin_boxes()]
+    return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr', boxes=boxes,
+                           plate_light=dict(az=S['sun_az'], el=S['sun_el'], intensity=6.0, kelvin=list(mf.kelvin_rgb(5000.0))),
                            first=S['first'], last=S['last'], width=S['width'], height=S['height'],
                            set=dict(units='centimetres', first=S['first'], last=S['last'], fps=24.0, shadows='stand-in geometry',
                                     standin_json=folder + '/standin.json', box_center=list(mf.DEFAULTS['box_center']),
@@ -195,7 +197,7 @@ def render(pjson, frame, progress=None):
                 motes=n, secs=time.time() - t0, pts=pts.tobytes(), lit=(lit * 255).astype(np.uint8).tobytes())
 
 
-def scene(pjson, max_points=240000):
+def scene(pjson, with_cloud=True, max_points=240000):
     """What the 3D view needs: the shot camera on every frame, and a point cloud of the utility pass
     (first, middle and last frames) coloured by its surface colour, or by its normals."""
     p = _params(pjson)
@@ -205,7 +207,7 @@ def scene(pjson, max_points=240000):
     for f in range(first, last + 1):
         c = shot.camera(f)
         cams.extend(list(c.pos) + list(c.right) + list(c.up) + list(c.back) + [c.hfov])
-    fs = sorted(set([first, (first + last) // 2, last]))
+    fs = sorted(set([first, (first + last) // 2, last])) if with_cloud else []
     P_all, C_all = [], []
     for f in fs:
         e = shot._open(f)
@@ -239,8 +241,79 @@ def scene(pjson, max_points=240000):
         C_all.append(C[::step])
     P = np.concatenate(P_all).astype(np.float32) if P_all else np.zeros((0, 3), np.float32)
     C = (np.concatenate(C_all) * 255).astype(np.uint8) if C_all else np.zeros((0, 3), np.uint8)
+    c0 = shot.camera(first)
+    if shot.meta is not None:
+        size = [shot.meta['width'], shot.meta['height']]
+    else:
+        e = shot._open(first)
+        size = [e.parts[0]['width'], e.parts[0]['height']]
+        e.close()
+    lens = dict(focal=c0.focal or 0.0, film=c0.film or 0.0, fstop=c0.fstop or 0.0, focus=c0.focus or 0.0)
     return dict(first=first, last=last, cams=np.array(cams, np.float32).tobytes(), cloud=P.tobytes(), col=C.tobytes(),
-                light=list(mf.light_dir(p['light_az'], p['light_el'])))
+                light=list(mf.light_dir(p['light_az'], p['light_el'])), lens=lens, size=size)
+
+
+# ---------------------------------------------------------------------------------------------------
+#  GPU preview: the simulation's starting state and the light, handed to WebGL
+# ---------------------------------------------------------------------------------------------------
+def preview_init(pjson):
+    """The dust's starting state exactly as motefield.DustSim makes it (same seed, same random numbers),
+    so the GPU preview integrates the same motes the Python render does."""
+    p = _params(pjson)
+    sim = mf.DustSim(p, None)
+    m0, m1 = sim.modes
+    pack = lambda m: np.concatenate([m[0], m[1], m[2][:, None], m[3][:, None]], 1).astype(np.float32)   # K(3) A(3) ph om
+    st = np.zeros((len(sim.local), 4), np.float32)
+    st[:, 0] = sim.type
+    st[:, 1] = sim.settle_f
+    st[:, 2] = sim.tau
+    return dict(n=len(sim.local), local=sim.local.astype(np.float32).tobytes(), h=sim.h.astype(np.float32).tobytes(),
+                st=st.tobytes(), modes0=pack(m0).tobytes(), modes1=pack(m1).tobytes(), M0=len(m0[0]), M1=len(m1[0]),
+                center=list(sim.center), size=list(sim.size), R=list(sim.R.reshape(-1)), wind=list(sim.wind), su=sim.su)
+
+
+def preview_light(pjson):
+    """For 'utility pass' shadows: the light depth map and the sky openings, as make_light() builds them."""
+    p = _params(pjson)
+    shot = _shot(p)
+    L = mf.light_dir(p['light_az'], p['light_el'])
+    fs = sorted(set([p['first'], (p['first'] + p['last']) // 2, p['last']]))
+    pts = []
+    for f in fs:
+        dist, P = shot.surface(f)
+        if P is None:
+            continue
+        Q = P.reshape(-1, 3)
+        Q = Q[np.abs(Q).sum(1) > 0]
+        if len(Q) > 900000:
+            Q = Q[::int(np.ceil(len(Q) / 900000.0))]
+        pts.append(Q.astype(np.float64))
+    if not pts:
+        return None
+    allp = np.concatenate(pts)
+    lm = mf.LightMap(allp, L)
+    g = np.where(np.isfinite(lm.g), lm.g, -1e30).astype(np.float32)
+    lo, hi = np.percentile(allp, 0.5, axis=0), np.percentile(allp, 99.5, axis=0)
+    views = []
+    for f in fs:
+        dist, _ = shot.surface(f)
+        c = shot.camera(f)
+        views.append(dict(cam=list(c.pos) + list(c.right) + list(c.up) + list(c.back) + [c.hfov], w=dist.shape[1], h=dist.shape[0],
+                          sky=(dist <= 0).astype(np.uint8).tobytes()))
+    return dict(res=lm.res, g=g.tobytes(), a=list(lm.a), b=list(lm.b), L=list(lm.L), lo=list(lm.lo), cell=lm.cell, bias=lm.bias,
+                blo=list(lo), bhi=list(hi), views=views)
+
+
+def frame_images(pjson, frame, plate_pattern):
+    """Distance image (for holdouts) and plate of one frame of a picked utility pass, for the GPU preview."""
+    p = _params(pjson)
+    shot = _shot(p)
+    dist, _ = shot.surface(int(frame))
+    out = dict(w=dist.shape[1], h=dist.shape[0], dist=dist.astype(np.float32).tobytes())
+    pl = plate(pjson, plate_pattern, frame) if plate_pattern else None
+    if pl:
+        out.update(pw=pl['w'], ph=pl['h'], rgb=pl['rgb'])
+    return out
 
 
 def plate(pjson, plate_pattern, frame):
