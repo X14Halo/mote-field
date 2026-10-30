@@ -163,10 +163,13 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
         <button data-d="2d" class="on">2D</button><button data-d="3d">3D</button>
       </div>
       <div class="sep"></div>
-      <div class="seg" id="qualSeg" title="Preview: the dust simulated and drawn on your graphics card, in real time. Final: the Python render, exactly what the Nuke node writes.">
+      <div class="seg" id="qualSeg" hidden title="Preview: the dust simulated and drawn on your graphics card, in real time. Final: the Python render, exactly what the Nuke node writes.">
         <button data-q="preview" class="on">Preview</button><button data-q="final">Final</button>
       </div>
       <span class="v2" style="display:contents">
+      <div class="seg" id="camSeg" title="Shot camera: the shot as it will be. Free camera: fly around the set with the same dust, lens and look (C toggles)">
+        <button data-c="shot" class="on">Shot cam</button><button data-c="free">Free cam</button>
+      </div>
       <div class="seg" id="viewSeg" title="What the viewer shows">
         <button data-v="comp" class="on">Comp</button><button data-v="dust">Dust</button><button data-v="plate">Plate</button>
       </div>
@@ -362,6 +365,7 @@ function changed(commit) {
   v3dirty();
   if (commit && dim === '3d') loadScene();
   ensurePreview();
+  if (commit && pv && pv.ok && !shot.standin && pv.cams && pvs.fetchKey && pvs.fetchKey !== frameKey()) { pv.clearFrameImages(); prefetchFrames(); }
   drawHud(); drawTrack();
   if (commit) scheduleLive(350);
 }
@@ -386,7 +390,7 @@ function buildPanel() {
       const d = document.createElement('div'); d.className = 'note'; d.innerHTML = k.label; pg.appendChild(d);
       if (k.tab === 'MoteField' && !k.key) {
         const d2 = document.createElement('div'); d2.className = 'note';
-        d2.innerHTML = 'In the browser it starts on the <b>stand-in shot</b> (an interior with a window opening and a moving camera), made on the fly. Knobs work as in Nuke; with <b>Live update</b> on, the viewer re-renders the current frame as you change them.';
+        d2.innerHTML = 'In the browser it starts on the <b>stand-in shot</b> (an interior with a window opening; pick a wide move or a close-up), made on the fly. The viewer is live: the same dust and lens maths as the Nuke node, on your graphics card. <b>Save this frame</b> renders the exact EXR the Nuke node writes.';
         pg.appendChild(d2);
       }
       continue;
@@ -395,6 +399,8 @@ function buildPanel() {
     if (k.kind === 'button') {
       if (!btnRow || k.extra === 'standin' || k.extra === 'frame') { btnRow = document.createElement('div'); btnRow.className = 'btns-row'; pg.appendChild(btnRow); }
       const b = document.createElement('button'); b.className = 'btn' + (k.extra === 'frame' || k.extra === 'range' ? ' go' : ''); b.textContent = k.label; b.id = 'btn_' + k.extra;
+      if (k.extra === 'frame' || k.extra === 'range') { b.disabled = true; b.dataset.nuke = '1'; b.textContent += ' (Nuke / farm)';
+        b.title = 'In the browser the viewer is live; final frames are rendered by the Nuke node (on the farm). Save this frame writes the exact EXR the Nuke node would.'; }
       if (k.extra === 'preview3d') { b.disabled = true; b.title = 'Nuke only: builds a point cloud of the utility pass and the dust box in Nuke\'s 3D viewer'; b.textContent = '3D preview (Nuke only)'; }
       b.onclick = () => onButton(k.extra);
       btnRow.appendChild(b);
@@ -413,7 +419,7 @@ function buildPanel() {
         sv.onclick = saveExr;
         const cl = document.createElement('button'); cl.className = 'btn'; cl.textContent = 'Clear cache';
         cl.onclick = () => { dust.clear(); drawTrack(); draw(); setStatus('Cache cleared.'); };
-        r2.append(sv, cl);
+        r2.append(sv);
         const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = 'browser'; tg.style.alignSelf = 'center';
         r2.appendChild(tg);
         pg.appendChild(r2);
@@ -445,7 +451,7 @@ function buildPanel() {
     if (k.kind === 'enum') {
       const s = document.createElement('select'); s.className = 'nk';
       for (const o of k.extra) { const e = document.createElement('option'); e.value = o; e.textContent = o; s.appendChild(e); }
-      s.onchange = () => { V[key] = s.value; changed(true); };
+      s.onchange = () => { V[key] = s.value; if (key === 'standin_view') onStandinView(); else changed(true); };
       ctl.appendChild(s);
       ui[key] = { set: (v) => { s.value = v; } };
       continue;
@@ -548,15 +554,23 @@ async function onButton(what) {
   if (what === 'range') { setQuality('final'); return renderRange(); }
 }
 
+// the close-up uses the mockup's close-up dust: more motes, more flakes and lint, more glints
+const CLOSEUP_DUST = { density: 360, flakes: 28, fibers: 5, fluff: 1.5, glint: 0.5 };
+function onStandinView() {
+  const close = V.standin_view === 'close-up';
+  for (const k in CLOSEUP_DUST) setKnob(k, close ? CLOSEUP_DUST[k] : SCHEMA.defaults[k]);
+  makeStandin();
+}
 async function makeStandin() {
   if (rangeRunning) cancelRange = true;
   setBusy(true, 'Setting up the stand-in shot…', 0.1);
   try {
-    const st = await call('standin', { width: standinWidth });
+    const st = await call('standin', { width: standinWidth, view: V.standin_view || 'wide' });
     shot.utility = st.utility; shot.plate = st.plate; shot.standin = true; shot.standinJson = st.set.standin_json;
-    pvs.boxes = st.boxes; pvs.plateLight = st.plate_light; pvs.camsKey = ''; pvs.lightKey = '';
+    pvs.boxes = st.boxes; pvs.plateLight = Object.assign({}, st.plate_light, { room: st.room }); pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = '';
+    if (look) look.clear();
     if (pv && pv.ok) { pv.setBoxes(st.boxes); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
-    shot.label = 'stand-in shot (' + st.width + ' × ' + st.height + ', browser memory)';
+    shot.label = 'stand-in shot, ' + (V.standin_view || 'wide') + ' (' + st.width + ' × ' + st.height + ', browser memory)';
     for (const [k, v] of Object.entries(st.set)) if (k !== 'standin_json') setKnob(k, v);
     dust.clear(); plates.clear(); v3.sceneKey = ''; v3.framed = false;
     showUtility();
@@ -565,6 +579,7 @@ async function makeStandin() {
     setStatus('Stand-in shot ready: frames ' + st.first + '–' + st.last + '. Frames are made the first time they\'re needed.');
   } catch (e) { setStatus('Stand-in failed: ' + e.message, true); }
   finally { setBusy(false); }
+  ensurePreview(); v3.sceneKey = ''; v3.framed = false; if (dim === '3d') loadScene();
   scheduleLive(10);
 }
 
@@ -579,7 +594,7 @@ async function pickFiles(kind, fileList) {
     const r = await call('files', { kind, files: data });
     if (kind === 'utility') {
       shot.utility = r.pattern; shot.standin = false; shot.standinJson = '';
-      pvs.camsKey = ''; pvs.lightKey = ''; if (pv && pv.ok) pv.clearFrameImages();
+      pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = ''; if (pv && pv.ok) pv.clearFrameImages(); if (look) look.clear();
       shot.label = r.pattern.split('/').pop() + '  (' + r.count + ' frames, browser memory)';
       if (shot.plate && shot.plate.includes('/standin_')) shot.plate = '';
       setKnob('first', r.first); setKnob('last', r.last);
@@ -638,7 +653,7 @@ function setBusy(on, msg, x, cancellable) {
   if (msg) $('busyMsg').textContent = msg;
   $('busyBar').style.width = ((x || 0) * 100) + '%';
   $('cancelBtn').hidden = !cancellable;
-  for (const id of ['btn_frame', 'btn_range', 'btn_fit', 'btn_standin', 'btn_save']) { const b = $(id); if (b) b.disabled = on; }
+  for (const id of ['btn_frame', 'btn_range', 'btn_fit', 'btn_standin', 'btn_save']) { const b = $(id); if (b && !b.dataset.nuke) b.disabled = on; }
 }
 $('cancelBtn').onclick = () => { cancelRange = true; $('busyMsg').textContent = 'Cancelling after this frame…'; if (playing) stop(); };
 
@@ -736,7 +751,7 @@ function scheduleLive(ms) {
 async function saveExr() {
   if (busy) return;
   if (!shot.utility) return setStatus('Choose a utility pass first.', true);
-  setBusy(true, 'Writing dust.' + frame + '.exr…', 0.4);
+  setBusy(true, 'Rendering frame ' + frame + ' in Python (exactly as the Nuke node)…', 0.4);
   try {
     const bytes = await call('exr', { p: params(), frame });
     const a = document.createElement('a');
@@ -783,12 +798,12 @@ function draw() {
 }
 function drawHud() {
   if (quality === 'preview' && typeof pvs !== 'undefined') {
-    let t = '<b>' + frame + '</b>  <span class="ok">preview</span> <span class="no">(GPU, real time)</span>' + (vw.hold ? '  <span class="st">camera held on ' + vw.holdFrame + '</span>' : '');
+    let t = '<b>' + frame + '</b>  <span class="ok">live</span>' + (vw.free && dim === '2d' ? '  <span class="st">free camera · focus ' + Math.round(vw.freeFocus || 0) + '</span>' : '') + (vw.hold ? '  <span class="st">camera held on ' + vw.holdFrame + '</span>' : '');
     if (!pv || !pv.ok) t += '\n<span class="st">GPU preview unavailable: use Final</span>';
     else if (pvs.err) t += '\n<span class="st">' + pvs.err.replace(/</g, '&lt;') + '</span>';
     else if (!previewReady()) t += '\n<span class="no">' + (pvs.lightNote || 'preparing…') + '</span>';
     else {
-      t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
+      t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (pvs.res && dim === '2d' ? ' · ' + pvs.res[0] + '×' + pvs.res[1] : '') + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
       if (!shot.standin && pv.frameTex.size < V.last - V.first + 1) t += '\n<span class="no">reading frames for holdouts: ' + pv.frameTex.size + ' / ' + (V.last - V.first + 1) + '</span>';
       if (pvs.lightNote) t += '\n<span class="no">' + pvs.lightNote + '</span>';
     }
@@ -906,7 +921,8 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowRight') { stop(); setFrame(frame + 1, true); e.preventDefault(); }
   else if (e.key === ' ') { playing ? stop() : play(); e.preventDefault(); }
   else if (e.key === 'Tab') { setDim(dim === '2d' ? '3d' : '2d'); e.preventDefault(); }
-  else if ((e.key === 'f' || e.key === 'F' || e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey) { if (dim === '2d') fit2d(); else { unlock(); frame3d(); } }
+  else if ((e.key === 'f' || e.key === 'F' || e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey) { if (dim === '2d' && vw.free) setFreeCam(true); else if (dim === '2d') fit2d(); else { unlock(); frame3d(); } }
+  else if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey && dim === '2d') setFreeCam(!vw.free);
 });
 for (const b of $('viewSeg').children) b.onclick = () => { view = b.dataset.v; [...$('viewSeg').children].forEach(x => x.classList.toggle('on', x === b)); draw(); };
 $('layerSel').onchange = (e) => { layer = e.target.value; draw(); };
@@ -932,7 +948,8 @@ const v3 = { gl: null, coi: [0, 0, 0], dist: 1500, yaw: 0.6, pitch: 0.35, fov: 4
 function keysHint() {
   $('keys').innerHTML = dim === '3d'
     ? '<b>Alt+LMB</b> tumble · <b>Alt+MMB</b> track · <b>Alt+RMB</b> / <b>wheel</b> dolly · <b>F</b> frame · <b>Tab</b> 2D<br>Box: drag a <b>coloured dot</b> to resize from that side, the <b>gold dot</b> to move (<b>Shift</b>: up / down)'
-    : '<b>Alt+MMB</b> pan · <b>Alt+RMB</b> / <b>wheel</b> zoom · <b>F</b> fit · <b>Tab</b> 3D';
+    : vw.free ? '<b>LMB</b> orbit · <b>MMB</b> track · <b>RMB</b> dolly · <b>wheel</b> focus · <b>double-click</b> focus there · <b>F</b> back to the shot camera · <b>C</b> shot cam'
+    : '<b>Alt+MMB</b> pan · <b>Alt+RMB</b> / <b>wheel</b> zoom · <b>F</b> fit · <b>C</b> free camera · <b>Tab</b> 3D';
 }
 function setDim(d) {
   dim = d;
@@ -969,7 +986,7 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
       }
     }
     let mode;
-    if (dim === '3d') mode = btn === 0 ? (e.shiftKey ? 'track' : 'tumble') : btn === 1 ? 'track' : 'dolly';
+    if (dim === '3d' || vw.free) mode = btn === 0 ? (e.shiftKey ? 'track' : 'tumble') : btn === 1 ? 'track' : 'dolly';
     else mode = btn === 2 ? 'zoom' : 'pan';
     drag = { mode, x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, id: e.pointerId };
     st.style.cursor = mode === 'tumble' ? 'grabbing' : mode === 'pan' || mode === 'track' ? 'move' : 'ns-resize';
@@ -983,7 +1000,8 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     if (drag.mode === 'handle') { const r = cv3.getBoundingClientRect(); dragHandle(drag, e.clientX - r.left, e.clientY - r.top, e.shiftKey); v3dirty(); return; }
     const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
     drag.lx = e.clientX; drag.ly = e.clientY;
-    if (dim === '2d') {
+    if (dim === '2d' && vw.free) moved();
+    if (dim === '2d' && !vw.free) {
       if (drag.mode === 'pan') { nav2.x += dx; nav2.y += dy; }
       else zoom2d(Math.exp((dx + dy) * 0.006), drag.x, drag.y);
       apply2d();
@@ -1004,12 +1022,26 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
   });
   const end = (e) => { if (drag && e.pointerId === drag.id) { const wasHandle = drag.mode === 'handle'; drag = null; v3.drag = null; st.style.cursor = ''; if (wasHandle) { changed(true); v3dirty(); } } };
   st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
+  st.addEventListener('dblclick', (e) => {      // free camera: focus on what you double-click
+    if (dim !== '2d' || !vw.free || !look) return;
+    const ent = look.cache.get('free'), d = ent ? ent.dist : setFB && setFB.dist; if (!d || !vw.rect) return;
+    const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), R = vw.rect;
+    const u = ((e.clientX - r.left) * dpr - R.x0) / (R.x1 - R.x0), v = ((e.clientY - r.top) * dpr - R.yTop) / (R.yBot - R.yTop);
+    if (u < 0 || u > 1 || v < 0 || v > 1) return;
+    const gl = v3.gl, px = Math.min(d.w - 1, Math.floor(u * d.w)), py = Math.min(d.h - 1, Math.floor(v * d.h)), out = new Float32Array(4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, pv.fb);
+    for (let i = 0; i < 4; i++) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, i ? null : d, 0);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0); gl.readPixels(px, py, 1, 1, gl.RGBA, gl.FLOAT, out);
+    if (out[0] > 0) { vw.freeFocus = out[0]; setStatus('Focus: ' + out[0].toFixed(0) + ' scene units.'); drawHud(); v3dirty(); }
+  });
   st.addEventListener('wheel', (e) => {
     if (!$('boot').hidden) return;
     e.preventDefault();
     const k = Math.exp(-Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120) * 0.0018);
-    if (dim === '2d') { zoom2d(k, e.clientX, e.clientY); apply2d(); }
-    else { unlock(); dollyBy(1 / k); v3dirty(); }
+    if (dim === '2d' && vw.free && !e.shiftKey && !e.ctrlKey) {      // like the mockup: the wheel racks focus
+      vw.freeFocus = Math.max(5, (vw.freeFocus || 300) / k); moved(); drawHud(); v3dirty();
+    } else if (dim === '2d' && !vw.free) { zoom2d(k, e.clientX, e.clientY); apply2d(); }
+    else { unlock(); dollyBy(1 / k); if (vw.free) moved(); v3dirty(); }
   }, { passive: false });
 })();
 function zoom2d(f, cx, cy) {
@@ -1415,7 +1447,6 @@ function pparams() {
   const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
   p.L = [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)];
   p.sun = kelvinRGB(p.light_k).map(v => v * p.light_int);
-  p.amb = p.sun.map(v => v * 0.004 * p.bounce * p.shadow_fill * 1.5);
   p.lightMode = lightMode(p);
   return p;
 }
@@ -1448,6 +1479,11 @@ async function ensurePreview() {
         pv.setInit(r); pvs.n = r.n; pvs.initKey = ik;
         v3dirty(); continue;
       }
+      const bk = JSON.stringify([shot.utility, p.units, p.shadows, p.interior, p.light_az, p.light_el, p.light_int, p.light_k, p.first, p.last, shot.standinJson]);
+      if (pvs.bounceKey !== bk && pvs.camsKey) {
+        pv.setBounce(await call('pbounce', { p })); pvs.bounceKey = bk;
+        v3dirty(); continue;
+      }
       const lk = lightKey(p);
       if (pvs.lightKey !== lk) {
         if (lightMode(p) === 2) { pvs.lightNote = 'building the light map…'; drawHud(); pv.setLightMap(await call('plight', { p })); }
@@ -1465,8 +1501,10 @@ async function ensurePreview() {
   }
 }
 // picked utility passes: each frame's distance image (holdouts) and plate, read once in the background
+// what the per-frame images depend on: the shot, the plate, and (when the set is shaded from the utility pass) the light
+function frameKey() { return pvs.camsKey + '|' + shot.plate + (shot.plate ? '' : '|' + ['light_az', 'light_el', 'light_int', 'light_k', 'bounce', 'shadows', 'interior'].map(k => V[k]).join(',')); }
 async function prefetchFrames() {
-  const key = pvs.camsKey + '|' + shot.plate;
+  const key = frameKey();
   if (pvs.fetchKey === key) return;
   pvs.fetchKey = key;
   const a = Math.round(V.first), b = Math.round(V.last);
@@ -1490,7 +1528,7 @@ function updateCanvases() {
   const gpu2d = dim === '2d' && glViewer();
   cv.hidden = dim === '3d' || gpu2d;
   cv3.hidden = !(dim === '3d' || gpu2d);
-  $('liveLab').style.display = quality === 'final' ? '' : 'none';
+  $('liveLab').style.display = 'none';
 }
 function setQuality(q) {
   if (q === quality) return;
@@ -1524,6 +1562,80 @@ for (const b of $('qualSeg').children) b.onclick = () => setQuality(b.dataset.q)
 // the 2D viewer, for both Preview (GPU dust) and Final (Python dust): plate, dust, glow and tone curve on the GPU
 let look = null;
 function camFrame() { return vw.hold ? vw.holdFrame : frame; }
+// ---- free camera: the 3D view's camera, drawn with the full look (lit set, dust, the shot's lens) ----
+function setFreeCam(on) {
+  vw.free = on;
+  [...$('camSeg').children].forEach(b => b.classList.toggle('on', b.dataset.c === (on ? 'free' : 'shot')));
+  if (on) {
+    v3.framed = true; loadScene();
+    const c = pv && pv.cams ? pv.camAt(camFrame()) : null;
+    if (c) {              // start where the shot camera is
+      const b = norm(c.back); v3.lock = false; v3.aspectLock = 0;
+      v3.pitch = Math.asin(Math.max(-1, Math.min(1, b[1]))); v3.yaw = Math.atan2(b[0], b[2]);
+      const p = params(), L = pv.lens(pparams(), c, 1000);
+      vw.freeFocus = L.focusM / L.su;
+      v3.dist = vw.freeFocus; v3.coi = c.pos.map((v, i) => v - b[i] * v3.dist);
+    }
+  }
+  keysHint(); drawHud(); v3dirty();
+}
+for (const b of $('camSeg').children) b.onclick = () => setFreeCam(b.dataset.c === 'free');
+function freeCamObj(W, H) {
+  const { b, r, u } = basis(), p = pparams(), sc = pv.camAt(camFrame());
+  const L = pv.lens(p, sc, W);
+  return { pos: eyePos(), right: r, up: u, back: b, hfov: 2 * Math.atan(L.film / (2 * L.focal)) };
+}
+function moved() { vw.lastMove = performance.now(); clearTimeout(vw.idleT); vw.idleT = setTimeout(() => v3dirty(), 320); }
+// picked utility passes have no geometry to trace: draw their meshes from the free camera instead
+let setFB = null;
+function rasterSet(cam, W, H, p) {
+  const gl = v3.gl;
+  if (!glBuf.meshes || !glBuf.meshes.length) return null;
+  if (!setFB || setFB.w !== W || setFB.h !== H) {
+    if (setFB) { gl.deleteTexture(setFB.plate); gl.deleteTexture(setFB.dist); gl.deleteRenderbuffer(setFB.depth); gl.deleteFramebuffer(setFB.fb); }
+    const plate = pv._tex(W, H, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, null), dist = pv._tex(W, H, gl.R32F, gl.RED, gl.FLOAT, null);
+    const depth = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, depth); gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, W, H);
+    const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, plate, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, dist, 0);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+    setFB = { w: W, h: H, plate, dist, depth, fb };
+  }
+  if (!glP.setr) {
+    const pr = gl.createProgram();
+    const v = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v, `#version 300 es
+      layout(location=0) in vec3 aP; layout(location=1) in vec3 aN; layout(location=2) in vec3 aC;
+      uniform mat4 uM; out vec3 vP, vN, vC;
+      void main(){ gl_Position = uM * vec4(aP, 1.0); vP = aP; vN = aN; vC = pow(aC, vec3(2.2)); gl_Position.y = -gl_Position.y; }`); gl.compileShader(v);
+    const f = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f, `#version 300 es
+      precision highp float; in vec3 vP, vN, vC; uniform vec3 uEye, uL, uSun; uniform float uInt;
+      uniform sampler2D uLM; uniform vec3 uLa, uLb; uniform vec2 uLlo; uniform float uLcell, uLbias; uniform int uLres, uHasLM;
+      layout(location=0) out vec4 oC; layout(location=1) out vec4 oD;
+      void main(){ vec3 n = dot(vN, vN) > 0.1 ? normalize(vN) : vec3(0.0, 1.0, 0.0);
+        float nl = max(dot(n, uL), 0.0), vis = 1.0;
+        if (uHasLM == 1) { vec3 P = vP + n * 2.0; float u = dot(P, uLa), v = dot(P, uLb), d = dot(P, uL);
+          int iu = int((u - uLlo.x) / uLcell), iv = int((v - uLlo.y) / uLcell);
+          if (iu >= 0 && iu < uLres && iv >= 0 && iv < uLres && texelFetch(uLM, ivec2(iu, iv), 0).r > d + uLbias) vis = 0.0; }
+        float fill = uInt * (0.035 + 0.02 * clamp(n.y, 0.0, 1.0));
+        oC = vec4(vC * (uSun * nl * vis + fill * vec3(0.95, 0.97, 1.0)), 1.0); oD = vec4(length(vP - uEye), 0.0, 0.0, 1.0); }`); gl.compileShader(f);
+    gl.attachShader(pr, v); gl.attachShader(pr, f); gl.linkProgram(pr); glP.setr = pr;
+  }
+  const pr = glP.setr, U = (n) => gl.getUniformLocation(pr, n);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, setFB.fb); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  gl.viewport(0, 0, W, H); gl.disable(gl.SCISSOR_TEST); gl.disable(gl.BLEND);
+  gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]); gl.clearBufferfv(gl.COLOR, 1, [0, 0, 0, 0]); gl.clearBufferfv(gl.DEPTH, 0, [1]);
+  gl.enable(gl.DEPTH_TEST); gl.useProgram(pr);
+  const fov0 = v3.fov; v3.fov = 2 * Math.atan(Math.tan(cam.hfov / 2) * H / W) * 180 / Math.PI;
+  gl.uniformMatrix4fv(U('uM'), false, viewProj(W / H)); v3.fov = fov0;
+  gl.uniform3fv(U('uEye'), cam.pos); gl.uniform3fv(U('uL'), p.L); gl.uniform3fv(U('uSun'), p.sun); gl.uniform1f(U('uInt'), p.light_int);
+  const Lm = pv.light;
+  gl.uniform1i(U('uHasLM'), Lm ? 1 : 0);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, Lm ? Lm.g : pv.dummy); gl.uniform1i(U('uLM'), 0);
+  if (Lm) { gl.uniform3fv(U('uLa'), Lm.a); gl.uniform3fv(U('uLb'), Lm.b); gl.uniform2fv(U('uLlo'), Lm.lo); gl.uniform1f(U('uLcell'), Lm.cell); gl.uniform1f(U('uLbias'), Lm.bias); gl.uniform1i(U('uLres'), Lm.res); }
+  for (const m of glBuf.meshes) { gl.bindVertexArray(m.vao); gl.drawElements(gl.TRIANGLES, m.count, gl.UNSIGNED_INT, 0); }
+  gl.bindVertexArray(null); gl.disable(gl.DEPTH_TEST);
+  return { plate: setFB.plate, dist: setFB.dist };
+}
 function uploadFinal(d) {
   const gl = v3.gl;
   if (vw.finalFor === d && vw.finalLayer === layer) return vw.finalTex;
@@ -1546,12 +1658,31 @@ function paintPreview2d() {
   const size = pvs.size || (fin ? [fin.w, fin.h] : null);
   if (!size || !pv.cams || !shot.utility) { black(); drawHud(); return; }
   try {
-    const [W0, H0] = size, p = pparams(), cf = camFrame();
-    let plateTex = null, distTex = null, defocus = false;
-    if (shot.standin && pv.boxes && pvs.plateLight) {
-      const e = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01);
-      plateTex = e.plate; distTex = e.dist; defocus = true;      // a render comes with its own defocus; the stand-in gets the lens here
-    } else { const fi = pv.frameTex.get(cf); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; } }
+    const [SW, SH] = size, p = pparams(), cf = camFrame();
+    // render at the size it is shown on screen (sharper on high-DPI displays, and when zoomed in), in steps so the lit set
+    // isn't redone for every small change; the dust's look doesn't depend on resolution
+    const fit = Math.min(cw / SW, ch / SH), w = SW * fit * nav2.s, h = SH * fit * nav2.s;      // fill the viewer
+    pvs.res = null;
+    const W0 = Math.max(320, Math.min(2560, Math.round(Math.max(w, SW * 0.5) / 160) * 160)), H0 = Math.round(W0 * SH / SW);
+    let plateTex = null, distTex = null, defocus = false, ent = null;
+    const fast = vw.free && performance.now() - (vw.lastMove || 0) < 300;     // while flying around: cheaper bounce light and lens blur
+    if (vw.free) {
+      const fc = freeCamObj(W0, H0);
+      p.focus = vw.freeFocus || p.focus;
+      if (shot.standin && pv.boxes && pvs.plateLight) {
+        pv.camOverride = fc;
+        ent = look.standin('free', W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01,
+                           { key: [...fc.pos, ...fc.back, ...fc.up, fc.hfov].map(v => v.toFixed(4)).join(',') + (fast ? 'f' : ''), spp: fast ? 6 : 24, cut: true });
+        plateTex = ent.plate; distTex = ent.dist; defocus = true;
+      } else {
+        const r = rasterSet(fc, W0, H0, p);
+        if (r) { plateTex = r.plate; distTex = r.dist; defocus = true; }
+        pv.camOverride = fc;
+      }
+    } else if (shot.standin && pv.boxes && pvs.plateLight) {
+      ent = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01);
+      plateTex = ent.plate; distTex = ent.dist; defocus = true;      // a render comes with its own defocus; the stand-in gets the lens here
+    } else { const fi = pv.frameTex.get(cf); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; defocus = !!fi.synthetic; ent = fi.synthetic ? fi : null; } }
     let dustSrc = null;
     if (quality === 'preview' && previewReady()) {
       pv.simTo(frame, p, simStepKey(p));
@@ -1561,13 +1692,15 @@ function paintPreview2d() {
     const cam = pv.camAt(cf), L = pv.init ? pv.lens(p, cam, W0) : { focal: 35, film: 36, fstop: 4, focusM: 5, su: 0.01, front: 1, back: 1, dof: false, maxR: 0 };
     // largest plate blur: the circle of confusion of the nearest and farthest things, capped like the dust's
     L.maxR = Math.min(p.max_bokeh, 60);
-    const fit = Math.min(1, cw / dpr / W0, ch / dpr / H0) * dpr, w = W0 * fit * nav2.s, h = H0 * fit * nav2.s;
     const cx = cw / 2 + nav2.x * dpr, cy = ch / 2 + nav2.y * dpr;
     const x0 = cx - w / 2, x1 = cx + w / 2, yTop = cy - h / 2, yBot = cy + h / 2;
-    look.show({ W: W0, H: H0, cw, ch, plate: plateTex, dist: distTex, defocusPlate: defocus && p.dof, lens: L, dust: dustSrc, view,
+    vw.rect = { x0, x1, yTop, yBot };
+    pvs.res = [W0, H0];
+    look.show({ W: W0, H: H0, cw, ch, cacheEntry: ent, fast, plate: plateTex, dist: distTex, defocusPlate: defocus && p.dof, lens: L, dust: dustSrc, view,
                 set: vw.set, skyMul: vw.blackSky ? 0 : 1, gain: Math.pow(2, gain), glow: vw.glow, look: vw.look,
                 rect: [x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2] });
   } catch (e) { console.error(e); pvs.err = e.message; black(); }
+  pv.camOverride = null;
   const now = performance.now();
   if (playing && pvs.lastPaint) pvs.fps = pvs.fps * 0.85 + 0.15 * (1000 / Math.max(now - pvs.lastPaint, 1));
   pvs.lastPaint = now;
@@ -1589,7 +1722,6 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
     $('boot').hidden = true;
     keysHint();
     initGL(); updateCanvases();
-    try { if (localStorage.getItem('mf_quality') === 'final') setQuality('final'); } catch (e) {}
     try { if (localStorage.getItem('mf_dim') === '3d') setDim('3d'); } catch (e) {}
     await makeStandin();
     ensurePreview();

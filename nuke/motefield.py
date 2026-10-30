@@ -543,12 +543,21 @@ def standin_boxes():
     return B
 
 
-def standin_camera(frame):
-    S = STANDIN
+# stand-in cameras: a wide move across the room, and a close-up near the window light with a shallow focus
+STANDIN_VIEWS = {
+    'wide': dict(E0=(310.0, 165.0, 320.0), E1=(190.0, 150.0, 290.0), T0=(-160.0, 105.0, -290.0), T1=(-235.0, 118.0, -300.0),
+                 focal=24.0, fstop=4.0, focus=430.0),
+    'close-up': dict(E0=(-80.0, 150.0, -40.0), E1=(-110.0, 146.0, -60.0), T0=(-420.0, 185.0, -280.0), T1=(-425.0, 180.0, -300.0),
+                     focal=50.0, fstop=2.8, focus=110.0),
+}
+
+
+def standin_camera(frame, view='wide'):
+    S = dict(STANDIN, **STANDIN_VIEWS.get(view, STANDIN_VIEWS['wide']))
     u = (frame - S['first']) / float(max(S['last'] - S['first'], 1))
     u = u * u * (3 - 2 * u)
-    E = np.array([310.0, 165.0, 320.0]) * (1 - u) + np.array([190.0, 150.0, 290.0]) * u
-    T = np.array([-160.0, 105.0, -290.0]) * (1 - u) + np.array([-235.0, 118.0, -300.0]) * u
+    E = np.array(S['E0']) * (1 - u) + np.array(S['E1']) * u
+    T = np.array(S['T0']) * (1 - u) + np.array(S['T1']) * u
     back = E - T
     back /= np.linalg.norm(back)
     right = np.cross([0.0, 1.0, 0.0], back)
@@ -621,11 +630,11 @@ def _trace_boxes(O, D, boxes):
     return best, nrm, alb
 
 
-def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5000.0):
+def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5000.0, view='wide'):
     """Utility pass + clay plate for one stand-in frame (scene units: centimetres)."""
     S = STANDIN
     W, H = width or S['width'], height or S['height']
-    cam = standin_camera(frame)
+    cam = standin_camera(frame, view)
     th = math.tan(cam.hfov / 2)
     tv = th * H / float(W)
     xs = ((np.arange(W) + 0.5) / W * 2 - 1) * th
@@ -661,7 +670,7 @@ def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5
     return util, plate, attrs
 
 
-def make_standin_shot(folder, progress=None):
+def make_standin_shot(folder, progress=None, view='wide'):
     """Writes standin_utility.####.exr and standin_plate.####.exr (+ standin.json) into folder."""
     S = STANDIN
     os.makedirs(folder, exist_ok=True)
@@ -669,10 +678,10 @@ def make_standin_shot(folder, progress=None):
     for i, f in enumerate(frames):
         if progress and progress(i / float(len(frames)), 'Stand-in shot: frame %d' % f) is False:
             return None
-        util, plate, attrs = render_standin_frame(f)
+        util, plate, attrs = render_standin_frame(f, view=view)
         write_exr(os.path.join(folder, 'standin_utility.%04d.exr' % f), util, attrs)
         write_exr(os.path.join(folder, 'standin_plate.%04d.exr' % f), plate, attrs, half=True)
-    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in standin_boxes()], units='centimetres')
+    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in standin_boxes()], units='centimetres', view=view)
     with open(os.path.join(folder, 'standin.json'), 'w') as fh:
         json.dump(meta, fh)
     return dict(utility=os.path.join(folder, 'standin_utility.####.exr'), plate=os.path.join(folder, 'standin_plate.####.exr'),
@@ -698,7 +707,7 @@ DEFAULTS = dict(
     speed=1.0, drift=1.2, drift_dir=200.0, lift=0.0, eddies=3.0, eddy_size=1.4, micro=0.8, thermal=1.5, settle=0.5,
     preroll=48, substeps=2,
     # key light: a directional light
-    light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, bounce=1.0, shadows='stand-in geometry', interior=True,
+    light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
     # lens (0 = use the camera from the utility pass headers)
     focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, blades=0, max_bokeh=110.0,
     cateye=0.0, anamorphic=0.0, field_curv=0.0, fstop_full=0.0, front_mult=1.0, back_mult=1.0,
@@ -707,7 +716,7 @@ DEFAULTS = dict(
     shutter=180.0, shutter_mode='backward', shutter_shape='backwardsShape', mb=True,
     # holdouts
     holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0,
-    cache='', standin_json='', hold_frame=0,
+    cache='', standin_json='', hold_frame=0, standin_view='wide',
 )
 
 # keys that change the simulation (everything else only changes how frames are rendered)
@@ -1039,6 +1048,117 @@ class DustSim(object):
 
 
 _SIM_CACHE = {}
+_BOUNCE_CACHE = {}
+
+
+def soft_taps(L, radius):
+    """Offsets (scene units) across the sun's direction: the centre and five around a ring, for soft shadow edges."""
+    L = L / np.linalg.norm(L)
+    a = np.cross(L, [0.0, 1.0, 0.0] if abs(L[1]) < 0.95 else [1.0, 0.0, 0.0])
+    a /= np.linalg.norm(a)
+    b = np.cross(L, a)
+    taps = [np.zeros(3)]
+    for k in range(5):
+        t = 2 * math.pi * k / 5.0 + 0.3
+        taps.append((a * math.cos(t) + b * math.sin(t)) * radius)
+    return taps
+
+
+def soft_visibility(light, P, L, radius):
+    """Light visibility averaged over a small disc across the sun direction, so motes fade through a shadow edge."""
+    if light is None:
+        return np.ones(len(P))
+    if radius <= 0:
+        return light(P)
+    v = np.zeros(len(P))
+    taps = soft_taps(L, radius)
+    for o in taps:
+        v += light(P + o)
+    return v / len(taps)
+
+
+def bounce_lights(p, shot, light, count=24):
+    """The sunlit patches of the set, as a few point lights (and an overall fill), so motes outside the beam pick up the
+    warm bounce light the way they do in a real room. Built from the utility pass: where the key light lands, how big that
+    patch is and its surface colour. Returns (positions m (n,3), normals (n,3), flux (n,3), ambient rgb)."""
+    key = json.dumps([p[k] for k in ('utility', 'units', 'shadows', 'interior', 'light_az', 'light_el', 'light_int', 'light_k',
+                                     'first', 'last', 'standin_json')], default=str)
+    if key in _BOUNCE_CACHE:
+        return _BOUNCE_CACHE[key]
+    su = shot.su
+    L = light_dir(p['light_az'], p['light_el'])
+    sun = kelvin_rgb(p['light_k']) * p['light_int']
+    fs = sorted(set([p['first'], (p['first'] + p['last']) // 2, p['last']]))
+    cells, tot, nfr = {}, np.zeros(3), 0
+    for f in fs:
+        try:
+            e = shot._open(f)
+        except Exception:
+            continue
+        try:
+            found = survey_layers(e)
+            if 'P' not in found or 'N' not in found:
+                continue
+            st = 4
+            pi, names = found['P']
+            d = e.read(pi, names)
+            P = np.stack([d[n] for n in names], -1)[::st, ::st].reshape(-1, 3).astype(np.float64)
+            ni, nn = found['N']
+            dn = e.read(ni, nn)
+            N = np.stack([dn[n] for n in nn], -1)[::st, ::st].reshape(-1, 3).astype(np.float64)
+            if 'C' in found:
+                ci, cn = found['C']
+                dc = e.read(ci, cn)
+                C = np.clip(np.stack([dc[n] for n in cn], -1)[::st, ::st].reshape(-1, 3).astype(np.float64), 0, 1)
+            else:
+                C = np.full_like(P, 0.35)
+            W = e.parts[found['P'][0]]['width']
+        finally:
+            e.close()
+        cam = shot.camera(f)
+        ok = np.abs(P).sum(1) > 0
+        N = N / np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-6)
+        nl = N @ L
+        ok &= nl > 0
+        if not ok.any():
+            continue
+        P, N, C, nl = P[ok], N[ok], C[ok], nl[ok]
+        vis = light(P + N * (2.0 / max(su * 100, 1e-6)))
+        lit = vis > 0
+        if not lit.any():
+            nfr += 1
+            continue
+        P, N, C, nl, vis = P[lit], N[lit], C[lit], nl[lit], vis[lit]
+        dvec = P - cam.pos
+        dist_m = np.linalg.norm(dvec, axis=1) * su
+        cosv = np.abs((dvec / np.maximum(np.linalg.norm(dvec, axis=1, keepdims=True), 1e-9) * N).sum(1))
+        pix = 2 * math.tan(cam.hfov / 2) / W * st
+        area = (dist_m * pix) ** 2 / np.maximum(cosv, 0.2)
+        flux = C * sun[None, :] * (nl * vis * area)[:, None]
+        Pm = P * su
+        keyc = np.floor(Pm / 0.8).astype(np.intp)
+        ax = np.argmax(np.abs(N), 1) * 2 + (N[np.arange(len(N)), np.argmax(np.abs(N), 1)] > 0)
+        for kk, pm, nn_, fl in zip(map(tuple, np.concatenate([keyc, ax[:, None]], 1)), Pm, N, flux):
+            c = cells.get(kk)
+            w = fl.sum()
+            if c is None:
+                c = cells[kk] = [np.zeros(3), np.zeros(3), np.zeros(3), 0.0]
+            c[0] += pm * w; c[1] += nn_ * w; c[2] += fl; c[3] += w
+        tot += flux.sum(0)
+        nfr += 1
+    nfr = max(nfr, 1)
+    arr = sorted([c for c in cells.values() if c[3] > 0], key=lambda c: -c[3])[:count]
+    kept = sum(c[2].sum() for c in arr)
+    sc = (tot.sum() / kept) if kept > 0 else 0.0
+    pos = np.array([c[0] / c[3] for c in arr]).reshape(-1, 3)
+    nrm = np.array([c[1] / max(np.linalg.norm(c[1]), 1e-9) for c in arr]).reshape(-1, 3)
+    flx = np.array([c[2] * sc / nfr for c in arr]).reshape(-1, 3)
+    amb = tot / nfr * (0.4 / (278 * 0.6))          # an overall fill from all of it (as in the mockup)
+    res = (pos, nrm, flx, amb)
+    if len(_BOUNCE_CACHE) > 4:
+        _BOUNCE_CACHE.clear()
+    _BOUNCE_CACHE[key] = res
+    return res
 
 
 def sim_at(p, frame, light, progress=None):
@@ -1360,6 +1480,7 @@ def render_frame(p, shot, frame, sim, progress=None):
     d = P - cam.pos
     zc = -(d @ cam.back)
     near = 0.05 / su
+    weight = weight * _smooth01((zc * su - 0.06) / 0.24)      # motes fade out as they come right up to the lens
     keep = (weight > 1e-4) & (zc > near)
     px, py, _ = cam.project(P, W, H)
     margin = p['max_bokeh'] * sc + 40
@@ -1369,6 +1490,9 @@ def render_frame(p, shot, frame, sim, progress=None):
         return held.astype(np.float32), unheld.astype(np.float32)
     P, V, weight, zc = P[idx], V[idx], weight[idx], zc[idx]
     typ, hh, vis = sim.type[idx], sim.h[idx], sim._vis[idx]
+    soft_r = p.get('shadow_soft', 0.0) * 0.01 / su
+    if sim.light is not None and soft_r > 0:
+        vis = soft_visibility(sim.light, P, light_dir(p['light_az'], p['light_el']), soft_r)
     z_m = zc * su
     dist = np.linalg.norm(P - cam.pos, axis=1)
     dist_m = dist * su
@@ -1441,8 +1565,16 @@ def render_frame(p, shot, frame, sim, progress=None):
             tt = tsec + (t_open + (t_close - t_open) * i / 3.0) * sec_per_frame
             g = g + gw[i] * np.abs((_tumble_axis(hh[m, 4], hh[m, 5], hh[m, 6], rate[m], tt) * Hh).sum(1)) ** 90
         rad[m] += sun[None, :] * (vis[m] * g * 0.25 * 8 * p['glint'] * (0.4 + 0.6 * hh[m, 2]))[:, None]
-    amb = sun * 0.004 * p['bounce']
-    rad += amb[None, :] * p['shadow_fill'] * 1.5
+    # fill: bounce light off the sunlit patches of the set, plus an overall fill
+    bpos, bnrm, bflx, bamb = bounce_lights(p, shot, sim.light) if sim.light is not None else (np.zeros((0, 3)),) * 3 + (sun * 0.004,)
+    Ei = np.tile(bamb, (len(idx), 1))
+    Pm = P * su
+    for i in range(len(bpos)):
+        dv = bpos[i] - Pm
+        r2 = (dv * dv).sum(1) + 0.12
+        lv = dv / np.sqrt(r2)[:, None]
+        Ei += bflx[i][None, :] * (np.maximum(-(lv @ bnrm[i]), 0) / (math.pi * r2))[:, None]
+    rad += Ei * p['bounce'] * p['shadow_fill'] * 1.5
     tint = np.asarray(p['tint'], np.float64)
     col = rad * tint[None, :] * tcol * (p['brightness'] * 0.8 * sigma / np.maximum(dist_m, 0.05) ** 2 * weight)[:, None] * (focal_px / 1100.0) ** 2
 
@@ -1640,6 +1772,7 @@ _KNOBS = [
     ('MoteField', 'first', 'int', 'First frame', None),
     ('MoteField', 'last', 'int', 'Last frame', None),
     ('MoteField', 'fps', 'float', 'Frame rate', (1, 120)),
+    ('MoteField', 'standin_view', 'enum', 'Stand-in camera', ['wide', 'close-up']),
     ('MoteField', 'btn_standin', 'button', 'Create stand-in shot', 'standin'),
     ('MoteField', 'btn_fit', 'button', 'Fit box to shot', 'fit'),
     ('MoteField', 'btn_3d', 'button', '3D preview', 'preview3d'),
@@ -1692,6 +1825,7 @@ _KNOBS = [
     ('Light', 'light_k', 'float', 'Colour temperature (K)', (2500, 10000)),
     ('Light', 'bounce', 'float', 'Bounce fill', (0, 4)),
     ('Light', 'shadows', 'enum', 'Shadows from', ['stand-in geometry', 'utility pass', 'none']),
+    ('Light', 'shadow_soft', 'float', 'Shadow edge softness (cm)', (0, 20)),
     ('Light', 'interior', 'bool', 'Interior: light only through openings', 'Utility pass shadows only: the pass only shows what the camera saw, so light comes in only where the camera saw sky (a window).'),
     ('Light', None, 'text', 'A directional key light. Azimuth 0 = light travelling toward +X, 90 = toward +Z.', None),
     ('Lens', 'focal', 'float', 'Focal length (mm, 0 = header)', (0, 200)),
@@ -1951,10 +2085,10 @@ def _nk_standin(g):
     nuke = _nk()
     p = _nk_settings(g)
     base = p['cache'] or os.path.join(os.path.expanduser('~'), 'motefield')
-    folder = os.path.join(os.path.dirname(base.rstrip('/')) or base, 'standin_shot').replace('\\', '/')
+    folder = os.path.join(os.path.dirname(base.rstrip('/')) or base, 'standin_shot_' + str(p.get('standin_view', 'wide')).replace('-', '')).replace('\\', '/')
 
     def work(progress):
-        res = make_standin_shot(folder, progress)
+        res = make_standin_shot(folder, progress, view=p.get('standin_view', 'wide'))
         if not res:
             return False
 

@@ -35,6 +35,7 @@ uniform sampler2D uBoxes; uniform int uNB;
 uniform sampler2D uLM; uniform vec3 uLa, uLb; uniform vec2 uLlo; uniform float uLcell, uLbias; uniform int uLres;
 uniform int uInterior; uniform vec3 uBlo, uBhi;
 uniform sampler2D uSky0, uSky1, uSky2; uniform int uNV; uniform vec3 uVC[12]; uniform float uVT[6]; uniform vec2 uVS[3];
+uniform vec3 uTaps[6]; uniform int uNT;
 out vec4 o;
 bool skyAt(int k, vec3 Q){
   vec3 pos = uVC[k*4], r = uVC[k*4+1], u = uVC[k*4+2], b = uVC[k*4+3];
@@ -48,10 +49,7 @@ bool skyAt(int k, vec3 Q){
   float v = k == 0 ? texelFetch(uSky0, ip, 0).r : k == 1 ? texelFetch(uSky1, ip, 0).r : texelFetch(uSky2, ip, 0).r;
   return v > 0.001;      // R8 texture: a stored 1 reads back as 1/255
 }
-void main(){
-  int i = int(gl_FragCoord.y) * ${MF_TW} + int(gl_FragCoord.x);
-  vec3 local = texelFetch(uPos, ivec2(gl_FragCoord.xy), 0).xyz;
-  vec3 P = (uR * local + uCenter) / uSu;
+float visAt(vec3 P){
   float vis = 1.0;
   if (uMode == 1) {
     vec3 Ls = vec3(abs(uL.x) < 1e-9 ? 1e-9 : uL.x, abs(uL.y) < 1e-9 ? 1e-9 : uL.y, abs(uL.z) < 1e-9 ? 1e-9 : uL.z);
@@ -81,7 +79,14 @@ void main(){
       if (!open_) vis = 0.0;
     }
   }
-  o = vec4(vis, 0.0, 0.0, 1.0);
+  return vis;
+}
+void main(){
+  vec3 local = texelFetch(uPos, ivec2(gl_FragCoord.xy), 0).xyz;
+  vec3 P = (uR * local + uCenter) / uSu;
+  float v = 0.0;
+  for (int k = 0; k < 6; k++) { if (k >= uNT) break; v += visAt(P + uTaps[k]); }      // soft shadow edges: several taps across the sun
+  o = vec4(v / float(max(uNT, 1)), 0.0, 0.0, 1.0);
 }`;
 
 // ---- one sub-step of DustSim.step() ------------------------------------------------------------------
@@ -131,9 +136,10 @@ uniform float uFocal, uFilm, uFstop, uFocusM, uMaxR, uFocalPx; uniform int uDof;
 uniform float uTOpen, uTClose, uSpf, uTsec, uShut; uniform int uShape;
 uniform float uFC, uFront, uBack;
 float shutterW(float u){ return uShape == 1 ? 1.0 / (1.0 + exp(-9.0 * (u - 0.55))) : 1.0; }
-uniform vec3 uL, uSun, uAmb, uTint; uniform float uBright, uForward, uGlint, uTumble;
+uniform vec3 uL, uSun, uTint; uniform float uBright, uForward, uGlint, uTumble;
 uniform float uSizeMin, uSizeMax, uSizeBias, uFlakeScale, uFiberScale, uFluffScale;
 uniform int uHold, uFg; uniform float uFgNear, uFgFar;
+uniform vec3 uBP[24], uBN[24], uBF[24], uBAmb; uniform int uNB2; uniform float uFillK;
 layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
 vec3 proj(int k, vec3 P){
   vec3 d = P - uC[k*4];
@@ -165,6 +171,7 @@ void main(){
   vec3 cpos = uC[0], cback = uC[3];
   vec3 d = P - cpos;
   float zc = -dot(d, cback);
+  weight *= smooth01((zc * uSu - 0.06) / 0.24);          // motes fade out as they come right up to the lens
   if (weight <= 1e-4 || zc <= 0.05 / uSu) { cull(); return; }
   vec3 pp = proj(0, P);
   float margin = uMaxR + 40.0;
@@ -216,7 +223,10 @@ void main(){
       g += shutterW(float(k) / 3.0) * 4.0 / gs * pow(abs(dot(tumbleAxis(hh[4], hh[5], hh[6], rate, tt), Hh)), 90.0); }
     rad += uSun * (vis * g * 0.25 * 8.0 * uGlint * (0.4 + 0.6*hh[2]));
   }
-  rad += uAmb;
+  vec3 Ei = uBAmb; vec3 Pm = P * uSu;
+  for (int k = 0; k < 24; k++) { if (k >= uNB2) break; vec3 dv = uBP[k] - Pm; float r2 = dot(dv, dv) + 0.12;
+    Ei += uBF[k] * (max(-dot(dv * inversesqrt(r2), uBN[k]), 0.0) / (PI * r2)); }
+  rad += Ei * uFillK;
   vec3 col = rad * uTint * tcol * (uBright * 0.8 * sigma / pow(max(dist_m, 0.05), 2.0) * weight) * pow(uFocalPx / 1100.0, 2.0);
   vec3 po = proj(1, P + V * (uTOpen * uSpf)), pc = proj(2, P + V * (uTClose * uSpf));
   float streak = length(pc.xy - po.xy);
@@ -490,7 +500,7 @@ class MFPreview {
     const local = new Float32Array(d.local.buffer, d.local.byteOffset, n * 3), h = new Float32Array(d.h.buffer, d.h.byteOffset, n * 10);
     const st = new Float32Array(d.st.buffer, d.st.byteOffset, n * 4);
     if (this.init) this._free(this.init.pos0, this.init.h0, this.init.h1, this.init.h2, this.init.st);
-    if (this.sim) this._free(...this.sim.pos, ...this.sim.vel, this.sim.vis, ...this.sim.prep);
+    if (this.sim) this._free(...this.sim.pos, ...this.sim.vel, this.sim.vis, this.sim.visSoft, ...this.sim.prep);
     const h2 = new Float32Array(N * 4);
     for (let i = 0; i < n; i++) { h2[i * 4] = h[i * 10 + 8]; h2[i * 4 + 1] = h[i * 10 + 9]; h2[i * 4 + 2] = st[i * 4]; h2[i * 4 + 3] = st[i * 4 + 1]; }
     this.init = { n, TH, pos0: this._rgba32(MF_TW, TH, pack(local, 3, 3, 0)), h0: this._rgba32(MF_TW, TH, pack(h, 10, 4, 0)),
@@ -498,7 +508,7 @@ class MFPreview {
                   modes0: this._modes(d.modes0, d.M0), modes1: this._modes(d.modes1, d.M1), M0: d.M0, M1: d.M1,
                   center: d.center, size: d.size, R: d.R, wind: d.wind, su: d.su };
     const z = () => this._rgba32(MF_TW, TH, null);
-    this.sim = { pos: [z(), z()], vel: [z(), z()], cur: 0, vis: this._tex(MF_TW, TH, gl.R32F, gl.RED, gl.FLOAT, null), prep: [z(), z(), z(), z()], frame: null, key: null };
+    this.sim = { pos: [z(), z()], vel: [z(), z()], cur: 0, vis: this._tex(MF_TW, TH, gl.R32F, gl.RED, gl.FLOAT, null), visSoft: this._tex(MF_TW, TH, gl.R32F, gl.RED, gl.FLOAT, null), prep: [z(), z(), z(), z()], frame: null, key: null };
   }
   _modes(bytes, M) {   // K(3) A(3) ph om  ->  vec4(K, ph), vec4(A, om)
     const a = new Float32Array(bytes.buffer, bytes.byteOffset, M * 8), o = new Float32Array(M * 8);
@@ -523,20 +533,27 @@ class MFPreview {
       views: views.map(v => ({ cam: v.cam, w: v.w, h: v.h })) };
   }
   setCams(sc) { this.cams = sc; }
+  setBounce(d) {           // motefield.bounce_lights
+    if (!d) { this.bounce = null; return; }
+    const f = (b, n) => { const a = new Float32Array(72); a.set(new Float32Array(b.buffer, b.byteOffset, n * 3).subarray(0, 72)); return a; };
+    this.bounce = { n: d.n, pos: f(d.pos, d.n), nrm: f(d.nrm, d.n), flux: f(d.flux, d.n), amb: d.amb };
+  }
   setFrameImages(f, d) {
     const gl = this.gl, old = this.frameTex.get(f);
-    if (old) this._free(old.dist, old.plate);
+    if (old) this._free(old.dist, old.plate, old.dof);
     const e = { dist: this._tex(d.w, d.h, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(d.dist.buffer, d.dist.byteOffset, d.w * d.h)) };
     if (d.rgb) {
       const u16 = new Uint16Array(d.rgb.buffer, d.rgb.byteOffset, d.pw * d.ph * 3);
       e.plate = this._tex(d.pw, d.ph, gl.RGB16F, gl.RGB, gl.HALF_FLOAT, u16);
+      e.synthetic = !!d.synthetic;        // shaded from the utility pass: no lens blur of its own yet
     }
     this.frameTex.set(f, e);
   }
-  clearFrameImages() { for (const e of this.frameTex.values()) this._free(e.dist, e.plate); this.frameTex.clear(); }
+  clearFrameImages() { for (const e of this.frameTex.values()) this._free(e.dist, e.plate, e.dof); this.frameTex.clear(); }
 
   // ---- cameras (Shot.camera with fractional frames) --------------------------------------------------
   camAt(f) {
+    if (this.camOverride) return this.camOverride;        // the viewer's free camera
     const sc = this.cams, n = sc.last - sc.first + 1;
     const get = (g) => { const i = (g - sc.first) * 13, d = sc.cams; return { pos: [d[i], d[i + 1], d[i + 2]], right: [d[i + 3], d[i + 4], d[i + 5]], up: [d[i + 6], d[i + 7], d[i + 8]], back: [d[i + 9], d[i + 10], d[i + 11]], hfov: d[i + 12] }; };
     const has = (g) => g >= sc.first && g <= sc.last;
@@ -564,10 +581,19 @@ class MFPreview {
     gl.uniform3fv(prog.u.uCenter, I.center); if (prog.u.uSize) gl.uniform3fv(prog.u.uSize, I.size);
     if (prog.u.uSu) gl.uniform1f(prog.u.uSu, I.su);
   }
-  _visPass(p) {
+  _visPass(p, soft) {
     const gl = this.gl, I = this.init, S = this.sim, prog = this.pVis;
     gl.useProgram(prog); gl.bindVertexArray(this.vao);
-    this._target([S.vis], MF_TW, I.TH);
+    this._target([soft ? S.visSoft : S.vis], MF_TW, I.TH);
+    const r = soft ? (p.shadow_soft || 0) * 0.01 / I.su : 0;
+    if (r > 0) {          // motefield.soft_taps
+      const L = p.L, l = Math.hypot(...L), Ln = L.map(v => v / l), up = Math.abs(Ln[1]) < 0.95 ? [0, 1, 0] : [1, 0, 0];
+      let a = [Ln[1] * up[2] - Ln[2] * up[1], Ln[2] * up[0] - Ln[0] * up[2], Ln[0] * up[1] - Ln[1] * up[0]]; const al = Math.hypot(...a); a = a.map(v => v / al);
+      const b = [Ln[1] * a[2] - Ln[2] * a[1], Ln[2] * a[0] - Ln[0] * a[2], Ln[0] * a[1] - Ln[1] * a[0]];
+      const taps = [0, 0, 0];
+      for (let k = 0; k < 5; k++) { const t = 2 * Math.PI * k / 5 + 0.3; for (let i = 0; i < 3; i++) taps.push((a[i] * Math.cos(t) + b[i] * Math.sin(t)) * r); }
+      gl.uniform3fv(prog.u.uTaps, taps); gl.uniform1i(prog.u.uNT, 6);
+    } else { gl.uniform3fv(prog.u.uTaps, new Float32Array(18)); gl.uniform1i(prog.u.uNT, 1); }
     this._passCommon(prog);
     this._bind(prog, 0, 'uPos', S.pos[S.cur]);
     gl.uniform3fv(prog.u.uL, p.L);
@@ -632,6 +658,7 @@ class MFPreview {
       S.frame++; n++;
     }
     this._visPass(p);
+    this._visPass(p, true);           // what the render uses: soft edges
     return n;
   }
 
@@ -740,7 +767,7 @@ class MFPreview {
     gl.useProgram(prog); gl.bindVertexArray(this.vao);
     this._target(S.prep, MF_TW, I.TH);
     this._passCommon(prog);
-    this._bind(prog, 0, 'uPos', S.pos[S.cur]); this._bind(prog, 1, 'uVel', S.vel[S.cur]); this._bind(prog, 2, 'uVis', S.vis);
+    this._bind(prog, 0, 'uPos', S.pos[S.cur]); this._bind(prog, 1, 'uVel', S.vel[S.cur]); this._bind(prog, 2, 'uVis', S.visSoft);
     this._bind(prog, 3, 'uH0', I.h0); this._bind(prog, 4, 'uH1', I.h1); this._bind(prog, 5, 'uH2', I.h2); this._bind(prog, 6, 'uDist', distTex || this.dummy);
     const u = prog.u;
     gl.uniform1i(u.uN, I.n);
@@ -752,7 +779,11 @@ class MFPreview {
     gl.uniform1f(u.uTOpen, tO); gl.uniform1f(u.uTClose, tC); gl.uniform1f(u.uSpf, p.speed / p.fps); gl.uniform1f(u.uShut, s);
     gl.uniform1i(u.uShape, shape); gl.uniform1f(u.uFC, fc); gl.uniform1f(u.uFront, p.front_mult); gl.uniform1f(u.uBack, p.back_mult);
     gl.uniform1f(u.uTsec, (frame - p.first) / p.fps * p.speed);
-    gl.uniform3fv(u.uL, p.L); gl.uniform3fv(u.uSun, p.sun); gl.uniform3fv(u.uAmb, p.amb); gl.uniform3fv(u.uTint, p.tint);
+    gl.uniform3fv(u.uL, p.L); gl.uniform3fv(u.uSun, p.sun); gl.uniform3fv(u.uTint, p.tint);
+    const B = this.bounce;
+    gl.uniform1f(u.uFillK, p.bounce * p.shadow_fill * 1.5);
+    if (B && B.n) { gl.uniform3fv(u.uBP, B.pos); gl.uniform3fv(u.uBN, B.nrm); gl.uniform3fv(u.uBF, B.flux); gl.uniform1i(u.uNB2, Math.min(B.n, 24)); gl.uniform3fv(u.uBAmb, B.amb); }
+    else { gl.uniform1i(u.uNB2, 0); gl.uniform3fv(u.uBAmb, p.sun.map(v => v * 0.004)); }
     gl.uniform1f(u.uBright, p.brightness); gl.uniform1f(u.uForward, p.forward); gl.uniform1f(u.uGlint, p.glint); gl.uniform1f(u.uTumble, p.tumble);
     gl.uniform1f(u.uSizeMin, p.size_min); gl.uniform1f(u.uSizeMax, p.size_max); gl.uniform1f(u.uSizeBias, p.size_bias);
     gl.uniform1f(u.uFlakeScale, p.flake_scale); gl.uniform1f(u.uFiberScale, p.fiber_scale); gl.uniform1f(u.uFluffScale, p.fluff_scale);

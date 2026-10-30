@@ -48,11 +48,23 @@ vec3 shade(vec3 P, vec3 n, vec3 alb, float fillK){
 `;
 
 // 1. primary hit (full res): direct light, normal + distance, albedo
+//    cutaway: from outside the room, rays start where they enter it, so the near walls don't block the view
 const LK_GBUF = LK_COMMON + `
+uniform vec3 uRoomLo, uRoomHi; uniform int uCut;
 layout(location=0) out vec4 oDirect; layout(location=1) out vec4 oNrm; layout(location=2) out vec4 oAlb; layout(location=3) out vec4 oDist;
 void main(){
   vec3 D = rayDir(gl_FragCoord.xy), n, alb;
-  float t = traceB(uC[0], D, 1e-4, n, alb);
+  float t0 = 0.0;
+  vec3 O = uC[0];
+  if (uCut == 1 && any(lessThan(O, uRoomLo)) || uCut == 1 && any(greaterThan(O, uRoomHi))) {
+    vec3 inv = 1.0 / safeDir(D), a1 = (uRoomLo - O) * inv, a2 = (uRoomHi - O) * inv;
+    vec3 tn = min(a1, a2), tf = max(a1, a2);
+    float ta = max(max(tn.x, tn.y), tn.z), tb = min(min(tf.x, tf.y), tf.z);
+    if (tb < max(ta, 0.0)) { oDirect = vec4(0.0); oNrm = vec4(0.0); oAlb = vec4(0.0); oDist = vec4(0.0); return; }
+    t0 = max(ta, 0.0) + 0.5;
+  }
+  float t = traceB(O + D * t0, D, 1e-4, n, alb);
+  if (t < 1e29) t += t0;
   if (t > 1e29) { oDirect = vec4(uSky, 0.0); oNrm = vec4(0.0); oAlb = vec4(0.0); oDist = vec4(0.0); return; }
   vec3 P = uC[0] + D * t;
   oDirect = vec4(shade(P, n, alb, 0.35), 1.0);
@@ -141,26 +153,30 @@ void main(){
 
 // 6. lens defocus of the plate (gather; the same circle of confusion as the dust)
 const LK_PDOF = GLSL_COMMON + `
-uniform sampler2D uPlate, uDist; uniform vec2 uWH; uniform float uFocal, uFilm, uFstop, uFocusM, uSu, uMaxR, uFront, uBack, uSkyMul; uniform int uDof;
+uniform sampler2D uPlate, uDist; uniform vec2 uWH; uniform float uFocal, uFilm, uFstop, uFocusM, uSu, uMaxR, uFront, uBack, uSkyMul, uRot; uniform int uDof, uN;
 out vec4 o;
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float cocPx(float d){ if (uDof == 0) return 0.0; float s2 = max(d > 0.0 ? d * uSu : 1e3, 0.02) * 1000.0, s1 = uFocusM * 1000.0;
   float c = (uFocal / uFstop) * uFocal * (s2 - s1) / (s2 * max(s1 - uFocal, 1.0)) / uFilm * uWH.x; return c * (c < 0.0 ? uFront : uBack); }
-vec3 pl(ivec2 p){ vec3 c = texelFetch(uPlate, p, 0).rgb; return texelFetch(uDist, p, 0).r > 0.0 ? c : c * uSkyMul; }
+// plate and distance may be at a different resolution than the view
+ivec2 at(sampler2D t, ivec2 p){ ivec2 s = textureSize(t, 0); return clamp(ivec2((vec2(p) + 0.5) / uWH * vec2(s)), ivec2(0), s - 1); }
+float dAt(ivec2 p){ return texelFetch(uDist, at(uDist, p), 0).r; }
+vec3 pl(ivec2 p){ vec3 c = texelFetch(uPlate, at(uPlate, p), 0).rgb; return dAt(p) > 0.0 ? c : c * uSkyMul; }
 void main(){
   ivec2 ip = ivec2(gl_FragCoord.xy), mx = ivec2(uWH) - 1;
-  float d0 = texelFetch(uDist, ip, 0).r; vec3 c0 = pl(ip);
+  float d0 = dAt(ip); vec3 c0 = pl(ip);
   float r0 = abs(cocPx(d0)) * 0.5;
   if (uMaxR < 0.75) { o = vec4(c0, 1.0); return; }
   float w0 = 1.0 / max(3.14159 * r0 * r0, 1.0);
   vec3 acc = c0 * w0; float ws = w0;
-  const int N = 72; const float GA = 2.39996323;
-  float jr = hash12(vec2(ip)) * 6.2831853;
+  const float GA = 2.39996323; int N = uN;
+  float jr = hash12(vec2(ip)) * 6.2831853 + uRot, jo = hash12(vec2(ip) + 17.3 + uRot);
   float sa = 3.14159 * uMaxR * uMaxR / float(N);
-  for (int i = 0; i < N; i++) {
-    float r = sqrt((float(i) + 0.5) / float(N)) * uMaxR, a = float(i) * GA + jr;
+  for (int i = 0; i < 400; i++) {
+    if (i >= N) break;
+    float r = sqrt((float(i) + jo) / float(N)) * uMaxR, a = float(i) * GA + jr;
     ivec2 sp = clamp(ip + ivec2(floor(vec2(cos(a), sin(a)) * r + 0.5)), ivec2(0), mx);
-    float ds = texelFetch(uDist, sp, 0).r, rs = abs(cocPx(ds)) * 0.5;
+    float ds = dAt(sp), rs = abs(cocPx(ds)) * 0.5;
     float w = clamp(rs - r + 1.0, 0.0, 1.0);
     if ((ds > 0.0 ? ds : 1e9) > (d0 > 0.0 ? d0 : 1e9) * 1.02) w *= clamp(r0 - r + 1.0, 0.0, 1.0);
     w *= sa / max(3.14159 * rs * rs, 1.0);
@@ -242,7 +258,7 @@ class MFLook {
     for (let i = 0; i < 6; i++) { bw = Math.max(1, bw >> 1); bh = Math.max(1, bh >> 1); s.bloom.push({ w: bw, h: bh, d: this._half(bw, bh), u: this._half(bw, bh) }); }
     return (this.scratch = s);
   }
-  clear() { for (const e of this.cache.values()) this.pv._free(e.plate, e.dist); this.cache.clear(); }
+  clear() { for (const e of this.cache.values()) this.pv._free(e.plate, e.dist, e.dof); this.cache.clear(); }
   _camU(prog, c, W, H) {
     const gl = this.pv.gl, th = Math.tan(c.hfov / 2);
     gl.uniform3fv(prog.u.uC, [...c.pos, ...c.right, ...c.up, ...c.back]); gl.uniform1f(prog.u.uTh, th); gl.uniform1f(prog.u.uTv, th * H / W); gl.uniform2f(prog.u.uWH, W, H);
@@ -254,18 +270,22 @@ class MFLook {
     this.pv._bind(prog, 7, 'uBoxes', this.pv.boxes.tex); gl.uniform1i(prog.u.uNB, this.pv.boxes.nb);
   }
   // the stand-in, lit, for one frame (cached)
-  standin(frame, W, H, L, haze, su) {
-    const key = [W, H, haze].join('|');
+  standin(frame, W, H, L, haze, su, opt) {
+    opt = opt || {};
+    const key = [W, H, haze, opt.key || ''].join('|');
     const hit = this.cache.get(frame);
     if (hit && hit.key === key) { this.cache.delete(frame); this.cache.set(frame, hit); return hit; }
+    if (hit) { this.pv._free(hit.plate, hit.dist, hit.dof); this.cache.delete(frame); }
     const pv = this.pv, gl = pv.gl, s = this._scratch(W, H), c = pv.camAt(frame);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST); gl.bindVertexArray(pv.vao);
     const plate = this._half(W, H), dist = pv._tex(W, H, gl.R32F, gl.RED, gl.FLOAT, null);
     let p = this.pG; gl.useProgram(p); this._camU(p, c, W, H); this._lightU(p, L);
+    const rm = L.room; gl.uniform1i(p.u.uCut, rm && opt.cut ? 1 : 0);
+    if (rm) { gl.uniform3fv(p.u.uRoomLo, rm[0]); gl.uniform3fv(p.u.uRoomHi, rm[1]); }
     pv._target([s.direct, s.nrm, s.alb, dist], W, H); gl.drawArrays(gl.TRIANGLES, 0, 3);
     const hw = s.gi.w, hh = s.gi.h;
     p = this.pGI; gl.useProgram(p); this._camU(p, c, W, H); this._lightU(p, L);
-    pv._bind(p, 0, 'uNrm', s.nrm); gl.uniform1i(p.u.uSpp, 24); gl.uniform2f(p.u.uFull, W, H);
+    pv._bind(p, 0, 'uNrm', s.nrm); gl.uniform1i(p.u.uSpp, opt.spp || 24); gl.uniform2f(p.u.uFull, W, H);
     pv._target([s.gi], hw, hh); gl.drawArrays(gl.TRIANGLES, 0, 3);
     p = this.pAt; gl.useProgram(p); let src = s.gi, dst = s.gi2;
     for (const st of [1, 2, 4]) { pv._target([dst], hw, hh); pv._bind(p, 0, 'uTex', src); pv._bind(p, 1, 'uNrm', s.nrm); gl.uniform2f(p.u.uFull, W, H); gl.uniform1i(p.u.uStep, st);
@@ -277,10 +297,10 @@ class MFLook {
     pv._bind(p, 0, 'uDirect', s.direct); pv._bind(p, 1, 'uNrm', s.nrm); pv._bind(p, 2, 'uAlb', s.alb); pv._bind(p, 3, 'uGI', src); pv._bind(p, 4, 'uHazeT', s.haze);
     gl.uniform2f(p.u.uFull, W, H); gl.uniform1f(p.u.uGIAmt, 1.0);
     pv._target([plate], W, H); gl.drawArrays(gl.TRIANGLES, 0, 3);
-    const e = { plate, dist, key, bytes: W * H * 12 };
+    const e = { plate, dist, key, bytes: W * H * 20 };
     this.cache.set(frame, e);
     let total = 0; for (const v of this.cache.values()) total += v.bytes;
-    for (const [f, v] of this.cache) { if (total <= this.budget || v === e) break; pv._free(v.plate, v.dist); this.cache.delete(f); total -= v.bytes; }
+    for (const [f, v] of this.cache) { if (total <= this.budget || v === e) break; pv._free(v.plate, v.dist, v.dof); this.cache.delete(f); total -= v.bytes; }
     return e;
   }
   // everything to the screen. o: {plate, dist, defocusPlate, lens:{focal, film, fstop, focusM, su, front, back, dof, maxR}, dust:{tex, flip},
@@ -290,13 +310,26 @@ class MFLook {
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST); gl.bindVertexArray(pv.vao);
     let plate = o.plate;
     if (plate && (o.defocusPlate || o.skyMul !== 1)) {
-      const p = this.pDof; gl.useProgram(p); const L = o.lens;
-      pv._bind(p, 0, 'uPlate', o.plate); pv._bind(p, 1, 'uDist', o.dist || pv.dummy);
-      gl.uniform2f(p.u.uWH, W, H); gl.uniform1f(p.u.uFocal, L.focal); gl.uniform1f(p.u.uFilm, L.film); gl.uniform1f(p.u.uFstop, L.fstop);
-      gl.uniform1f(p.u.uFocusM, L.focusM); gl.uniform1f(p.u.uSu, L.su); gl.uniform1f(p.u.uMaxR, o.defocusPlate ? L.maxR : 0);
-      gl.uniform1f(p.u.uFront, L.front); gl.uniform1f(p.u.uBack, L.back); gl.uniform1i(p.u.uDof, L.dof ? 1 : 0); gl.uniform1f(p.u.uSkyMul, o.dist ? o.skyMul : 1);
-      pv._target([s.dof], W, H); gl.drawArrays(gl.TRIANGLES, 0, 3);
-      plate = s.dof;
+      const L = o.lens, ent = o.cacheEntry;
+      const dk = [W, H, L.focal, L.film, L.fstop, L.focusM, L.front, L.back, L.dof, L.maxR, o.skyMul, o.defocusPlate].join('|');
+      if (ent && ent.dof && ent.dofKey === dk) plate = ent.dof;
+      else {
+        // the lens blur of the set: 4 passes of 96 samples, averaged (additively), so it comes out smooth; kept per frame
+        const out = ent ? (ent.dof || (ent.dof = this._half(W, H))) : s.dof;
+        const p = this.pDof; gl.useProgram(p);
+        pv._bind(p, 0, 'uPlate', o.plate); pv._bind(p, 1, 'uDist', o.dist || pv.dummy);
+        gl.uniform2f(p.u.uWH, W, H); gl.uniform1f(p.u.uFocal, L.focal); gl.uniform1f(p.u.uFilm, L.film); gl.uniform1f(p.u.uFstop, L.fstop);
+        gl.uniform1f(p.u.uFocusM, L.focusM); gl.uniform1f(p.u.uSu, L.su); gl.uniform1f(p.u.uMaxR, o.defocusPlate ? L.maxR : 0);
+        gl.uniform1f(p.u.uFront, L.front); gl.uniform1f(p.u.uBack, L.back); gl.uniform1i(p.u.uDof, L.dof ? 1 : 0); gl.uniform1f(p.u.uSkyMul, o.dist ? o.skyMul : 1);
+        const passes = o.defocusPlate && L.dof ? (o.fast ? 1 : 4) : 1;
+        gl.uniform1i(p.u.uN, 96);
+        pv._target([out], W, H); gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
+        gl.enable(gl.BLEND); gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE); gl.blendColor(0, 0, 0, 1 / passes);
+        for (let k = 0; k < passes; k++) { gl.uniform1f(p.u.uRot, k * 1.618); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+        gl.disable(gl.BLEND);
+        if (ent) ent.dofKey = dk;
+        plate = out;
+      }
     }
     let p = this.pComp; gl.useProgram(p);
     pv._bind(p, 0, 'uPlate', plate || pv.dummy); pv._bind(p, 1, 'uDust', (o.dust && o.dust.tex) || pv.dummy);

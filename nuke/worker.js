@@ -36,7 +36,7 @@ function out(res) {
 
 const jobs = {
   init: () => boot(),
-  standin: ({ width }) => JSON.parse(mf.setup_standin(width)),
+  standin: ({ width, view }) => JSON.parse(mf.setup_standin(width, view || 'wide')),
   files: ({ kind, files }) => {
     const names = py.toPy(files.map(f => f.name));
     const blobs = py.toPy(files.map(f => new Uint8Array(f.data)));
@@ -52,6 +52,7 @@ const jobs = {
   scene: ({ p, cloud }) => out(mf.scene(JSON.stringify(p), cloud !== false)),
   pinit: ({ p }) => out(mf.preview_init(JSON.stringify(p))),
   plight: ({ p }) => out(mf.preview_light(JSON.stringify(p))),
+  pbounce: ({ p }) => out(mf.preview_bounce(JSON.stringify(p))),
   fimages: ({ p, frame, pattern }) => out(mf.frame_images(JSON.stringify(p), frame, pattern || '')),
   bokeh: ({ w, h, data }) => mf.set_bokeh_image(w || 0, h || 0, data ? py.toPy(new Uint8Array(data.buffer || data)) : null),
   exr: ({ p, frame }) => out(mf.save_exr(JSON.stringify(p), frame)),

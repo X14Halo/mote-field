@@ -34,7 +34,7 @@ def _ensure_standin_frame(folder, meta, f):
     plate = os.path.join(folder, 'standin_plate.%04d.exr' % f)
     if os.path.exists(util) and os.path.exists(plate):
         return
-    u, pl, attrs = mf.render_standin_frame(f, meta['width'], meta['height'])
+    u, pl, attrs = mf.render_standin_frame(f, meta['width'], meta['height'], view=meta.get('view', 'wide'))
     mf.write_exr(util, u, attrs)
     mf.write_exr(plate, pl, attrs, half=True)
     _made.append((util, plate))
@@ -61,7 +61,7 @@ class WebShot(_BaseShot):
 
     def _cam(self, f):
         if self.meta is not None and f not in self._cams:
-            self._cams[f] = mf.standin_camera(f)        # the same camera the header of that frame would hold
+            self._cams[f] = mf.standin_camera(f, self.meta.get('view', 'wide'))   # the camera that frame's header would hold
         return _BaseShot._cam(self, f)
 
     def _open(self, f):
@@ -83,18 +83,20 @@ def schema():
                            standin_res=sorted(STANDIN_RES)))
 
 
-def setup_standin(width=1280):
+def setup_standin(width=1280, view='wide'):
     """Like the Nuke 'Create stand-in shot' button, but frames are made on demand."""
     width = int(width)
     S = dict(mf.STANDIN, width=width, height=STANDIN_RES.get(width, int(round(width * 536 / 1280.0))))
-    folder = '%s/standin_%d' % (ROOT, width)
+    view = view if view in mf.STANDIN_VIEWS else 'wide'
+    folder = '%s/standin_%s_%d' % (ROOT, view.replace('-', ''), width)
     os.makedirs(folder, exist_ok=True)
-    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in mf.standin_boxes()], units='centimetres')
+    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in mf.standin_boxes()], units='centimetres', view=view)
     with open(os.path.join(folder, 'standin.json'), 'w') as fh:
         json.dump(meta, fh)
     boxes = [list(b[0]) + list(b[1]) + list(b[2]) for b in mf.standin_boxes()]
     return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr', boxes=boxes,
                            plate_light=dict(az=S['sun_az'], el=S['sun_el'], intensity=6.0, kelvin=list(mf.kelvin_rgb(5000.0))),
+                           room=[[-400.0, 0.0, -600.0], [400.0, 350.0, 350.0]],      # inside of the stand-in room, for the cutaway
                            first=S['first'], last=S['last'], width=S['width'], height=S['height'],
                            set=dict(units='centimetres', first=S['first'], last=S['last'], fps=24.0, shadows='stand-in geometry',
                                     standin_json=folder + '/standin.json', box_center=list(mf.DEFAULTS['box_center']),
@@ -320,7 +322,54 @@ def frame_images(pjson, frame, plate_pattern):
     pl = plate(pjson, plate_pattern, frame) if plate_pattern else None
     if pl:
         out.update(pw=pl['w'], ph=pl['h'], rgb=pl['rgb'])
+    else:
+        sp = shaded_plate(p, shot, int(frame))
+        if sp is not None:
+            out.update(pw=sp.shape[1], ph=sp.shape[0], rgb=sp.astype(np.float16).tobytes(), synthetic=True)
     return out
+
+
+def shaded_plate(p, shot, frame):
+    """No plate yet: shade the utility pass itself (surface colour, the key light with the tool's own shadows, a little fill),
+    so there is a set to judge the dust against. The viewer then gives it the lens defocus a render would have."""
+    e = shot._open(frame)
+    try:
+        found = mf.survey_layers(e)
+        if 'P' not in found:
+            return None
+        pi, names = found['P']
+        d = e.read(pi, names)
+        P = np.stack([d[n] for n in names], -1).astype(np.float64)
+        H, W = P.shape[:2]
+        if 'N' in found:
+            ni, nn = found['N']
+            dn = e.read(ni, nn)
+            N = np.stack([dn[n] for n in nn], -1).astype(np.float64)
+        else:
+            N = np.zeros_like(P); N[..., 1] = 1.0
+        if 'C' in found:
+            ci, cn = found['C']
+            dc = e.read(ci, cn)
+            C = np.clip(np.stack([dc[n] for n in cn], -1).astype(np.float64), 0, 1)
+        else:
+            C = np.full_like(P, 0.35)
+    finally:
+        e.close()
+    Pf, Nf, Cf = P.reshape(-1, 3), N.reshape(-1, 3), C.reshape(-1, 3)
+    hit = np.abs(Pf).sum(1) > 0
+    L = mf.light_dir(p['light_az'], p['light_el'])
+    sun = mf.kelvin_rgb(p['light_k']) * p['light_int']
+    nl = np.clip(Nf @ L, 0, None)
+    lit = np.zeros(len(Pf))
+    cand = hit & (nl > 0)
+    if cand.any():
+        light = _light_for(p, shot)
+        nrm = Nf[cand] / np.maximum(np.linalg.norm(Nf[cand], axis=1, keepdims=True), 1e-6)
+        lit[cand] = mf.soft_visibility(light, Pf[cand] + nrm * (2.0 / max(shot.su * 100, 1e-6)), L, max(p.get('shadow_soft', 3.0), 1.0) * 0.01 / shot.su)
+    fill = p['light_int'] * (0.035 + 0.02 * np.clip(Nf[:, 1], 0, 1)) * (0.4 + 0.6 * p['bounce'])
+    rgb = Cf * (sun[None, :] * (nl * lit)[:, None] + fill[:, None] * np.array([0.95, 0.97, 1.0]))
+    rgb[~hit] = 0.0
+    return rgb.reshape(H, W, 3).astype(np.float32)
 
 
 def plate(pjson, plate_pattern, frame):
@@ -387,3 +436,13 @@ def set_bokeh_image(w, h, data):
     os.makedirs(ROOT, exist_ok=True)
     mf.write_exr(path, {'Y': img})
     return path
+
+
+def preview_bounce(pjson):
+    """The bounce lights that fill the motes (motefield.bounce_lights), for the GPU preview."""
+    p = _params(pjson)
+    shot = _shot(p)
+    light = _light_for(p, shot)
+    pos, nrm, flx, amb = mf.bounce_lights(p, shot, light)
+    return dict(n=len(pos), pos=np.asarray(pos, np.float32).tobytes(), nrm=np.asarray(nrm, np.float32).tobytes(),
+                flux=np.asarray(flx, np.float32).tobytes(), amb=[float(x) for x in amb])
