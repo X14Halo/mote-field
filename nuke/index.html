@@ -223,6 +223,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
 
 <input type="file" id="fileUtil" accept=".exr" multiple hidden>
 <input type="file" id="filePlate" accept=".exr" multiple hidden>
+<input type="file" id="fileBokeh" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
 
 <script src="preview.js"></script>
 <script>
@@ -413,6 +414,11 @@ function buildPanel() {
         const pr = row(pg, 'Plate', true, 'Optional plate EXRs to see the dust over in the viewer (the Nuke node doesn\'t need this; merge over your plate there).');
         const pt = document.createElement('input'); pt.className = 'txt'; pt.readOnly = true; pt.id = 'f_plate'; pr.appendChild(pt);
         const pb = document.createElement('button'); pb.className = 'btn'; pb.textContent = 'Choose EXRs…'; pb.onclick = () => $('filePlate').click(); pr.appendChild(pb);
+      } else if (key === 'bokeh_image') {
+        t.placeholder = 'none: round bokeh (or blades)';
+        const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Choose image…'; b.onclick = () => $('fileBokeh').click();
+        const c = document.createElement('button'); c.className = 'btn'; c.textContent = 'Clear'; c.onclick = () => setBokehImage(null);
+        ctl.append(b, c);
       } else {
         t.value = 'browser memory'; t.title = BROWSER_NOTE.cache;
         const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = 'browser'; ctl.appendChild(tg);
@@ -578,6 +584,31 @@ async function pickFiles(kind, fileList) {
   finally { setBusy(false); }
   scheduleLive(10);
 }
+// custom bokeh shape: decoded here, handed to Python as an EXR (what the Nuke node's file knob reads) and to the GPU
+async function setBokehImage(file) {
+  try {
+    if (!file) {
+      await call('bokeh', {});
+      V.bokeh_image = ''; $('f_bokeh_image').value = '';
+      if (pv && pv.ok) pv.setShapeImage(null);
+      changed(true); return;
+    }
+    const bmp = await createImageBitmap(file);
+    const n = Math.min(512, Math.max(bmp.width, bmp.height)), sc = n / Math.max(bmp.width, bmp.height);
+    const w = Math.max(1, Math.round(bmp.width * sc)), h = Math.max(1, Math.round(bmp.height * sc));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const x = c.getContext('2d'); x.drawImage(bmp, 0, 0, w, h);
+    const px = x.getImageData(0, 0, w, h).data, data = new Float32Array(w * h);
+    const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    for (let i = 0; i < w * h; i++) data[i] = (0.2126 * lin(px[i * 4]) + 0.7152 * lin(px[i * 4 + 1]) + 0.0722 * lin(px[i * 4 + 2])) * px[i * 4 + 3] / 255;
+    const path = await call('bokeh', { w, h, data: data.slice() });
+    V.bokeh_image = path; $('f_bokeh_image').value = file.name + '  (browser memory)';
+    if (pv && pv.ok) pv.setShapeImage({ w, h, data });
+    setStatus('Custom bokeh shape: ' + file.name + '. White is open; it spans the bokeh\'s width.');
+    changed(true);
+  } catch (e) { setStatus('Bokeh image: ' + e.message, true); }
+}
+$('fileBokeh').onchange = (e) => { if (e.target.files[0]) setBokehImage(e.target.files[0]); e.target.value = ''; };
 $('fileUtil').onchange = (e) => { pickFiles('utility', e.target.files); e.target.value = ''; };
 $('filePlate').onchange = (e) => { pickFiles('plate', e.target.files); e.target.value = ''; };
 

@@ -128,7 +128,9 @@ uniform float uFade; uniform vec3 uFadeN, uFadeP;
 uniform vec3 uC[12]; uniform float uCT[6];        // cameras: now, shutter open, shutter close (pos, right, up, back) + tan(h/2), tan(v/2)
 uniform vec2 uWH, uWH0;
 uniform float uFocal, uFilm, uFstop, uFocusM, uMaxR, uFocalPx; uniform int uDof;
-uniform float uTOpen, uTClose, uSpf, uTsec, uShut;
+uniform float uTOpen, uTClose, uSpf, uTsec, uShut; uniform int uShape;
+uniform float uFC, uFront, uBack;
+float shutterW(float u){ return uShape == 1 ? 1.0 / (1.0 + exp(-9.0 * (u - 0.55))) : 1.0; }
 uniform vec3 uL, uSun, uAmb, uTint; uniform float uBright, uForward, uGlint, uTumble;
 uniform float uSizeMin, uSizeMax, uSizeBias, uFlakeScale, uFiberScale, uFluffScale;
 uniform int uHold, uFg; uniform float uFgNear, uFgFar;
@@ -171,8 +173,11 @@ void main(){
   float dist = length(P - cpos), dist_m = dist * uSu;
   vec3 Vd = (cpos - P) / dist;
   float coc = 0.0;
-  if (uDof == 1) { float s1 = uFocusM * 1000.0, s2 = max(z_m, 0.02) * 1000.0;
-    coc = (uFocal / uFstop) * uFocal * (s2 - s1) / (s2 * max(s1 - uFocal, 1.0)) / uFilm * uWH.x; }
+  if (uDof == 1) {
+    vec2 dc = pp.xy - uWH * 0.5; float rn2 = dot(dc, dc) / dot(uWH * 0.5, uWH * 0.5);
+    float s1 = uFocusM * 1000.0 * max(1.0 + uFC * rn2, 0.05), s2 = max(z_m, 0.02) * 1000.0;
+    coc = (uFocal / uFstop) * uFocal * (s2 - s1) / (s2 * max(s1 - uFocal, 1.0)) / uFilm * uWH.x;
+    coc *= coc < 0.0 ? uFront : uBack; }
   float R = clamp(abs(coc) * 0.5, 0.25, uMaxR);
   float ppm = uFocalPx / max(z_m, 1e-3);
   float u = hh[1];
@@ -205,9 +210,10 @@ void main(){
   float hg = (1.0 - gph*gph) / pow(max(1.0 + gph*gph - 2.0*gph*c, 1e-4), 1.5);
   vec3 rad = uSun * (vis * hg);
   if (typ == 1 && vis > 0.0 && uGlint > 0.0) {
-    vec3 Hh = normalize(uL + Vd); float g = 0.0;
-    for (int k = 0; k < 4; k++) { float tt = uTsec + (float(k)/3.0 - 0.5) * uShut * uSpf;
-      g += pow(abs(dot(tumbleAxis(hh[4], hh[5], hh[6], rate, tt), Hh)), 90.0); }
+    vec3 Hh = normalize(uL + Vd); float g = 0.0, gs = 0.0;
+    for (int k = 0; k < 4; k++) gs += shutterW(float(k) / 3.0);
+    for (int k = 0; k < 4; k++) { float tt = uTsec + (uTOpen + (uTClose - uTOpen) * float(k) / 3.0) * uSpf;
+      g += shutterW(float(k) / 3.0) * 4.0 / gs * pow(abs(dot(tumbleAxis(hh[4], hh[5], hh[6], rate, tt), Hh)), 90.0); }
     rad += uSun * (vis * g * 0.25 * 8.0 * uGlint * (0.4 + 0.6*hh[2]));
   }
   rad += uAmb;
@@ -242,8 +248,9 @@ void main(){
 
 // ---- splat: instanced quads, one per mote sample ----------------------------------------------------
 const VS_SPLAT = GLSL_COMMON + `
-uniform sampler2D uT0, uT1, uT2, uT3; uniform vec2 uWH; uniform float uMaxR;
-flat out vec3 vE; flat out float vHold, vR, vSig; out vec2 vOff;
+uniform sampler2D uT0, uT1, uT2, uT3; uniform vec2 uWH; uniform float uMaxR, uCat, uAspect; uniform int uShape;
+flat out vec3 vE; flat out float vHold, vR, vSig; flat out vec2 vCat; out vec2 vOff;
+float shutterW(float u){ return uShape == 1 ? 1.0 / (1.0 + exp(-9.0 * (u - 0.55))) : 1.0; }
 void main(){
   int m = gl_InstanceID / ${MF_NS}, s = gl_InstanceID % ${MF_NS};
   ivec2 tp = texel(m);
@@ -261,9 +268,12 @@ void main(){
   float X = t0.x + (t0.z - t0.x) * ts + fd.x * kf - fd.y * bend * (0.25 - kf*kf);
   float Y = t0.y + (t0.w - t0.y) * ts + fd.y * kf + fd.x * bend * (0.25 - kf*kf);
   float Rr = t1.w, half_;
+  float sa = sqrt(uAspect);
   if (Rr < 1.8) { vSig = sqrt(0.25*Rr*Rr + 0.12 + 1.0/6.0); half_ = 3.0*vSig + 1.0; vR = 0.0; }
-  else { vR = min(Rr, uMaxR); vSig = 0.0; half_ = vR + 2.0; }
-  vE = t1.rgb / float(Sq * Kq); vHold = t2.x;
+  else { vR = min(Rr, uMaxR); vSig = 0.0; half_ = vR * max(sa, 1.0 / sa) + 2.0; }
+  float ws = 0.0; for (int q = 0; q < ${MF_NS}; q++) { if (q >= Sq) break; ws += shutterW((float(q) + 0.5) / float(Sq)); }
+  vE = t1.rgb * (shutterW(ts) / (ws * float(Kq))); vHold = t2.x;
+  vCat = (vec2(X, Y) - uWH * 0.5) / length(uWH * 0.5) * uCat;     // cat-eye offset, image axes (y down)
   int c = gl_VertexID;
   vec2 corner = vec2((c == 1 || c == 2 || c == 4) ? 1.0 : -1.0, (c == 2 || c == 4 || c == 5) ? 1.0 : -1.0);
   vOff = corner * half_;
@@ -271,8 +281,8 @@ void main(){
   gl_Position = vec4(pix.x / uWH.x * 2.0 - 1.0, 1.0 - pix.y / uWH.y * 2.0, 0.0, 1.0);
 }`;
 const FS_SPLAT = GLSL_COMMON + `
-flat in vec3 vE; flat in float vHold, vR, vSig; in vec2 vOff;
-uniform int uBlades; uniform float uApN[32];
+flat in vec3 vE; flat in float vHold, vR, vSig; flat in vec2 vCat; in vec2 vOff;
+uniform int uBlades, uImg; uniform float uApN[32], uRot, uFall, uAspect, uImgRot; uniform sampler2D uShapeTex;
 layout(location=0) out vec4 oHeld; layout(location=1) out vec4 oFree;
 float apNorm(float R){
   float x = clamp(log(R / 1.8) / log(300.0 / 1.8) * 31.0, 0.0, 31.0);
@@ -283,15 +293,34 @@ void main(){
   float w;
   if (vR <= 0.0) { float r2 = dot(vOff, vOff); w = exp(-r2 / (2.0*vSig*vSig)) / (2.0*PI*vSig*vSig); }
   else {
-    float rr = length(vOff) / vR, m = rr;
-    if (uBlades >= 3) {
-      float a = atan(-vOff.y, vOff.x) + 0.25, sg = 2.0*PI/float(uBlades);
-      float ang = mod(a, sg) - sg*0.5;
-      float poly = rr * cos(ang) / cos(sg*0.5);
-      m = 0.65*poly + 0.35*rr;
-    }
+    vec2 q = vec2(vOff.x, -vOff.y);                       // image axes, y down (like the Python kernel)
+    float sa = sqrt(uAspect);
+    vec2 qa = vec2(q.x * sa, q.y / sa);
+    float rr = length(qa) / vR, m = rr;
     float aa = clamp(1.5 / vR, 0.04, 0.5);
-    float k = (1.0 - smooth01((m - (1.0 - aa)) / (2.0*aa))) * (1.08 - 0.16*m*m);
+    float k, cl = length(vCat), lens = 0.0;
+    if (cl > 0.0) { vec2 qn = q / vR, ch = vCat * 0.5; lens = max(length(qn - ch), length(qn + ch)); }   // cat-eye outline
+    if (uImg == 1) {
+      float c = cos(-uImgRot), s = sin(-uImgRot);
+      vec2 r2 = vec2(qa.x * c - qa.y * s, qa.x * s + qa.y * c) / vR;
+      vec2 uv = r2 * 0.5 + 0.5;
+      k = (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) ? 0.0 : texture(uShapeTex, uv).r;
+      k *= 1.0 + uFall * (0.5 - rr*rr);
+      if (cl > 0.0) k *= 1.0 - smooth01((lens - (1.0 - aa)) / (2.0*aa));
+    } else {
+      if (uBlades >= 3) {
+        float a = atan(qa.y, qa.x) + uRot, sg = 2.0*PI/float(uBlades);
+        float ang = mod(a, sg) - sg*0.5;
+        float poly = rr * cos(ang) / cos(sg*0.5);
+        m = 0.65*poly + 0.35*rr;
+      }
+      k = (1.0 - smooth01((max(m, lens) - (1.0 - aa)) / (2.0*aa))) * (1.0 + uFall * (0.5 - m*m));
+    }
+    if (cl > 0.0) {
+      // the overlap of two unit discs cl apart, as a fraction of one disc
+      float d = min(cl, 1.999);
+      k /= max((2.0 * acos(d * 0.5) - d * 0.5 * sqrt(4.0 - d*d)) / PI, 0.02);
+    }
     w = max(k, 0.0) / apNorm(vR);
   }
   oFree = vec4(vE * w, 0.0);
@@ -607,20 +636,42 @@ class MFPreview {
   }
 
   // ---- one frame of dust -----------------------------------------------------------------------------------
-  _apNorm(blades) {
-    if (this.apCache[blades]) return this.apCache[blades];
+  setShapeImage(img) {        // {w, h, data: Float32Array (0..1, row 0 at the top)} or null
+    const gl = this.gl;
+    if (this.shapeTex) this._free(this.shapeTex);
+    this.shapeTex = null; this.shapeMean = 0;
+    if (!img) return;
+    const n = Math.max(img.w, img.h), sq = new Float32Array(n * n);
+    let mx = 0; for (const v of img.data) mx = Math.max(mx, v);
+    const ox = (n - img.w) >> 1, oy = (n - img.h) >> 1;
+    for (let y = 0; y < img.h; y++) for (let x = 0; x < img.w; x++) sq[(y + oy) * n + x + ox] = img.data[y * img.w + x] / Math.max(mx, 1e-9);
+    this.shapeTex = this._tex(n, n, gl.R16F, gl.RED, gl.FLOAT, sq);        // R16F filters linearly everywhere
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    this.shapeImg = { n, sq }; this.apCache = {};
+  }
+  _apNormImage(fall) {
+    const key = 'img' + fall; if (this.apCache[key]) return this.apCache[key];
+    // sum of the shape over the bokeh's square, in units of R^2 (the image spans 2R x 2R)
+    const { n, sq } = this.shapeImg; let s = 0;
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const u = (x + 0.5) / n * 2 - 1, v = (y + 0.5) / n * 2 - 1; s += sq[y * n + x] * (1 + fall * (0.5 - u * u - v * v)); }
+    const c = Math.max(s / (n * n) * 4, 1e-6);
+    return (this.apCache[key] = new Float32Array(32).fill(c));
+  }
+  _apNorm(blades, fall = 0, rot = 0.25) {
+    const ck = blades + '|' + fall + '|' + rot;
+    if (this.apCache[ck]) return this.apCache[ck];
     const out = new Float32Array(32), sm = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
     for (let i = 0; i < 32; i++) {
       const R = 1.8 * Math.pow(300 / 1.8, i / 31), r = Math.ceil(R + 1.5), aa = Math.min(Math.max(1.5 / R, 0.04), 0.5);
       let s = 0;
       for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) {
         const rr = Math.hypot(x, y) / R; let m = rr;
-        if (blades >= 3) { const a = Math.atan2(y, x) + 0.25, sg = 2 * Math.PI / blades; const ang = ((a % sg) + sg) % sg - sg / 2; m = 0.65 * (rr * Math.cos(ang) / Math.cos(sg / 2)) + 0.35 * rr; }
-        s += Math.max(0, (1 - sm((m - (1 - aa)) / (2 * aa))) * (1.08 - 0.16 * m * m));
+        if (blades >= 3) { const a = Math.atan2(y, x) + rot, sg = 2 * Math.PI / blades; const ang = ((a % sg) + sg) % sg - sg / 2; m = 0.65 * (rr * Math.cos(ang) / Math.cos(sg / 2)) + 0.35 * rr; }
+        s += Math.max(0, (1 - sm((m - (1 - aa)) / (2 * aa))) * (1 + fall * (0.5 - m * m)));
       }
       out[i] = s / (R * R);
     }
-    return (this.apCache[blades] = out);
+    return (this.apCache[ck] = out);
   }
   _ensureTargets(W, H) {
     const gl = this.gl;
@@ -667,6 +718,12 @@ class MFPreview {
     const cam = this.camAt(frame), lens = this.cams.lens || {};
     const focal = p.focal || lens.focal || 35, film = p.film || lens.film || 2 * focal * Math.tan(cam.hfov / 2);
     const fstop = p.fstop || lens.fstop || 4, focusM = (p.focus || lens.focus || 500) * I.su;
+    const ex = lens.extra || {};
+    const blades = Math.round(p.blades) > 0 ? Math.round(p.blades) : Math.round(ex.blades || 0);
+    const full = p.fstop_full || ex.fstop_full || fstop, vign = Math.min(1, full / Math.max(fstop, 1e-3));
+    const catAmt = Math.max((ex.cateye || 0) + p.cateye, 0) * vign;
+    const aspect = Math.max((ex.anamorphic || 1) + p.anamorphic, 0.05), fc = (ex.fieldcurv || 0) + p.field_curv;
+    const shape = String(p.shutter_shape).toLowerCase().startsWith('back') ? 1 : 0;
     const focalPx = W / (2 * Math.tan(cam.hfov / 2));
     const s = p.mb ? p.shutter / 360 : 0, mode = String(p.shutter_mode).toLowerCase();
     const [tO, tC] = mode.startsWith('back') ? [-s, 0] : mode.startsWith('for') ? [0, s] : [-s / 2, s / 2];
@@ -688,6 +745,7 @@ class MFPreview {
     gl.uniform1f(u.uFocal, focal); gl.uniform1f(u.uFilm, film); gl.uniform1f(u.uFstop, fstop); gl.uniform1f(u.uFocusM, focusM);
     gl.uniform1f(u.uMaxR, p.max_bokeh * sc); gl.uniform1f(u.uFocalPx, focalPx); gl.uniform1i(u.uDof, p.dof ? 1 : 0);
     gl.uniform1f(u.uTOpen, tO); gl.uniform1f(u.uTClose, tC); gl.uniform1f(u.uSpf, p.speed / p.fps); gl.uniform1f(u.uShut, s);
+    gl.uniform1i(u.uShape, shape); gl.uniform1f(u.uFC, fc); gl.uniform1f(u.uFront, p.front_mult); gl.uniform1f(u.uBack, p.back_mult);
     gl.uniform1f(u.uTsec, (frame - p.first) / p.fps * p.speed);
     gl.uniform3fv(u.uL, p.L); gl.uniform3fv(u.uSun, p.sun); gl.uniform3fv(u.uAmb, p.amb); gl.uniform3fv(u.uTint, p.tint);
     gl.uniform1f(u.uBright, p.brightness); gl.uniform1f(u.uForward, p.forward); gl.uniform1f(u.uGlint, p.glint); gl.uniform1f(u.uTumble, p.tumble);
@@ -702,7 +760,12 @@ class MFPreview {
     gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
     for (let k = 0; k < 4; k++) this._bind(prog, k, 'uT' + k, S.prep[k]);
     gl.uniform2f(prog.u.uWH, W, H); gl.uniform1f(prog.u.uMaxR, p.max_bokeh * sc);
-    gl.uniform1i(prog.u.uBlades, Math.round(p.blades)); gl.uniform1fv(prog.u.uApN, this._apNorm(Math.round(p.blades) >= 3 ? Math.round(p.blades) : 0));
+    const useImg = !!(this.shapeTex && p.bokeh_image), rot = p.bokeh_rot * Math.PI / 180;
+    gl.uniform1i(prog.u.uBlades, blades); gl.uniform1i(prog.u.uImg, useImg ? 1 : 0);
+    gl.uniform1f(prog.u.uRot, 0.25 + rot); gl.uniform1f(prog.u.uImgRot, rot); gl.uniform1f(prog.u.uFall, p.bokeh_falloff);
+    gl.uniform1f(prog.u.uAspect, aspect); gl.uniform1f(prog.u.uCat, catAmt); gl.uniform1i(prog.u.uShape, shape);
+    this._bind(prog, 4, 'uShapeTex', this.shapeTex || this.dummy);
+    gl.uniform1fv(prog.u.uApN, useImg ? this._apNormImage(p.bokeh_falloff) : this._apNorm(blades >= 3 ? blades : 0, p.bokeh_falloff, blades >= 3 ? 0.25 + rot : 0.25));
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, I.n * MF_NS);
     gl.disable(gl.BLEND);
     return { W, H, n: I.n };

@@ -248,7 +248,7 @@ def scene(pjson, with_cloud=True, max_points=240000):
         e = shot._open(first)
         size = [e.parts[0]['width'], e.parts[0]['height']]
         e.close()
-    lens = dict(focal=c0.focal or 0.0, film=c0.film or 0.0, fstop=c0.fstop or 0.0, focus=c0.focus or 0.0)
+    lens = dict(focal=c0.focal or 0.0, film=c0.film or 0.0, fstop=c0.fstop or 0.0, focus=c0.focus or 0.0, extra=dict(c0.extra))
     return dict(first=first, last=last, cams=np.array(cams, np.float32).tobytes(), cloud=P.tobytes(), col=C.tobytes(),
                 light=list(mf.light_dir(p['light_az'], p['light_el'])), lens=lens, size=size)
 
@@ -366,3 +366,17 @@ def save_exr(pjson, frame):
         data = fh.read()
     os.remove(path)
     return data
+
+
+def set_bokeh_image(w, h, data):
+    """A custom bokeh shape picked in the browser (already decoded to 0..1 floats), stored as an EXR the
+    renderer reads exactly as the Nuke node reads its 'Custom bokeh shape' file."""
+    path = ROOT + '/bokeh_shape.exr'
+    if not w:
+        if os.path.exists(path):
+            os.remove(path)
+        return ''
+    img = np.frombuffer(bytes(data), np.float32).reshape(int(h), int(w))
+    os.makedirs(ROOT, exist_ok=True)
+    mf.write_exr(path, {'Y': img})
+    return path

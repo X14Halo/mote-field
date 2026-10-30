@@ -322,8 +322,9 @@ def _nums(v):
 class Camera(object):
     """A pinhole camera in scene units. right/up/back are unit vectors (camera looks down -back)."""
 
-    def __init__(self, pos, right, up, back, hfov, focal=None, film=None, fstop=None, focus=None):
+    def __init__(self, pos, right, up, back, hfov, focal=None, film=None, fstop=None, focus=None, extra=None):
         self.pos = np.asarray(pos, np.float64)
+        self.extra = dict(extra or {})      # lens metadata: blades, cateye, anamorphic, fieldcurv, fstop_full
         self.right = np.asarray(right, np.float64)
         self.up = np.asarray(up, np.float64)
         self.back = np.asarray(back, np.float64)
@@ -358,10 +359,21 @@ def _orthonormal(right, up, back):
 
 
 def camera_from_headers(headers):
-    cam = {}
+    cam, extra = {}, {}
     for h in headers:
         for k, v in h.items():
             kl = k.lower()
+            kn = ''.join(ch for ch in kl if ch.isalnum())
+            lens_key = ('fstop_full' if any(t in kn for t in ('fullaperture', 'fstopfull', 'maxaperture', 'wideopen')) else
+                        'cateye' if 'cateye' in kn else
+                        'fieldcurv' if 'fieldcurvature' in kn else
+                        'anamorphic' if ('anamorphic' in kn or kn.endswith('squeeze')) else
+                        'blades' if (kn.endswith('bladecount') or kn.endswith('blades') or kn.endswith('numblades')) else None)
+            if lens_key:
+                n = _nums(v)
+                if n and lens_key not in extra:
+                    extra[lens_key] = float(n[0])
+                continue
             if 'toworld' not in cam and (kl.endswith('camtoworld') or kl.endswith('cameratoworld')):
                 n = _nums(v)
                 if len(n) >= 16:
@@ -398,13 +410,13 @@ def camera_from_headers(headers):
     else:
         return None
     film = ap if ap else (2 * focal * math.tan(hfov / 2) if focal else None)
-    return Camera(M[3, :3], r, u, b, hfov, focal=focal, film=film, fstop=cam.get('fstop'), focus=cam.get('focus'))
+    return Camera(M[3, :3], r, u, b, hfov, focal=focal, film=film, fstop=cam.get('fstop'), focus=cam.get('focus'), extra=extra)
 
 
 def _blend_camera(a, b, t):
     """Blend (or, outside 0..1, extrapolate) two cameras."""
     r, u, bk = _orthonormal(a.right * (1 - t) + b.right * t, a.up * (1 - t) + b.up * t, a.back * (1 - t) + b.back * t)
-    return Camera(a.pos * (1 - t) + b.pos * t, r, u, bk, a.hfov * (1 - t) + b.hfov * t, a.focal, a.film, a.fstop, a.focus)
+    return Camera(a.pos * (1 - t) + b.pos * t, r, u, bk, a.hfov * (1 - t) + b.hfov * t, a.focal, a.film, a.fstop, a.focus, a.extra)
 
 
 def lerp_camera(a, b, t):
@@ -414,7 +426,7 @@ def lerp_camera(a, b, t):
     if t >= 1:
         return b
     r, u, bk = _orthonormal(a.right * (1 - t) + b.right * t, a.up * (1 - t) + b.up * t, a.back * (1 - t) + b.back * t)
-    return Camera(a.pos * (1 - t) + b.pos * t, r, u, bk, a.hfov * (1 - t) + b.hfov * t, a.focal, a.film, a.fstop, a.focus)
+    return Camera(a.pos * (1 - t) + b.pos * t, r, u, bk, a.hfov * (1 - t) + b.hfov * t, a.focal, a.film, a.fstop, a.focus, a.extra)
 
 
 # =====================================================================================================
@@ -689,7 +701,10 @@ DEFAULTS = dict(
     light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, bounce=1.0, shadows='stand-in geometry', interior=True,
     # lens (0 = use the camera from the utility pass headers)
     focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, blades=0, max_bokeh=110.0,
-    shutter=180.0, shutter_mode='backward', mb=True,       # matches the studio cameras: 180 degrees, backward
+    cateye=0.0, anamorphic=0.0, field_curv=0.0, fstop_full=0.0, front_mult=1.0, back_mult=1.0,
+    bokeh_image='', bokeh_rot=0.0, bokeh_falloff=0.0,
+    # shutter: as on the studio cameras (180 degrees, backward, backwardsShape)
+    shutter=180.0, shutter_mode='backward', shutter_shape='backwardsShape', mb=True,
     # holdouts
     holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0,
     cache='', standin_json='',
@@ -1078,22 +1093,178 @@ def _fast_len(n):
         n += 1
 
 
-def _aperture(R, blades=0, rot=0.25):
-    r = int(math.ceil(R + 1.5))
+_BOKEH_IMAGES = {}
+
+
+def _read_png_gray(path):
+    """8/16-bit, non-interlaced PNG -> (H, W) float 0..1 (luminance, times alpha if there is one)."""
+    with open(path, 'rb') as fh:
+        b = fh.read()
+    if b[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError('%s is not a PNG' % path)
+    o, idat, W = 8, [], 0
+    while o < len(b):
+        n, typ = struct.unpack('>I4s', b[o:o + 8])
+        data = b[o + 8:o + 8 + n]
+        if typ == b'IHDR':
+            W, H, depth, ctype, _, _, inter = struct.unpack('>IIBBBBB', data)
+        elif typ == b'IDAT':
+            idat.append(data)
+        o += 12 + n
+    if inter:
+        raise ValueError('Interlaced PNGs are not supported')
+    ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
+    bpp = ch * depth // 8
+    raw = np.frombuffer(zlib.decompress(b''.join(idat)), np.uint8)
+    stride = W * bpp
+    img = np.zeros((H, stride), np.int32)
+    prev = np.zeros(stride, np.int32)
+    for y in range(H):
+        f = raw[y * (stride + 1)]
+        line = raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)].astype(np.int32)
+        if f == 0:
+            cur = line
+        elif f == 2:
+            cur = (line + prev) & 255
+        else:
+            cur = np.zeros(stride, np.int32)
+            for i in range(stride):
+                a = cur[i - bpp] if i >= bpp else 0
+                c = prev[i - bpp] if i >= bpp else 0
+                if f == 1:
+                    pr = a
+                elif f == 3:
+                    pr = (a + prev[i]) >> 1
+                else:
+                    pa, pb, pc = abs(prev[i] - c), abs(a - c), abs(a + prev[i] - 2 * c)
+                    pr = a if (pa <= pb and pa <= pc) else (prev[i] if pb <= pc else c)
+                cur[i] = (line[i] + pr) & 255
+        img[y] = cur
+        prev = cur
+    if depth == 16:
+        px = (img[:, 0::2] * 256 + img[:, 1::2]).astype(np.float64) / 65535.0
+    else:
+        px = img.astype(np.float64) / 255.0
+    px = px.reshape(H, W, ch)
+    lum = px[..., 0] if ch <= 2 else 0.2126 * px[..., 0] + 0.7152 * px[..., 1] + 0.0722 * px[..., 2]
+    if ch in (2, 4):
+        lum = lum * px[..., -1]
+    return lum
+
+
+def load_bokeh_image(path):
+    """A custom aperture shape (EXR or PNG): white = open. Returned square (padded), peak 1. Cached."""
+    if not path:
+        return None
+    key = (path, os.path.getmtime(path) if os.path.exists(path) else 0)
+    if key in _BOKEH_IMAGES:
+        return _BOKEH_IMAGES[key]
+    if path.lower().endswith('.png'):
+        img = _read_png_gray(path)
+    else:
+        e = ExrFile(path)
+        try:
+            chs = [n for n, t in e.parts[0]['channels']]
+            pick = [c for c in ('Y', 'R', 'G', 'B') if c in chs]
+            d = e.read(0, pick or chs[:1])
+            img = d['Y'] if 'Y' in d else (0.2126 * d['R'] + 0.7152 * d['G'] + 0.0722 * d['B'] if all(c in d for c in 'RGB') else list(d.values())[0])
+        finally:
+            e.close()
+    img = np.clip(np.nan_to_num(np.asarray(img, np.float64)), 0, None)
+    H, W = img.shape
+    n = max(H, W)
+    sq = np.zeros((n, n))
+    sq[(n - H) // 2:(n - H) // 2 + H, (n - W) // 2:(n - W) // 2 + W] = img
+    sq /= max(sq.max(), 1e-9)
+    _BOKEH_IMAGES.clear()
+    _BOKEH_IMAGES[key] = sq
+    return sq
+
+
+def _sample_bilinear(img, u, v):
+    """img (n, n); u, v in 0..1 (v = 0 at the top). Outside = 0."""
+    n = img.shape[0]
+    x, y = u * n - 0.5, v * n - 0.5
+    x0, y0 = np.floor(x).astype(np.intp), np.floor(y).astype(np.intp)
+    tx, ty = x - x0, y - y0
+    out = np.zeros(u.shape)
+    for dx, dy, w in ((0, 0, (1 - tx) * (1 - ty)), (1, 0, tx * (1 - ty)), (0, 1, (1 - tx) * ty), (1, 1, tx * ty)):
+        xi, yi = x0 + dx, y0 + dy
+        ok = (xi >= 0) & (xi < n) & (yi >= 0) & (yi < n)
+        out[ok] += w[ok] * img[yi[ok], xi[ok]]
+    return out
+
+
+def _aperture(R, blades=0, rot=0.25, aspect=1.0, cat=(0.0, 0.0), falloff=0.0, image=None, img_rot=0.0):
+    """Lens aperture kernel, radius R px, normalised to sum 1.
+    blades: iris blades (< 3 = round). aspect: anamorphic aspect (> 1 = taller bokeh, same area).
+    cat: cat-eye offset (fraction of R, pointing out from the frame centre): the bokeh is the overlap of two
+    discs that far apart, so bokeh toward the frame edges turn into lemon shapes.
+    falloff: 0 = evenly bright (default), > 0 brighter in the middle, < 0 brighter at the rim.
+    image: a custom aperture (square array, see load_bokeh_image) spanning the bokeh's diameter."""
+    sa = math.sqrt(max(aspect, 0.05))
+    r = int(math.ceil(R * max(sa, 1.0 / sa) + 1.5))
     y, x = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float64)
-    rr = np.hypot(x, y) / max(R, 1e-6)
+    Rs = max(R, 1e-6)
+    xa, ya = x * sa, y / sa
+    rr = np.hypot(xa, ya) / Rs
     if blades >= 3:
-        a = np.arctan2(y, x) + rot
+        a = np.arctan2(ya, xa) + rot
         sg = 2 * math.pi / blades
         ang = np.mod(a, sg) - sg / 2
         poly = rr * np.cos(ang) / math.cos(sg / 2)
         m = 0.65 * poly + 0.35 * rr
     else:
         m = rr
-    aa = min(max(1.5 / max(R, 1e-6), 0.04), 0.5)
-    k = (1 - _smooth01((m - (1 - aa)) / (2 * aa))) * (1.08 - 0.16 * m * m)
+    aa = min(max(1.5 / Rs, 0.04), 0.5)
+    win = lambda q: 1 - _smooth01((q - (1 - aa)) / (2 * aa))
+    lens = None
+    if cat[0] or cat[1]:        # cat-eye: inside both discs, offset by +-cat/2 (one soft edge for the whole outline)
+        cx, cy = cat[0] * 0.5, cat[1] * 0.5
+        lens = np.maximum(np.hypot(x / Rs - cx, y / Rs - cy), np.hypot(x / Rs + cx, y / Rs + cy))
+    if image is not None:
+        c, s_ = math.cos(-img_rot), math.sin(-img_rot)
+        xr, yr = (xa * c - ya * s_) / Rs, (xa * s_ + ya * c) / Rs
+        k = _sample_bilinear(image, xr * 0.5 + 0.5, yr * 0.5 + 0.5) * (1 + falloff * (0.5 - rr * rr))
+        if lens is not None:
+            k = k * win(lens)
+    else:
+        k = win(m if lens is None else np.maximum(m, lens)) * (1 + falloff * (0.5 - m * m))
     k = np.clip(k, 0, None)
     return k / max(k.sum(), 1e-12)
+
+
+def shutter_weight(u, shape):
+    """Shutter shape: how open the shutter is at u (0 = opens, 1 = closes). 'backwardsShape' follows the studio
+    cameras' curve: closed at first, opening along an S-curve, fully open as it reaches the frame."""
+    u = np.asarray(u, np.float64)
+    if str(shape).lower().startswith('back'):
+        return 1.0 / (1.0 + np.exp(-9.0 * (u - 0.55)))
+    return np.ones_like(u)
+
+
+def bokeh_shape(p):
+    """(rotation for the blades in radians, falloff, custom image or None, image rotation)."""
+    rot = math.radians(p.get('bokeh_rot', 0.0))
+    img = None
+    if p.get('bokeh_image'):
+        try:
+            img = load_bokeh_image(p['bokeh_image'])
+        except Exception:
+            img = None
+    return 0.25 + rot, p.get('bokeh_falloff', 0.0), img, rot
+
+
+def lens_settings(p, cam, fstop):
+    """Bokeh settings: header metadata plus the knobs (offsets, like the studio's BokehBlur)."""
+    ex = getattr(cam, 'extra', {}) or {}
+    blades = int(p['blades']) if int(p['blades']) > 0 else int(round(ex.get('blades', 0)))
+    cat = ex.get('cateye', 0.0) + p.get('cateye', 0.0)
+    aspect = (ex.get('anamorphic') or 1.0) + p.get('anamorphic', 0.0)
+    fc = ex.get('fieldcurv', 0.0) + p.get('field_curv', 0.0)
+    full = p.get('fstop_full', 0.0) or ex.get('fstop_full') or fstop
+    vign = min(1.0, full / max(fstop, 1e-3))          # stopping down from wide open shrinks the cat-eye
+    return blades, max(cat, 0.0) * vign, max(aspect, 0.05), fc
 
 
 def _gauss1d(s):
@@ -1203,9 +1374,13 @@ def render_frame(p, shot, frame, sim, progress=None):
     Vd = (cam.pos - P) / dist[:, None]
 
     # defocus: circle of confusion in pixels
+    blades, cat_amt, aspect, fcurv = lens_settings(p, cam, fstop)
     if p['dof']:
-        s1, s2 = focus_m * 1000.0, np.maximum(z_m, 0.02) * 1000.0
-        coc = (focal / fstop) * focal * (s2 - s1) / (s2 * max(s1 - focal, 1.0)) / film * W
+        rn2 = ((px[idx] - W / 2.0) ** 2 + (py[idx] - H / 2.0) ** 2) / ((W / 2.0) ** 2 + (H / 2.0) ** 2)
+        s1 = focus_m * 1000.0 * np.maximum(1 + fcurv * rn2, 0.05)       # field curvature: focus shifts toward the edges
+        s2 = np.maximum(z_m, 0.02) * 1000.0
+        coc = (focal / fstop) * focal * (s2 - s1) / (s2 * np.maximum(s1 - focal, 1.0)) / film * W
+        coc = coc * np.where(coc < 0, p.get('front_mult', 1.0), p.get('back_mult', 1.0))
     else:
         coc = np.zeros(len(idx))
     R = np.clip(np.abs(coc) * 0.5, 0.25, p['max_bokeh'] * sc)
@@ -1259,9 +1434,11 @@ def render_frame(p, shot, frame, sim, progress=None):
         Hh = L[None, :] + Vd[m]
         Hh /= np.linalg.norm(Hh, axis=1, keepdims=True)
         g = 0.0
+        gw = shutter_weight(np.arange(4) / 3.0, p.get('shutter_shape', 'box'))
+        gw = gw * 4.0 / gw.sum()
         for i in range(4):
-            tt = tsec + (i / 3.0 - 0.5) * s * sec_per_frame
-            g = g + np.abs((_tumble_axis(hh[m, 4], hh[m, 5], hh[m, 6], rate[m], tt) * Hh).sum(1)) ** 90
+            tt = tsec + (t_open + (t_close - t_open) * i / 3.0) * sec_per_frame
+            g = g + gw[i] * np.abs((_tumble_axis(hh[m, 4], hh[m, 5], hh[m, 6], rate[m], tt) * Hh).sum(1)) ** 90
         rad[m] += sun[None, :] * (vis[m] * g * 0.25 * 8 * p['glint'] * (0.4 + 0.6 * hh[m, 2]))[:, None]
     amb = sun * 0.004 * p['bounce']
     rad += amb[None, :] * p['shadow_fill'] * 1.5
@@ -1320,11 +1497,16 @@ def render_frame(p, shot, frame, sim, progress=None):
     kf = np.where(Ks > 1, ki / np.maximum(Ks - 1, 1) - 0.5, 0.0)
     X = xo[rep] + (xc[rep] - xo[rep]) * ts + fdx[rep] * kf - fdy[rep] * bend[rep] * (0.25 - kf * kf)
     Y = yo[rep] + (yc[rep] - yo[rep]) * ts + fdy[rep] * kf + fdx[rep] * bend[rep] * (0.25 - kf * kf)
-    E = col[rep] / NS[rep][:, None]
+    sw = shutter_weight(ts, p.get('shutter_shape', 'box'))
+    sw = sw / np.bincount(rep, weights=sw, minlength=len(idx))[rep]     # each mote's samples sum to 1
+    E = col[rep] * sw[:, None]
     Eh = E * hold[rep][:, None]
     Rr = Reff[rep]
     inside = (X > -margin) & (X < W + margin) & (Y > -margin) & (Y < H + margin)
     X, Y, E, Eh, Rr = X[inside], Y[inside], E[inside], Eh[inside], Rr[inside]
+    # cat-eye: offset of each sample's bokeh, from where it sits in the frame
+    half_diag = math.hypot(W / 2.0, H / 2.0)
+    CX, CY = (X - W / 2.0) / half_diag * cat_amt, (Y - H / 2.0) / half_diag * cat_amt
 
     # bin by blur radius: tiny ones get a small gaussian, the rest the lens aperture
     edges = [0.0, 0.6, 0.9, 1.3, 1.8]
@@ -1336,16 +1518,38 @@ def render_frame(p, shot, frame, sim, progress=None):
     which = np.digitize(Rr, edges) - 1
     W6 = np.concatenate([Eh, E], 1)
     nb = len(edges) - 1
+    # with cat-eye on, large bokeh are also grouped by their cat-eye offset (12 directions x 4 strengths)
+    if cat_amt > 0:
+        cm = np.hypot(CX, CY)
+        zone_m = np.clip(np.round(cm / max(cat_amt, 1e-6) * 4), 0, 4).astype(np.intp)
+        zone_a = np.mod(np.round(np.arctan2(CY, CX) / (2 * math.pi / 12)), 12).astype(np.intp)
+        zone = np.where(zone_m == 0, 0, 1 + (zone_m - 1) * 12 + zone_a)
+    else:
+        zone = np.zeros(len(X), np.intp)
+    groups = []
     for b in range(nb):
         mb = which == b
         if not mb.any():
             continue
+        if b < 4:
+            groups.append((b, mb, (0.0, 0.0)))
+            continue
+        for z in np.unique(zone[mb]):
+            mz = mb & (zone == z)
+            if z == 0:
+                cvec = (0.0, 0.0)
+            else:
+                zm, za = (z - 1) // 12 + 1, (z - 1) % 12
+                cvec = (math.cos(za * math.pi / 6) * cat_amt * zm / 4.0, math.sin(za * math.pi / 6) * cat_amt * zm / 4.0)
+            groups.append((b, mz, cvec))
+    for b, mb, cvec in groups:
         lo, hi = edges[b], min(edges[b + 1], p['max_bokeh'] * sc)
         Rb = math.sqrt(max(lo, 0.25) * max(hi, 0.25)) if b >= 1 else 0.4
         if b < 4:
             pad = int(math.ceil(3 * math.sqrt(0.25 * Rb * Rb + 0.12))) + 2
         else:
-            pad = int(math.ceil(Rb)) + 3
+            sa = math.sqrt(aspect)
+            pad = int(math.ceil(Rb * max(sa, 1 / sa))) + 3
         bx0 = int(max(math.floor(X[mb].min()) - pad, 0))
         by0 = int(max(math.floor(Y[mb].min()) - pad, 0))
         bx1 = int(min(math.ceil(X[mb].max()) + pad, W))
@@ -1356,7 +1560,8 @@ def render_frame(p, shot, frame, sim, progress=None):
         if b < 4:
             img = _blur_sep(img, math.sqrt(0.25 * Rb * Rb + 0.12))
         else:
-            img = _fft_conv(img, _aperture(Rb, int(p['blades'])))
+            brot, bfall, bimg, irot = bokeh_shape(p)
+            img = _fft_conv(img, _aperture(Rb, blades, rot=brot, aspect=aspect, cat=cvec, falloff=bfall, image=bimg, img_rot=irot))
         held[by0:by1, bx0:bx1] += img[:, :, :3]
         unheld[by0:by1, bx0:bx1] += img[:, :, 3:]
     return held.astype(np.float32), unheld.astype(np.float32)
@@ -1493,10 +1698,25 @@ _KNOBS = [
     ('Lens', 'fstop', 'float', 'f-stop (0 = header)', (0, 22)),
     ('Lens', 'focus', 'float', 'Focus distance (scene units, 0 = header)', (0, 5000)),
     ('Lens', 'dof', 'bool', 'Defocus', None),
-    ('Lens', 'blades', 'int', 'Aperture blades (0 = round)', None),
+    ('Lens', 'blades', 'int', 'Blade count (0 = header, < 3 round)', None),
+    ('Lens', 'cateye', 'float', 'Cat-eye bokeh (+ header)', (0, 1)),
+    ('Lens', 'anamorphic', 'float', 'Anamorphic aspect (+ header)', (-0.5, 1.5)),
+    ('Lens', 'field_curv', 'float', 'Field curvature (+ header)', (-0.5, 0.5)),
+    ('Lens', 'fstop_full', 'float', 'f-stop full aperture (0 = header)', (0, 8)),
+    ('Lens', 'front_mult', 'float', 'Front multiplier', (0, 5)),
+    ('Lens', 'back_mult', 'float', 'Back multiplier', (0, 5)),
     ('Lens', 'max_bokeh', 'float', 'Largest bokeh radius (px)', (10, 300)),
+    ('Lens', 'bokeh_image', 'file', 'Custom bokeh shape', 'An image of the aperture (EXR or PNG), white = open. It spans the bokeh\'s diameter and replaces the blades.'),
+    ('Lens', 'bokeh_rot', 'float', 'Bokeh rotation', (-180, 180)),
+    ('Lens', 'bokeh_falloff', 'float', 'Bokeh centre / rim brightness', (-1, 1)),
+    ('Lens', None, 'text', 'Like the studio BokehBlur: blades, cat-eye, anamorphic aspect, field curvature and full aperture come from '
+                           'the camera metadata when it has them, and these knobs are added on top. Cat-eye turns bokeh toward the frame edges into '
+                           'lemon shapes, less so as you stop down from full aperture. Front / back scale the blur in front of / behind focus. '
+                           'Bokeh are round and evenly bright by default, like the studio renders.', None),
+    ('Lens', None, 'divider', 'Motion blur', None),
     ('Lens', 'shutter', 'float', 'Shutter angle', (0, 360)),
     ('Lens', 'shutter_mode', 'enum', 'Shutter', ['centred', 'backward', 'forward']),
+    ('Lens', 'shutter_shape', 'enum', 'Shutter shape', ['backwardsShape', 'box']),
     ('Lens', 'mb', 'bool', 'Motion blur', None),
     ('Holdouts', 'holdout', 'bool', 'Depth holdouts', 'Dust behind what the utility pass sees is held out.'),
     ('Holdouts', 'fg_fade', 'bool', 'Fade out foreground holdouts', None),

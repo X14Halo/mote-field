@@ -53,6 +53,7 @@ const jobs = {
   pinit: ({ p }) => out(mf.preview_init(JSON.stringify(p))),
   plight: ({ p }) => out(mf.preview_light(JSON.stringify(p))),
   fimages: ({ p, frame, pattern }) => out(mf.frame_images(JSON.stringify(p), frame, pattern || '')),
+  bokeh: ({ w, h, data }) => mf.set_bokeh_image(w || 0, h || 0, data ? py.toPy(new Uint8Array(data.buffer || data)) : null),
   exr: ({ p, frame }) => out(mf.save_exr(JSON.stringify(p), frame)),
 };
 
