@@ -41,6 +41,8 @@ Single self-contained `index.html`; needs a browser with WebGL 2.
 - Starts on the stand-in shot (an interior with a window opening and a moving camera), rendered a frame at a time when first needed
 - **Choose EXRs** loads a utility pass sequence (and optionally a plate) from your computer; the files stay in the browser tab
 - **Live update** re-renders the current frame when a knob changes (the Nuke node only renders on a button press)
+- **Play** renders any frames it doesn't have yet on the first pass, then plays at speed (like Nuke's viewer cache)
+- **2D / 3D viewer** (Tab): the 3D view shows the utility pass as a point cloud, the dust box and its fade, the shot camera's path and frustum, the key light, and the rendered motes (lit ones bright). Maya navigation: Alt+LMB tumble, Alt+MMB track, Alt+RMB or wheel dolly, F to frame; the same buttons work without Alt. **Shot camera** looks through the shot camera and follows the frame. The 2D view pans and zooms the same way.
 - **Save this frame** downloads the dust EXR exactly as the Nuke node writes it (RGBA + `noholdout`, half float)
 - Slower than Nuke (single-threaded WebAssembly): about 2-3 s a frame at 960 x 402 once the pre-roll is simulated
 - Nuke only: the 3D preview and writing to a cache folder

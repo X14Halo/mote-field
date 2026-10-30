@@ -185,9 +185,62 @@ def render(pjson, frame, progress=None):
     held, unheld = mf.render_frame(p, shot, frame, sim)
     _last.update(key=(pjson, frame), held=held, unheld=unheld)
     H, W = held.shape[:2]
-    n = int(np.count_nonzero(sim.edge_weight() > 1e-4))
+    wgt = sim.edge_weight()
+    inside = wgt > 1e-4
+    n = int(np.count_nonzero(inside))
+    # the motes themselves, for the 3D view: position (scene units) and how lit / how faded each one is
+    pts = sim.scene_points()[inside].astype(np.float32)
+    lit = np.clip(np.asarray(sim._vis)[inside] * 0.75 + 0.25, 0, 1) * np.clip(wgt[inside], 0, 1)
     return dict(w=W, h=H, held=held.astype(np.float16).tobytes(), unheld=unheld.astype(np.float16).tobytes(),
-                motes=n, secs=time.time() - t0)
+                motes=n, secs=time.time() - t0, pts=pts.tobytes(), lit=(lit * 255).astype(np.uint8).tobytes())
+
+
+def scene(pjson, max_points=240000):
+    """What the 3D view needs: the shot camera on every frame, and a point cloud of the utility pass
+    (first, middle and last frames) coloured by its surface colour, or by its normals."""
+    p = _params(pjson)
+    shot = _shot(p)
+    first, last = int(p['first']), int(p['last'])
+    cams = []
+    for f in range(first, last + 1):
+        c = shot.camera(f)
+        cams.extend(list(c.pos) + list(c.right) + list(c.up) + list(c.back) + [c.hfov])
+    fs = sorted(set([first, (first + last) // 2, last]))
+    P_all, C_all = [], []
+    for f in fs:
+        e = shot._open(f)
+        try:
+            found = mf.survey_layers(e)
+            if 'P' not in found:
+                continue
+            pi, names = found['P']
+            d = e.read(pi, names)
+            P = np.stack([d[n] for n in names], -1)
+            H, W = P.shape[:2]
+            if 'C' in found:
+                ci, cn = found['C']
+                dc = e.read(ci, cn)
+                C = np.stack([dc[n] for n in cn], -1)
+                C = np.clip(C, 0, 1) ** (1 / 2.2)
+            elif 'N' in found:
+                ni, nn = found['N']
+                dn = e.read(ni, nn)
+                N = np.stack([dn[n] for n in nn], -1)
+                C = np.repeat((0.35 + 0.45 * np.clip(N[..., 1:2] * 0.5 + 0.5, 0, 1)), 3, -1)
+            else:
+                C = np.full_like(P, 0.6)
+        finally:
+            e.close()
+        P, C = P.reshape(-1, 3), C.reshape(-1, 3)
+        ok = (np.abs(P).sum(1) > 0) & np.isfinite(P).all(1)
+        P, C = P[ok], C[ok]
+        step = max(1, int(np.ceil(len(P) / float(max_points // len(fs)))))
+        P_all.append(P[::step])
+        C_all.append(C[::step])
+    P = np.concatenate(P_all).astype(np.float32) if P_all else np.zeros((0, 3), np.float32)
+    C = (np.concatenate(C_all) * 255).astype(np.uint8) if C_all else np.zeros((0, 3), np.uint8)
+    return dict(first=first, last=last, cams=np.array(cams, np.float32).tobytes(), cloud=P.tobytes(), col=C.tobytes(),
+                light=list(mf.light_dir(p['light_az'], p['light_el'])))
 
 
 def plate(pjson, plate_pattern, frame):

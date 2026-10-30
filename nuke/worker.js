@@ -49,6 +49,7 @@ const jobs = {
     const cb = (x, msg) => { say('progress', { id, x, msg }); return true; };
     return out(mf.render(JSON.stringify(p), frame, cb));
   },
+  scene: ({ p }) => out(mf.scene(JSON.stringify(p))),
   exr: ({ p, frame }) => out(mf.save_exr(JSON.stringify(p), frame)),
 };
 
