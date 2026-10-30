@@ -1,0 +1,242 @@
+"""
+Browser glue for MoteField: runs the unchanged motefield.py (the Nuke tool) inside Pyodide.
+
+The Nuke node's knobs become a web panel built from motefield._KNOBS, and the buttons call the same functions
+the Nuke buttons call. Differences from Nuke:
+  * files live in the browser's memory (/work), never on disk or on a network path
+  * the stand-in shot is rendered one frame at a time, when a frame is first needed, at a chosen resolution
+  * frames come back to the page as half floats for the viewer instead of being written to a cache folder
+"""
+import os, re, json, time
+import numpy as np
+import motefield as mf
+
+ROOT = '/work'
+STANDIN_RES = {640: 268, 960: 402, 1280: 536}
+_BaseShot = mf.Shot
+_shots = {}
+_light = {'key': None, 'fn': None}
+_last = {'key': None, 'held': None, 'unheld': None}
+_made = []                     # stand-in frames generated so far (oldest first), so memory stays bounded
+KEEP_FRAMES = 14
+
+
+def _standin_meta(folder):
+    js = os.path.join(folder, 'standin.json')
+    if os.path.exists(js):
+        with open(js) as fh:
+            return json.load(fh)
+    return None
+
+
+def _ensure_standin_frame(folder, meta, f):
+    util = os.path.join(folder, 'standin_utility.%04d.exr' % f)
+    plate = os.path.join(folder, 'standin_plate.%04d.exr' % f)
+    if os.path.exists(util) and os.path.exists(plate):
+        return
+    u, pl, attrs = mf.render_standin_frame(f, meta['width'], meta['height'])
+    mf.write_exr(util, u, attrs)
+    mf.write_exr(plate, pl, attrs, half=True)
+    _made.append((util, plate))
+    while len(_made) > KEEP_FRAMES:
+        for path in _made.pop(0):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+class WebShot(_BaseShot):
+    """motefield.Shot, plus: stand-in frames are rendered the first time they are opened."""
+
+    def __init__(self, pattern, units):
+        _BaseShot.__init__(self, pattern, units)
+        self.folder = os.path.dirname(pattern)
+        self.meta = _standin_meta(self.folder) if os.path.basename(pattern).startswith('standin_utility') else None
+
+    def _has(self, f):
+        if self.meta is not None:
+            return self.meta['first'] <= f <= self.meta['last']
+        return _BaseShot._has(self, f)
+
+    def _cam(self, f):
+        if self.meta is not None and f not in self._cams:
+            self._cams[f] = mf.standin_camera(f)        # the same camera the header of that frame would hold
+        return _BaseShot._cam(self, f)
+
+    def _open(self, f):
+        if self.meta is not None:
+            _ensure_standin_frame(self.folder, self.meta, f)
+        return _BaseShot._open(self, f)
+
+
+mf.Shot = WebShot          # fit_box(), make_light() etc. pick this up
+
+
+def schema():
+    knobs = []
+    for tab, key, kind, label, extra in mf._KNOBS:
+        knobs.append(dict(tab=tab, key=key, kind=kind, label=label,
+                          extra=list(extra) if isinstance(extra, (list, tuple)) else extra))
+    d = {k: (list(v) if isinstance(v, tuple) else v) for k, v in mf.DEFAULTS.items()}
+    return json.dumps(dict(version=mf.__version__, knobs=knobs, defaults=d, standin=mf.STANDIN,
+                           standin_res=sorted(STANDIN_RES)))
+
+
+def setup_standin(width=960):
+    """Like the Nuke 'Create stand-in shot' button, but frames are made on demand."""
+    width = int(width)
+    S = dict(mf.STANDIN, width=width, height=STANDIN_RES.get(width, int(round(width * 536 / 1280.0))))
+    folder = '%s/standin_%d' % (ROOT, width)
+    os.makedirs(folder, exist_ok=True)
+    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in mf.standin_boxes()], units='centimetres')
+    with open(os.path.join(folder, 'standin.json'), 'w') as fh:
+        json.dump(meta, fh)
+    return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr',
+                           first=S['first'], last=S['last'], width=S['width'], height=S['height'],
+                           set=dict(units='centimetres', first=S['first'], last=S['last'], fps=24.0, shadows='stand-in geometry',
+                                    standin_json=folder + '/standin.json', box_center=list(mf.DEFAULTS['box_center']),
+                                    box_size=list(mf.DEFAULTS['box_size']), light_az=S['sun_az'], light_el=S['sun_el'])))
+
+
+def add_files(kind, names, blobs):
+    """Writes picked EXR files into /work/<kind> and works out the frame pattern and range."""
+    folder = '%s/user_%s' % (ROOT, kind)
+    if os.path.isdir(folder):
+        for n in os.listdir(folder):
+            os.remove(os.path.join(folder, n))
+    os.makedirs(folder, exist_ok=True)
+    groups = {}
+    for n, b in zip(names, blobs):
+        n = os.path.basename(str(n))
+        with open(os.path.join(folder, n), 'wb') as fh:
+            fh.write(bytes(b))
+        m = re.match(r'^(.*?)(\d+)(\.exr)$', n, re.I)
+        if m:
+            groups.setdefault((m.group(1), len(m.group(2)), m.group(3)), []).append(int(m.group(2)))
+    for k in list(_shots):
+        if k.startswith(folder):
+            _shots.pop(k)
+    if not groups:
+        if len(names) == 1:
+            return json.dumps(dict(pattern=folder + '/' + os.path.basename(str(names[0])), first=1, last=1))
+        raise ValueError('Name the files with a frame number, like shot_utility.1001.exr')
+    (pre, pad, ext), frames = max(groups.items(), key=lambda kv: len(kv[1]))
+    tok = '####' if pad == 4 else '%%0%dd' % pad
+    pattern = folder + '/' + pre + tok + ext
+    out = dict(pattern=pattern, first=min(frames), last=max(frames), count=len(frames))
+    if kind == 'utility':
+        e = mf.ExrFile(mf.frame_path(pattern, min(frames)))
+        cam = mf.camera_from_headers(e.headers())
+        found = mf.survey_layers(e)
+        out['size'] = [e.parts[0]['width'], e.parts[0]['height']]
+        e.close()
+        out['camera'] = cam is not None
+        out['layers'] = sorted(found)
+        if cam is None:
+            raise ValueError('No camera in the EXR header (looked for camToWorld / worldToCamera and a field of view or focal length + aperture).')
+        if 'P' not in found and 'Z' not in found:
+            raise ValueError('No world position or depth layer found in %s.' % os.path.basename(mf.frame_path(pattern, min(frames))))
+    return json.dumps(out)
+
+
+def _params(pjson):
+    raw = json.loads(pjson)
+    p = mf.settings(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in raw.items()})
+    p['cache'] = ROOT + '/cache'
+    return p
+
+
+def _shot(p):
+    key = p['utility'] + '|' + p['units']
+    if key not in _shots:
+        if len(_shots) > 3:
+            _shots.pop(next(iter(_shots)))
+        _shots[key] = WebShot(p['utility'], p['units'])
+    return _shots[key]
+
+
+def _light_for(p, shot):
+    key = json.dumps([p[k] for k in ('utility', 'units', 'shadows', 'light_az', 'light_el', 'interior', 'standin_json', 'first', 'last')])
+    if _light['key'] != key:
+        _light['fn'] = mf.make_light(p, shot)
+        _light['key'] = key
+    return _light['fn']
+
+
+def render(pjson, frame, progress=None):
+    """Simulates and renders one frame, exactly as the Nuke node's 'Render this frame' does."""
+    if not json.loads(pjson).get('utility'):
+        raise ValueError('Choose a utility pass first (or press Create stand-in shot).')
+    t0 = time.time()
+    p = _params(pjson)
+    frame = int(frame)
+    shot = _shot(p)
+    if progress:
+        progress(0.0, 'Reading frame %d' % frame)
+    shot.surface(frame)
+    light = _light_for(p, shot)
+    cb = None
+    if progress:
+        cb = lambda x, msg: progress(0.1 + 0.6 * x, msg)
+    sim = mf.sim_at(p, frame, light, cb)
+    if progress:
+        progress(0.75, 'Rendering frame %d' % frame)
+    held, unheld = mf.render_frame(p, shot, frame, sim)
+    _last.update(key=(pjson, frame), held=held, unheld=unheld)
+    H, W = held.shape[:2]
+    n = int(np.count_nonzero(sim.edge_weight() > 1e-4))
+    return dict(w=W, h=H, held=held.astype(np.float16).tobytes(), unheld=unheld.astype(np.float16).tobytes(),
+                motes=n, secs=time.time() - t0)
+
+
+def plate(pjson, plate_pattern, frame):
+    """The plate for the viewer: the stand-in's clay render, a picked plate sequence, or nothing."""
+    p = _params(pjson)
+    frame = int(frame)
+    path = None
+    if plate_pattern:
+        if '/standin_' in plate_pattern and p['utility']:
+            shot = _shot(p)
+            if shot.meta is not None:
+                _ensure_standin_frame(shot.folder, shot.meta, frame)
+        path = mf.frame_path(plate_pattern, frame)
+    if not path or not os.path.exists(path):
+        return None
+    e = mf.ExrFile(path)
+    try:
+        part, names = 0, None
+        for pi, pp in enumerate(e.parts):
+            chs = [n for n, t in pp['channels']]
+            for cand in (['R', 'G', 'B'], ['rgba.red', 'rgba.green', 'rgba.blue'], ['rgba.R', 'rgba.G', 'rgba.B']):
+                if all(c in chs for c in cand):
+                    part, names = pi, cand
+                    break
+            if names:
+                break
+        if not names:
+            return None
+        d = e.read(part, names)
+        img = np.stack([d[n] for n in names], -1)
+    finally:
+        e.close()
+    H, W = img.shape[:2]
+    return dict(w=W, h=H, rgb=np.nan_to_num(img).astype(np.float16).tobytes())
+
+
+def fit(pjson):
+    p = _params(pjson)
+    c, s = mf.fit_box(p)
+    return json.dumps(dict(box_center=[round(x, 2) for x in c], box_size=[round(x, 2) for x in s]))
+
+
+def save_exr(pjson, frame):
+    """The dust frame as the Nuke node writes it (RGBA + noholdout layer, half float)."""
+    if _last['key'] != (pjson, int(frame)):
+        render(pjson, frame)
+    path = ROOT + '/dust.%04d.exr' % int(frame)
+    mf.write_dust(path, _last['held'], _last['unheld'])
+    with open(path, 'rb') as fh:
+        data = fh.read()
+    os.remove(path)
+    return data

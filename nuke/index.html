@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoteField for Nuke</title>
+<meta name="description" content="Browser twin of the MoteField Nuke tool: the same Python, running in your browser on a stand-in shot or your own EXRs.">
+<style>
+:root{
+  --app:#1f1f1f; --bar:#2b2b2b; --panel:#353535; --panel2:#3d3d3d; --field:#1b1b1b; --fieldb:#121212;
+  --line:#242424; --hi:#4a4a4a; --text:#d2d2d2; --dim:#9a9a9a; --faint:#6e6e6e;
+  --orange:#f7931e; --gold:#e4ba6b; --green:#7fbf5a; --stale:#b0703a; --red:#e06666; --blue:#5a8fc8;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--app);color:var(--text);font:12px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--gold)}
+[hidden]{display:none!important}
+
+/* ---------- top bar ---------- */
+.top{height:34px;display:flex;align-items:center;gap:14px;padding:0 12px;background:var(--bar);border-bottom:1px solid #151515}
+.top .logo{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:.02em}
+.top .logo i{width:12px;height:12px;border-radius:2px;background:var(--gold);box-shadow:inset 0 0 0 1px #0006}
+.top .sub{color:var(--dim)}
+.top .sp{flex:1}
+.top a{color:var(--dim);text-decoration:none;padding:4px 8px;border-radius:3px}
+.top a:hover{color:var(--text);background:#ffffff10}
+
+/* ---------- layout ---------- */
+.main{display:flex;height:calc(100% - 34px);min-height:0}
+.viewer{flex:1;min-width:0;display:flex;flex-direction:column;background:#121212;border-right:1px solid #111}
+.props{width:430px;flex:none;display:flex;flex-direction:column;background:var(--panel);min-height:0}
+
+/* ---------- viewer ---------- */
+.vbar{display:flex;align-items:center;gap:8px;padding:4px 8px;background:var(--bar);border-bottom:1px solid #151515;flex-wrap:wrap;min-height:34px}
+.vbar label{display:flex;align-items:center;gap:5px;color:var(--dim)}
+.vbar .grp{display:flex;align-items:center;gap:4px}
+.vbar .sep{width:1px;height:18px;background:#444;margin:0 2px}
+.seg{display:flex;border:1px solid var(--fieldb);border-radius:3px;overflow:hidden}
+.seg button{background:#2f2f2f;border:0;border-right:1px solid var(--fieldb);padding:3px 9px;cursor:pointer;color:var(--dim)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:#555;color:#fff}
+.seg button:hover:not(.on){background:#3a3a3a}
+select.nk{background:var(--field);border:1px solid var(--fieldb);border-radius:2px;padding:2px 4px;height:22px}
+.vbar input[type=range]{width:110px;accent-color:var(--orange)}
+.vbar .val{font-family:var(--mono);font-size:11px;min-width:42px;color:var(--text)}
+.live{color:var(--text)!important}
+.live input{accent-color:var(--orange)}
+.stage{flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0d0d0d}
+.stage canvas{max-width:100%;max-height:100%;image-rendering:auto;background:#000;box-shadow:0 0 0 1px #2a2a2a}
+.hud{position:absolute;left:10px;top:8px;font-family:var(--mono);font-size:11px;color:#cfcfcf;text-shadow:0 1px 2px #000;pointer-events:none;white-space:pre}
+.hud b{font-weight:500}
+.hud .ok{color:var(--green)} .hud .st{color:var(--orange)} .hud .no{color:var(--faint)}
+.busy{position:absolute;right:10px;top:8px;display:flex;align-items:center;gap:8px;background:#000a;border:1px solid #333;border-radius:3px;padding:5px 9px;font-size:11px}
+.busy .bar{width:120px;height:4px;background:#333;border-radius:2px;overflow:hidden}
+.busy .bar i{display:block;height:100%;width:0;background:var(--orange);transition:width .15s}
+.busy button{background:#444;border:1px solid #222;border-radius:2px;padding:1px 7px;cursor:pointer}
+.boot{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#0d0d0de6;z-index:5}
+.boot .card{width:min(420px,90%);background:var(--panel);border:1px solid #111;border-radius:4px;padding:18px 20px;box-shadow:0 10px 30px #0008}
+.boot h2{margin:0 0 6px;font-size:14px;font-weight:600}
+.boot p{margin:0 0 12px;color:var(--dim)}
+.boot .bar{height:5px;background:#222;border-radius:3px;overflow:hidden}
+.boot .bar i{display:block;height:100%;width:0;background:var(--orange);transition:width .3s}
+.boot .msg{margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.boot.err .msg{color:var(--red)}
+
+/* timeline */
+.tl{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bar);border-top:1px solid #151515}
+.tl .btns{display:flex;gap:2px}
+.tl .btns button{width:28px;height:24px;background:#3a3a3a;border:1px solid #1a1a1a;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.tl .btns button:hover{background:#474747}
+.tl .btns svg{width:12px;height:12px;fill:#ddd}
+.tl input.frame{width:58px;text-align:center;background:var(--field);border:1px solid var(--fieldb);border-radius:2px;height:24px;font-family:var(--mono)}
+.track{flex:1;height:30px;position:relative;cursor:pointer;touch-action:none}
+.track canvas{position:absolute;inset:0;width:100%;height:100%}
+.tl .rng{font-family:var(--mono);font-size:11px;color:var(--dim)}
+
+/* ---------- properties ---------- */
+.ph{padding:8px 10px 0;background:var(--panel2);border-bottom:1px solid var(--line)}
+.ph .title{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.ph .title i{width:14px;height:14px;border-radius:2px;background:var(--gold);box-shadow:inset 0 0 0 1px #0007}
+.ph .title input{flex:1;max-width:200px;background:var(--field);border:1px solid var(--fieldb);border-radius:2px;padding:2px 6px}
+.ph .title span{color:var(--dim)}
+.tabs{display:flex;gap:1px;overflow-x:auto;scrollbar-width:none}
+.tabs button{background:#2d2d2d;border:1px solid #222;border-bottom:0;border-radius:3px 3px 0 0;padding:5px 11px;cursor:pointer;color:var(--dim);white-space:nowrap}
+.tabs button.on{background:var(--panel);color:#fff;position:relative;top:1px}
+.pane{flex:1;overflow:auto;padding:10px 10px 30px}
+.row{display:grid;grid-template-columns:172px 1fr;align-items:center;gap:8px;min-height:26px;margin:2px 0}
+.row > .lab{text-align:right;color:#c2c2c2;line-height:1.2;overflow-wrap:anywhere}
+.row > .ctl{display:flex;align-items:center;gap:6px;min-width:0}
+.row.full{grid-template-columns:1fr}
+.tag{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--blue);border:1px solid #3d5f84;border-radius:2px;padding:0 4px;margin-left:4px}
+input.num{width:66px;background:var(--field);border:1px solid var(--fieldb);border-radius:2px;padding:2px 5px;height:22px;font-family:var(--mono);font-size:11px;text-align:right}
+input.num:focus,input.txt:focus,select.nk:focus{outline:1px solid var(--orange);outline-offset:-1px}
+input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fieldb);border-radius:2px;padding:2px 6px;height:22px;font-family:var(--mono);font-size:11px;color:#bdbdbd}
+.slider{flex:1;height:22px;position:relative;cursor:ew-resize;touch-action:none;min-width:60px}
+.slider .trk{position:absolute;left:0;right:0;top:10px;height:2px;background:#232323;box-shadow:0 1px 0 #ffffff10}
+.slider .tick{position:absolute;top:7px;width:1px;height:8px;background:#5a5a5a}
+.slider .tick.mid{height:6px;top:8px;background:#4a4a4a}
+.slider .knob{position:absolute;top:4px;width:6px;height:14px;margin-left:-3px;background:#8c8c8c;border:1px solid #1a1a1a;border-radius:1px}
+.slider:hover .knob{background:#aaa}
+.xyz{display:flex;gap:4px;align-items:center;flex:1;min-width:0}
+.xyz span{color:var(--dim);font-size:11px;margin-left:2px}
+.xyz input.num{width:auto;flex:1;min-width:0;max-width:84px}
+.chk{display:flex;align-items:center;gap:7px;cursor:pointer}
+.chk input{accent-color:var(--orange);width:14px;height:14px;margin:0}
+.btn{background:linear-gradient(#4b4b4b,#3f3f3f);border:1px solid #1c1c1c;border-radius:3px;padding:3px 10px;height:24px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:linear-gradient(#565656,#484848)}
+.btn:active{background:#3a3a3a}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.go{border-color:#7a4a10;background:linear-gradient(#6a4a26,#553a1c)}
+.btn.go:hover{background:linear-gradient(#7a5630,#634420)}
+.btns-row{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 6px 180px}
+.div{display:flex;align-items:center;gap:8px;margin:14px 0 6px;color:#e0e0e0;font-weight:600}
+.div::after{content:"";flex:1;height:1px;background:#4a4a4a}
+.note{color:var(--dim);margin:6px 0 8px;line-height:1.45}
+.note b{color:var(--text)}
+.status{margin:6px 0 6px 180px;font-family:var(--mono);font-size:11px;color:var(--dim);min-height:16px;white-space:pre-wrap}
+.status.err{color:var(--red)}
+.swatch{width:22px;height:22px;border:1px solid var(--fieldb);border-radius:2px}
+.foot{padding:7px 10px;border-top:1px solid var(--line);color:var(--faint);font-size:11px;background:var(--panel2)}
+
+@media (max-width:860px){
+  html,body{height:auto}
+  .main{flex-direction:column;height:auto}
+  .viewer{height:auto;border-right:0}
+  .stage{flex:none;aspect-ratio:2.2;min-height:180px}
+  .props{width:auto;min-height:60vh}
+  .row{grid-template-columns:122px 1fr}
+  .btns-row,.status{margin-left:0}
+  .top .sub{display:none}
+  .pane{padding:10px 16px 30px}
+}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="logo"><i></i>MoteField</div>
+  <div class="sub">browser version of the Nuke tool · same Python, running in your browser</div>
+  <div class="sp"></div>
+  <a href="motefield.py" download>Download motefield.py</a>
+  <a href="../">Web mockup</a>
+</div>
+
+<div class="main">
+  <section class="viewer">
+    <div class="vbar">
+      <div class="seg" id="viewSeg" title="What the viewer shows">
+        <button data-v="comp" class="on">Comp</button><button data-v="dust">Dust</button><button data-v="plate">Plate</button>
+      </div>
+      <select class="nk" id="layerSel" title="Layer (the noholdout layer has the dust with no holdouts)">
+        <option value="rgba">rgba</option><option value="noholdout">noholdout</option>
+      </select>
+      <div class="sep"></div>
+      <label title="Viewer gain in stops (doesn't change the render)">f/stop
+        <input type="range" id="gain" min="-6" max="6" step="0.1" value="0"><span class="val" id="gainV">+0.0</span></label>
+      <div class="sep"></div>
+      <label class="live" title="Re-render the current frame whenever a knob changes. The Nuke node only renders when you press a Render button.">
+        <input type="checkbox" id="live" checked> Live update</label>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="cv" width="960" height="402"></canvas>
+      <div class="hud" id="hud"></div>
+      <div class="busy" id="busy" hidden><span id="busyMsg">Rendering…</span><div class="bar"><i id="busyBar"></i></div><button id="cancelBtn" hidden>Cancel</button></div>
+      <div class="boot" id="boot">
+        <div class="card">
+          <h2>Starting MoteField</h2>
+          <p>This page runs <b>motefield.py</b>, the same file as the Nuke tool, with Python and numpy compiled for the browser. The first load downloads about 25&nbsp;MB.</p>
+          <div class="bar"><i id="bootBar"></i></div>
+          <div class="msg" id="bootMsg">Starting…</div>
+        </div>
+      </div>
+    </div>
+    <div class="tl">
+      <div class="btns">
+        <button id="tFirst" title="First frame"><svg viewBox="0 0 12 12"><path d="M2 1h1.6v10H2zM11 1v10L4 6z"/></svg></button>
+        <button id="tPrev" title="Previous frame (←)"><svg viewBox="0 0 12 12"><path d="M9 1v10L2 6z"/></svg></button>
+        <button id="tPlay" title="Play cached frames (space)"><svg viewBox="0 0 12 12" id="playIco"><path d="M3 1v10l8-5z"/></svg></button>
+        <button id="tNext" title="Next frame (→)"><svg viewBox="0 0 12 12"><path d="M3 1v10l7-5z"/></svg></button>
+        <button id="tLast" title="Last frame"><svg viewBox="0 0 12 12"><path d="M8.4 1H10v10H8.4zM1 1v10l7-5z"/></svg></button>
+      </div>
+      <input class="frame" id="frameIn" value="1001" aria-label="Frame">
+      <div class="track" id="track" title="Green: rendered with the current settings. Orange: rendered with older settings."><canvas id="trackCv"></canvas></div>
+      <span class="rng" id="rngLab">1001–1048</span>
+    </div>
+  </section>
+
+  <aside class="props">
+    <div class="ph">
+      <div class="title"><i></i><input value="MoteField1" aria-label="Node name"><span id="verLab"></span></div>
+      <div class="tabs" id="tabs"></div>
+    </div>
+    <div class="pane" id="pane"></div>
+    <div class="foot">Files you pick stay in this browser tab. Nothing is uploaded anywhere.</div>
+  </aside>
+</div>
+
+<input type="file" id="fileUtil" accept=".exr" multiple hidden>
+<input type="file" id="filePlate" accept=".exr" multiple hidden>
+
+<script>
+'use strict';
+// =====================================================================================================
+//  Worker plumbing
+// =====================================================================================================
+const worker = new Worker('worker.js');
+let nextId = 1;
+const waiting = new Map();
+const progressFns = new Map();
+worker.onmessage = (e) => {
+  const m = e.data;
+  if (m.type === 'boot') return bootMsg(m.msg, m.x);
+  if (m.type === 'progress') { const f = progressFns.get(m.id); if (f) f(m.x, m.msg); return; }
+  if (m.type === 'done') {
+    const w = waiting.get(m.id); waiting.delete(m.id); progressFns.delete(m.id);
+    if (!w) return;
+    if (m.ok) w.res(m.result); else { const er = new Error(m.error); er.detail = m.detail; w.rej(er); }
+  }
+};
+worker.onerror = (e) => { bootFail(e.message || 'The worker failed to start'); };
+function call(cmd, args, onProgress) {
+  const id = nextId++;
+  if (onProgress) progressFns.set(id, onProgress);
+  return new Promise((res, rej) => { waiting.set(id, { res, rej }); worker.postMessage({ id, cmd, args: Object.assign({ id }, args || {}) }); });
+}
+
+// =====================================================================================================
+//  State
+// =====================================================================================================
+const $ = (id) => document.getElementById(id);
+let SCHEMA = null;
+const V = {};                       // knob values
+const shot = { utility: '', plate: '', label: '', standin: true, first: 1001, last: 1048, standinJson: '' };
+let standinWidth = 960;
+let frame = 1001;
+const dust = new Map();             // frame -> {key, w, h, held, unheld, motes, secs}
+const plates = new Map();           // frame -> {w, h, rgb} | null
+let view = 'comp', layer = 'rgba', gain = 0;
+let busy = false, cancelRange = false, rangeRunning = false;
+let liveTimer = 0, platePending = new Set(), failed = '';
+const ui = {};                      // key -> {set(v)}
+
+const H2F = new Float32Array(65536);
+for (let i = 0; i < 65536; i++) {
+  const s = i & 0x8000 ? -1 : 1, e = (i >> 10) & 31, m = i & 1023;
+  H2F[i] = e === 0 ? s * m * 5.960464477539063e-8 : e === 31 ? (m ? 0 : s * 65504) : s * (1 + m / 1024) * Math.pow(2, e - 15);
+}
+const SRGB = new Uint8ClampedArray(4097);
+for (let i = 0; i <= 4096; i++) { const x = i / 4096; SRGB[i] = Math.round(255 * (x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055)); }
+
+// =====================================================================================================
+//  Settings, the same way the Nuke node reads its knobs (motefield._nk_settings)
+// =====================================================================================================
+function params() {
+  const p = Object.assign({}, SCHEMA.defaults);
+  for (const k of SCHEMA.knobs) {
+    if (!k.key || ['button', 'text', 'divider'].includes(k.kind) || !(k.key in V)) continue;
+    const v = V[k.key];
+    if (k.key === 'fade_neg') { [p.fade_xn, p.fade_yn, p.fade_zn] = v.map(Number); }
+    else if (k.key === 'fade_pos') { [p.fade_xp, p.fade_yp, p.fade_zp] = v.map(Number); }
+    else if (k.kind === 'xyz' || k.kind === 'color') p[k.key] = v.map(Number);
+    else if (k.kind === 'int') p[k.key] = Math.round(Number(v)) || 0;
+    else if (k.kind === 'float') p[k.key] = Number(v) || 0;
+    else if (k.kind === 'bool') p[k.key] = !!v;
+    else p[k.key] = String(v);
+  }
+  p.utility = shot.utility;
+  p.standin_json = shot.standinJson;
+  p.cache = '';
+  return p;
+}
+function settingsKey() { const p = params(); delete p.cache; return JSON.stringify(p); }
+
+// =====================================================================================================
+//  Properties panel, built from motefield._KNOBS
+// =====================================================================================================
+const BROWSER_NOTE = {
+  utility: 'Pick a utility EXR sequence from your computer, or press Create stand-in shot.',
+  cache: 'In the browser the frames stay in memory. Use Save this frame to get the EXR the Nuke node writes.',
+};
+function fmt(v) { const n = Number(v); if (!isFinite(n)) return '0'; return Math.abs(n) >= 1000 ? n.toFixed(0) : Math.abs(n) >= 100 ? n.toFixed(1) : +n.toFixed(3) + ''; }
+
+function makeSlider(lo, hi, get, set) {
+  const el = document.createElement('div'); el.className = 'slider';
+  el.innerHTML = '<div class="trk"></div>';
+  const n = 10;
+  for (let i = 0; i <= n; i++) { const t = document.createElement('div'); t.className = 'tick' + (i % 5 ? ' mid' : ''); t.style.left = (i / n * 100) + '%'; el.appendChild(t); }
+  const kn = document.createElement('div'); kn.className = 'knob'; el.appendChild(kn);
+  const place = () => { const v = get(); kn.style.left = (Math.max(0, Math.min(1, (v - lo) / (hi - lo))) * 100) + '%'; };
+  const at = (e) => { const r = el.getBoundingClientRect(); return lo + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (hi - lo); };
+  el.addEventListener('pointerdown', (e) => {
+    el.setPointerCapture(e.pointerId);
+    const mv = (ev) => set(snap(at(ev), lo, hi), false);
+    mv(e);
+    const up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); set(get(), true); };
+    el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  });
+  return { el, place };
+}
+function snap(v, lo, hi) { const s = (hi - lo) / 1000; const d = Math.pow(10, Math.floor(Math.log10(s))); return Math.round(v / d) * d; }
+
+function numInput(get, set, int) {
+  const i = document.createElement('input'); i.className = 'num'; i.inputMode = 'decimal';
+  i.addEventListener('change', () => { let v = parseFloat(i.value); if (!isFinite(v)) v = get(); if (int) v = Math.round(v); set(v, true); });
+  i.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const st = int ? 1 : Math.max(Math.abs(get()) * 0.05, 0.01) * (e.shiftKey ? 10 : 1);
+      set((int ? Math.round(get()) : get()) + (e.key === 'ArrowUp' ? st : -st), true);
+    }
+  });
+  return i;
+}
+
+function changed(commit) {
+  $('rngLab').textContent = V.first + '–' + V.last;
+  drawHud(); drawTrack();
+  if (commit) scheduleLive(350);
+}
+
+function buildPanel() {
+  const tabsEl = $('tabs'), pane = $('pane');
+  const tabs = [];
+  for (const k of SCHEMA.knobs) if (!tabs.includes(k.tab)) tabs.push(k.tab);
+  const pages = {};
+  tabs.forEach((t, i) => {
+    const b = document.createElement('button'); b.textContent = t; if (!i) b.className = 'on';
+    b.onclick = () => { [...tabsEl.children].forEach(x => x.classList.toggle('on', x === b)); for (const k in pages) pages[k].hidden = k !== t; try { localStorage.setItem('mf_tab', t); } catch (e) {} };
+    tabsEl.appendChild(b);
+    const pg = document.createElement('div'); pg.hidden = !!i; pages[t] = pg; pane.appendChild(pg);
+  });
+  let btnRow = null;
+  for (const k of SCHEMA.knobs) {
+    const pg = pages[k.tab];
+    if (k.kind !== 'button') btnRow = null;
+    if (k.kind === 'text') {
+      if (k.key === 'status') { const s = document.createElement('div'); s.className = 'status'; s.id = 'status'; pg.appendChild(s); continue; }
+      const d = document.createElement('div'); d.className = 'note'; d.innerHTML = k.label; pg.appendChild(d);
+      if (k.tab === 'MoteField' && !k.key) {
+        const d2 = document.createElement('div'); d2.className = 'note';
+        d2.innerHTML = 'In the browser it starts on the <b>stand-in shot</b> (an interior with a window opening and a moving camera), made on the fly. Knobs work as in Nuke; with <b>Live update</b> on, the viewer re-renders the current frame as you change them.';
+        pg.appendChild(d2);
+      }
+      continue;
+    }
+    if (k.kind === 'divider') { const d = document.createElement('div'); d.className = 'div'; d.textContent = k.label; pg.appendChild(d); continue; }
+    if (k.kind === 'button') {
+      if (!btnRow || k.extra === 'standin' || k.extra === 'frame') { btnRow = document.createElement('div'); btnRow.className = 'btns-row'; pg.appendChild(btnRow); }
+      const b = document.createElement('button'); b.className = 'btn' + (k.extra === 'frame' || k.extra === 'range' ? ' go' : ''); b.textContent = k.label; b.id = 'btn_' + k.extra;
+      if (k.extra === 'preview3d') { b.disabled = true; b.title = 'Nuke only: builds a point cloud of the utility pass and the dust box in Nuke\'s 3D viewer'; b.textContent = '3D preview (Nuke only)'; }
+      b.onclick = () => onButton(k.extra);
+      btnRow.appendChild(b);
+      if (k.extra === 'fit') {          // browser-only: stand-in resolution, right under the stand-in buttons
+        const r = row(pg, 'Stand-in size', true);
+        const s = document.createElement('select'); s.className = 'nk';
+        for (const w of SCHEMA.standin_res) { const o = document.createElement('option'); o.value = w; o.textContent = w + ' × ' + Math.round(w * 536 / 1280) + (w === 960 ? '  (default)' : w === 1280 ? '  (as in Nuke, slower)' : '  (fastest)'); s.appendChild(o); }
+        s.value = standinWidth;
+        s.onchange = () => { standinWidth = +s.value; if (shot.standin) onButton('standin'); };
+        r.appendChild(s);
+      }
+      if (k.extra === 'range') {        // browser-only extras under the render buttons
+        const r2 = document.createElement('div'); r2.className = 'btns-row';
+        const sv = document.createElement('button'); sv.className = 'btn'; sv.textContent = 'Save this frame (.exr)'; sv.id = 'btn_save';
+        sv.title = 'Downloads the dust frame exactly as the Nuke node writes it: RGBA plus the noholdout layer, half float';
+        sv.onclick = saveExr;
+        const cl = document.createElement('button'); cl.className = 'btn'; cl.textContent = 'Clear cache';
+        cl.onclick = () => { dust.clear(); drawTrack(); draw(); setStatus('Cache cleared.'); };
+        r2.append(sv, cl);
+        const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = 'browser'; tg.style.alignSelf = 'center';
+        r2.appendChild(tg);
+        pg.appendChild(r2);
+      }
+      continue;
+    }
+    const ctl = row(pg, k.label, false, typeof k.extra === 'string' && k.kind !== 'enum' ? k.extra : '');
+    const key = k.key;
+    if (k.kind === 'file') {
+      const t = document.createElement('input'); t.className = 'txt'; t.readOnly = true; t.id = 'f_' + key;
+      ctl.appendChild(t);
+      if (key === 'utility') {
+        const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Choose EXRs…'; b.onclick = () => $('fileUtil').click(); ctl.appendChild(b);
+        // browser-only: a plate sequence for the viewer
+        const pr = row(pg, 'Plate', true, 'Optional plate EXRs to see the dust over in the viewer (the Nuke node doesn\'t need this; merge over your plate there).');
+        const pt = document.createElement('input'); pt.className = 'txt'; pt.readOnly = true; pt.id = 'f_plate'; pr.appendChild(pt);
+        const pb = document.createElement('button'); pb.className = 'btn'; pb.textContent = 'Choose EXRs…'; pb.onclick = () => $('filePlate').click(); pr.appendChild(pb);
+      } else {
+        t.value = 'browser memory'; t.title = BROWSER_NOTE.cache;
+        const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = 'browser'; ctl.appendChild(tg);
+      }
+      continue;
+    }
+    if (k.kind === 'enum') {
+      const s = document.createElement('select'); s.className = 'nk';
+      for (const o of k.extra) { const e = document.createElement('option'); e.value = o; e.textContent = o; s.appendChild(e); }
+      s.onchange = () => { V[key] = s.value; changed(true); };
+      ctl.appendChild(s);
+      ui[key] = { set: (v) => { s.value = v; } };
+      continue;
+    }
+    if (k.kind === 'bool') {
+      ctl.parentElement.querySelector('.lab').textContent = '';
+      const l = document.createElement('label'); l.className = 'chk';
+      const c = document.createElement('input'); c.type = 'checkbox';
+      c.onchange = () => { V[key] = c.checked; changed(true); };
+      l.append(c, document.createTextNode(k.label));
+      if (typeof k.extra === 'string') l.title = k.extra;
+      ctl.appendChild(l);
+      ui[key] = { set: (v) => { c.checked = !!v; } };
+      continue;
+    }
+    if (k.kind === 'int' || k.kind === 'float') {
+      const int = k.kind === 'int';
+      const set = (v, commit) => { V[key] = v; inp.value = fmt(v); if (sl) sl.place(); changed(commit); };
+      const inp = numInput(() => Number(V[key]), set, int);
+      ctl.appendChild(inp);
+      let sl = null;
+      if (!int && Array.isArray(k.extra)) { sl = makeSlider(k.extra[0], k.extra[1], () => Number(V[key]), set); ctl.appendChild(sl.el); }
+      ui[key] = { set: (v) => { inp.value = fmt(v); if (sl) sl.place(); } };
+      if (sl) requestAnimationFrame(sl.place);
+      continue;
+    }
+    if (k.kind === 'xyz' || k.kind === 'color') {
+      const w = document.createElement('div'); w.className = 'xyz';
+      const labs = k.kind === 'color' ? ['r', 'g', 'b'] : ['x', 'y', 'z'];
+      const inps = [];
+      let sw = null;
+      labs.forEach((ax, i) => {
+        const s = document.createElement('span'); s.textContent = ax;
+        const inp = numInput(() => Number(V[key][i]), (v, commit) => { V[key] = V[key].slice(); V[key][i] = v; inp.value = fmt(v); paint(); changed(commit); }, false);
+        inps.push(inp); w.append(s, inp);
+      });
+      const paint = () => { if (sw) { const c = V[key].map(x => Math.round(255 * Math.pow(Math.max(0, Math.min(1, x)), 1 / 2.2))); sw.style.background = `rgb(${c})`; } };
+      if (k.kind === 'color') { sw = document.createElement('div'); sw.className = 'swatch'; w.appendChild(sw); }
+      ctl.appendChild(w);
+      ui[key] = { set: (v) => { inps.forEach((inp, i) => inp.value = fmt(v[i])); paint(); } };
+      continue;
+    }
+  }
+  try { const t = localStorage.getItem('mf_tab'); if (t && pages[t]) [...tabsEl.children].find(b => b.textContent === t).click(); } catch (e) {}
+}
+
+function row(pg, label, browserOnly, tip) {
+  const r = document.createElement('div'); r.className = 'row';
+  const l = document.createElement('div'); l.className = 'lab'; l.textContent = label;
+  if (tip) { l.title = tip; }
+  const c = document.createElement('div'); c.className = 'ctl';
+  if (tip) c.title = tip;
+  r.append(l, c); pg.appendChild(r);
+  if (browserOnly) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'browser'; l.prepend(t); t.style.marginRight = '6px'; t.style.marginLeft = '0'; }
+  return c;
+}
+
+function setKnob(key, v) {
+  if (key === 'fade_neg' || key === 'fade_pos') V[key] = v.slice(); else V[key] = Array.isArray(v) ? v.slice() : v;
+  if (ui[key]) ui[key].set(V[key]);
+}
+function loadDefaults() {
+  const d = SCHEMA.defaults;
+  for (const k of SCHEMA.knobs) {
+    if (!k.key || ['button', 'text', 'divider', 'file'].includes(k.kind)) continue;
+    if (k.key === 'fade_neg') setKnob(k.key, [d.fade_xn, d.fade_yn, d.fade_zn]);
+    else if (k.key === 'fade_pos') setKnob(k.key, [d.fade_xp, d.fade_yp, d.fade_zp]);
+    else if (k.key in d) setKnob(k.key, d[k.key]);
+  }
+}
+
+function setStatus(msg, err) {
+  const s = $('status'); if (!s) return;
+  s.textContent = msg || ''; s.classList.toggle('err', !!err);
+}
+function showUtility() {
+  $('f_utility').value = shot.label || shot.utility;
+  $('f_utility').title = shot.utility;
+  $('f_plate').value = shot.plate ? (shot.standin ? 'stand-in clay render' : shot.plateLabel || shot.plate) : '';
+  $('rngLab').textContent = V.first + '–' + V.last;
+}
+
+// =====================================================================================================
+//  Buttons (same actions as the Nuke node's buttons)
+// =====================================================================================================
+async function onButton(what) {
+  if (what === 'standin') return makeStandin();
+  if (what === 'fit') {
+    if (!shot.utility) return setStatus('Choose a utility pass first (or press Create stand-in shot).', true);
+    setBusy(true, 'Fitting the box to the shot…', 0.3);
+    try {
+      const r = await call('fit', { p: params() });
+      setKnob('box_center', r.box_center); setKnob('box_size', r.box_size);
+      setStatus('Box fitted to what the camera sees.'); changed(true);
+    } catch (e) { setStatus('Fit box failed: ' + e.message, true); }
+    finally { setBusy(false); }
+    return;
+  }
+  if (what === 'frame') return renderFrame(frame, true);
+  if (what === 'range') return renderRange();
+}
+
+async function makeStandin() {
+  if (rangeRunning) cancelRange = true;
+  setBusy(true, 'Setting up the stand-in shot…', 0.1);
+  try {
+    const st = await call('standin', { width: standinWidth });
+    shot.utility = st.utility; shot.plate = st.plate; shot.standin = true; shot.standinJson = st.set.standin_json;
+    shot.label = 'stand-in shot (' + st.width + ' × ' + st.height + ', browser memory)';
+    for (const [k, v] of Object.entries(st.set)) if (k !== 'standin_json') setKnob(k, v);
+    dust.clear(); plates.clear();
+    showUtility();
+    setFrame(st.first, true);
+    setStatus('Stand-in shot ready: frames ' + st.first + '–' + st.last + '. Frames are made the first time they\'re needed.');
+  } catch (e) { setStatus('Stand-in failed: ' + e.message, true); }
+  finally { setBusy(false); }
+  scheduleLive(10);
+}
+
+async function pickFiles(kind, fileList) {
+  const files = [...fileList].filter(f => /\.exr$/i.test(f.name));
+  if (!files.length) return;
+  const mb = files.reduce((a, f) => a + f.size, 0) / 1048576;
+  setBusy(true, 'Reading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' (' + mb.toFixed(0) + ' MB)…', 0.2);
+  try {
+    const data = [];
+    for (const f of files) data.push({ name: f.name, data: await f.arrayBuffer() });
+    const r = await call('files', { kind, files: data });
+    if (kind === 'utility') {
+      shot.utility = r.pattern; shot.standin = false; shot.standinJson = '';
+      shot.label = r.pattern.split('/').pop() + '  (' + r.count + ' frames, browser memory)';
+      if (shot.plate && shot.plate.includes('/standin_')) shot.plate = '';
+      setKnob('first', r.first); setKnob('last', r.last);
+      if (String(V.shadows).startsWith('stand')) setKnob('shadows', 'utility pass');
+      dust.clear(); plates.clear();
+      setFrame(r.first, true);
+      setStatus('Utility pass: ' + r.count + ' frames ' + r.first + '–' + r.last + ', ' + r.size.join(' × ') + ', layers ' + r.layers.join(' ') +
+        '.\nCheck the scene units, then press Fit box to shot.');
+    } else {
+      shot.plate = r.pattern; shot.plateLabel = r.pattern.split('/').pop() + '  (' + r.count + ' frames)';
+      plates.clear();
+      setStatus('Plate: ' + r.count + ' frames.');
+    }
+    showUtility(); draw();
+  } catch (e) { setStatus((kind === 'utility' ? 'Utility pass' : 'Plate') + ': ' + e.message, true); }
+  finally { setBusy(false); }
+  scheduleLive(10);
+}
+$('fileUtil').onchange = (e) => { pickFiles('utility', e.target.files); e.target.value = ''; };
+$('filePlate').onchange = (e) => { pickFiles('plate', e.target.files); e.target.value = ''; };
+
+// =====================================================================================================
+//  Rendering
+// =====================================================================================================
+function setBusy(on, msg, x, cancellable) {
+  busy = on;
+  $('busy').hidden = !on;
+  if (msg) $('busyMsg').textContent = msg;
+  $('busyBar').style.width = ((x || 0) * 100) + '%';
+  $('cancelBtn').hidden = !cancellable;
+  for (const id of ['btn_frame', 'btn_range', 'btn_fit', 'btn_standin', 'btn_save']) { const b = $(id); if (b) b.disabled = on; }
+}
+$('cancelBtn').onclick = () => { cancelRange = true; $('busyMsg').textContent = 'Cancelling after this frame…'; };
+
+async function renderFrame(f, explicit) {
+  if (busy) { if (explicit) setStatus('Busy, try again in a moment.'); return false; }
+  if (!shot.utility) { setStatus('Choose a utility pass first (or press Create stand-in shot).', true); return false; }
+  const key = settingsKey(), p = params();
+  setBusy(true, 'Frame ' + f + '…', 0);
+  const t0 = performance.now();
+  try {
+    if (shot.plate && !plates.has(f)) await fetchPlate(f);
+    const r = await call('render', { p, frame: f }, (x, msg) => { $('busyMsg').textContent = msg; $('busyBar').style.width = (x * 100) + '%'; });
+    dust.set(f, { key, w: r.w, h: r.h, held: new Uint16Array(r.held.buffer, r.held.byteOffset, r.held.length / 2),
+                  unheld: new Uint16Array(r.unheld.buffer, r.unheld.byteOffset, r.unheld.length / 2), motes: r.motes, secs: r.secs });
+    if (explicit) setStatus('Rendered frame ' + f + ' in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s.');
+    return true;
+  } catch (e) {
+    setStatus('Render failed: ' + e.message, true); console.error(e.detail || e);
+    failed = key + '@' + f;
+    return false;
+  } finally {
+    setBusy(false);
+    if (f === frame) draw();
+    drawTrack();
+    if (!rangeRunning) scheduleLive(30);
+  }
+}
+
+async function renderRange() {
+  if (busy || rangeRunning) return;
+  rangeRunning = true; cancelRange = false;
+  const a = Math.round(V.first), b = Math.round(V.last), n = b - a + 1;
+  const t0 = performance.now();
+  let done = 0;
+  try {
+    for (let f = a; f <= b && !cancelRange; f++) {
+      const key = settingsKey();
+      const c = dust.get(f);
+      if (!(c && c.key === key)) {
+        const p = params();
+        setBusy(true, 'Frame ' + f + ' (' + (f - a + 1) + ' of ' + n + ')', (f - a) / n, true);
+        try {
+          if (shot.plate && !plates.has(f)) await fetchPlate(f);
+          const r = await call('render', { p, frame: f }, (x) => { $('busyBar').style.width = (((f - a) + x) / n * 100) + '%'; });
+          dust.set(f, { key, w: r.w, h: r.h, held: new Uint16Array(r.held.buffer, r.held.byteOffset, r.held.length / 2),
+                        unheld: new Uint16Array(r.unheld.buffer, r.unheld.byteOffset, r.unheld.length / 2), motes: r.motes, secs: r.secs });
+        } catch (e) { setStatus('Render failed at frame ' + f + ': ' + e.message, true); break; }
+        finally { setBusy(false); }
+      }
+      done++;
+      setFrame(f, false);
+      drawTrack();
+    }
+    if (!$('status').classList.contains('err'))
+      setStatus((cancelRange ? 'Cancelled after ' + done + ' frames' : 'Rendered frames ' + a + '–' + b) + ' in ' + ((performance.now() - t0) / 1000).toFixed(0) + ' s. Press play to watch.');
+  } finally { rangeRunning = false; cancelRange = false; setBusy(false); }
+}
+
+async function fetchPlate(f) {
+  if (!shot.plate || plates.has(f) || platePending.has(f)) return;
+  platePending.add(f);
+  try {
+    const r = await call('plate', { p: params(), pattern: shot.plate, frame: f });
+    plates.set(f, r ? { w: r.w, h: r.h, rgb: new Uint16Array(r.rgb.buffer, r.rgb.byteOffset, r.rgb.length / 2) } : null);
+  } catch (e) { plates.set(f, null); }
+  finally { platePending.delete(f); }
+  if (f === frame) draw();
+}
+
+function fresh(f) { const c = dust.get(f); return !!(c && c.key === settingsKey()); }
+
+function scheduleLive(ms) {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(async () => {
+    if (busy || rangeRunning || playing) return;
+    if ($('live').checked && shot.utility && !fresh(frame) && failed !== settingsKey() + '@' + frame) await renderFrame(frame, false);
+    else if (shot.plate && !plates.has(frame)) { setBusy(true, 'Plate ' + frame + '…', 0.5); try { await fetchPlate(frame); } finally { setBusy(false); } }
+  }, ms);
+}
+
+async function saveExr() {
+  if (busy) return;
+  if (!shot.utility) return setStatus('Choose a utility pass first.', true);
+  setBusy(true, 'Writing dust.' + frame + '.exr…', 0.4);
+  try {
+    const bytes = await call('exr', { p: params(), frame });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes], { type: 'image/x-exr' }));
+    a.download = 'dust.' + String(frame).padStart(4, '0') + '.exr';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    setStatus('Saved ' + a.download + ' (RGBA + noholdout, half float).');
+  } catch (e) { setStatus('Save failed: ' + e.message, true); }
+  finally { setBusy(false); }
+}
+
+// =====================================================================================================
+//  Viewer
+// =====================================================================================================
+const cv = $('cv'), ctx = cv.getContext('2d');
+let img = null;
+function draw() {
+  const d = dust.get(frame), pl = plates.get(frame);
+  const W = pl ? pl.w : d ? d.w : (cv.width || 960), H = pl ? pl.h : d ? d.h : (cv.height || 402);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; img = null; }
+  if (!img) img = ctx.createImageData(W, H);
+  const o = img.data, g = Math.pow(2, gain);
+  const showDust = view !== 'plate' && d, showPlate = view !== 'dust' && pl;
+  const src = showDust ? (layer === 'noholdout' ? d.unheld : d.held) : null;
+  const P = showPlate ? pl.rgb : null;
+  const sx = showDust ? d.w / W : 0, sy = showDust ? d.h / H : 0, same = showDust && d.w === W && d.h === H;
+  for (let y = 0, i = 0; y < H; y++) {
+    const dy = showDust ? Math.min(d.h - 1, (y * sy) | 0) * d.w : 0;
+    for (let x = 0; x < W; x++, i++) {
+      let r = 0, gg = 0, b = 0;
+      if (P) { const j = i * 3; r = H2F[P[j]]; gg = H2F[P[j + 1]]; b = H2F[P[j + 2]]; }
+      if (src) { const j = (same ? i : dy + Math.min(d.w - 1, (x * sx) | 0)) * 3; r += H2F[src[j]]; gg += H2F[src[j + 1]]; b += H2F[src[j + 2]]; }
+      const q = i * 4;
+      o[q] = SRGB[Math.min(4096, Math.max(0, r * g * 4096) | 0)];
+      o[q + 1] = SRGB[Math.min(4096, Math.max(0, gg * g * 4096) | 0)];
+      o[q + 2] = SRGB[Math.min(4096, Math.max(0, b * g * 4096) | 0)];
+      o[q + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  drawHud();
+}
+function drawHud() {
+  const d = dust.get(frame);
+  const st = !d ? '<span class="no">dust: not rendered</span>' : d.key === settingsKey() ? '<span class="ok">dust: up to date</span>' : '<span class="st">dust: older settings</span>';
+  let s = '<b>' + frame + '</b>  ' + st;
+  if (d) s += '\n' + d.motes.toLocaleString() + ' motes · ' + d.w + '×' + d.h + ' · ' + d.secs.toFixed(1) + ' s';
+  if (shot.plate && !plates.get(frame) && view !== 'dust') s += '\n<span class="no">plate: ' + (platePending.has(frame) ? 'loading' : 'not loaded') + '</span>';
+  $('hud').innerHTML = s;
+}
+
+// timeline
+const tcv = $('trackCv'), tctx = tcv.getContext('2d');
+function drawTrack() {
+  const r = tcv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  if (!r.width) return;
+  tcv.width = Math.round(r.width * dpr); tcv.height = Math.round(r.height * dpr);
+  const W = tcv.width, H = tcv.height, a = Math.round(V.first || 1001), b = Math.round(V.last || a), n = Math.max(b - a, 1);
+  tctx.clearRect(0, 0, W, H);
+  tctx.fillStyle = '#1b1b1b'; tctx.fillRect(0, 6 * dpr, W, H - 12 * dpr);
+  const X = (f) => 6 * dpr + (f - a) / n * (W - 12 * dpr);
+  const key = settingsKey();
+  const cw = Math.max(2 * dpr, (W - 12 * dpr) / (n + 1));
+  for (const [f, c] of dust) {
+    if (f < a || f > b) continue;
+    tctx.fillStyle = c.key === key ? '#7fbf5a' : '#b0703a';
+    tctx.fillRect(X(f) - cw / 2, H - 9 * dpr, cw, 3 * dpr);
+  }
+  tctx.fillStyle = '#5a5a5a'; tctx.font = (10 * dpr) + 'px ui-monospace,monospace'; tctx.textBaseline = 'top';
+  const step = n > 200 ? 50 : n > 80 ? 20 : n > 30 ? 10 : 5;
+  for (let f = Math.ceil(a / step) * step; f <= b; f += step) {
+    const x = X(f); tctx.fillRect(x, 6 * dpr, 1, 5 * dpr);
+    if (W > 320 * dpr) tctx.fillText(f, x + 2 * dpr, 9 * dpr);
+  }
+  const x = X(frame);
+  tctx.fillStyle = '#f7931e'; tctx.fillRect(x - dpr, 0, 2 * dpr, H);
+  tctx.beginPath(); tctx.moveTo(x - 5 * dpr, 0); tctx.lineTo(x + 5 * dpr, 0); tctx.lineTo(x, 6 * dpr); tctx.fill();
+}
+function setFrame(f, schedule) {
+  const a = Math.round(V.first), b = Math.round(V.last);
+  f = Math.max(a, Math.min(b, Math.round(f)));
+  frame = f; $('frameIn').value = f;
+  draw(); drawTrack();
+  if (schedule) scheduleLive(220);
+}
+(function () {
+  const tr = $('track');
+  const at = (e) => { const r = tr.getBoundingClientRect(); const a = V.first, b = V.last; return a + (e.clientX - r.left - 6) / Math.max(r.width - 12, 1) * (b - a); };
+  tr.addEventListener('pointerdown', (e) => {
+    tr.setPointerCapture(e.pointerId); stop();
+    setFrame(at(e), true);
+    const mv = (ev) => setFrame(at(ev), true);
+    const up = () => { tr.removeEventListener('pointermove', mv); tr.removeEventListener('pointerup', up); };
+    tr.addEventListener('pointermove', mv); tr.addEventListener('pointerup', up);
+  });
+})();
+$('frameIn').onchange = () => { stop(); setFrame(parseInt($('frameIn').value) || frame, true); };
+$('tFirst').onclick = () => { stop(); setFrame(V.first, true); };
+$('tLast').onclick = () => { stop(); setFrame(V.last, true); };
+$('tPrev').onclick = () => { stop(); setFrame(frame - 1, true); };
+$('tNext').onclick = () => { stop(); setFrame(frame + 1, true); };
+let playing = false, playT = 0, playAcc = 0;
+function stop() { if (!playing) return; playing = false; $('playIco').innerHTML = '<path d="M3 1v10l8-5z"/>'; scheduleLive(200); }
+function play() {
+  playing = true; $('playIco').innerHTML = '<path d="M2 1h3v10H2zM7 1h3v10H7z"/>';
+  playT = performance.now(); playAcc = 0;
+  const tick = (now) => {
+    if (!playing) return;
+    playAcc += (now - playT) / 1000; playT = now;
+    const spf = 1 / Math.max(1, V.fps || 24);
+    if (playAcc >= spf) {
+      playAcc %= spf;
+      let f = frame + 1; if (f > V.last) f = V.first;
+      setFrame(f, false);
+      if (shot.plate && !plates.has(f) && !busy) fetchPlate(f);
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+$('tPlay').onclick = () => playing ? stop() : play();
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input,select,textarea')) return;
+  if (e.key === 'ArrowLeft') { stop(); setFrame(frame - 1, true); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { stop(); setFrame(frame + 1, true); e.preventDefault(); }
+  else if (e.key === ' ') { playing ? stop() : play(); e.preventDefault(); }
+});
+for (const b of $('viewSeg').children) b.onclick = () => { view = b.dataset.v; [...$('viewSeg').children].forEach(x => x.classList.toggle('on', x === b)); draw(); };
+$('layerSel').onchange = (e) => { layer = e.target.value; draw(); };
+$('gain').oninput = (e) => { gain = +e.target.value; $('gainV').textContent = (gain >= 0 ? '+' : '') + gain.toFixed(1); draw(); };
+$('gain').ondblclick = () => { $('gain').value = 0; $('gain').oninput({ target: $('gain') }); };
+$('live').onchange = () => scheduleLive(10);
+window.addEventListener('resize', drawTrack);
+
+// =====================================================================================================
+//  Boot
+// =====================================================================================================
+function bootMsg(msg, x) { $('bootMsg').textContent = msg; $('bootBar').style.width = (x * 100) + '%'; }
+function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textContent = 'Could not start: ' + msg; }
+(async () => {
+  try {
+    SCHEMA = await call('init');
+    $('verLab').textContent = 'v' + SCHEMA.version;
+    buildPanel();
+    loadDefaults();
+    bootMsg('Ready', 1);
+    $('boot').hidden = true;
+    await makeStandin();
+  } catch (e) { bootFail(e.message); console.error(e.detail || e); }
+})();
+window.__mfweb = { get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
+</script>
+</body>
+</html>

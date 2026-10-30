@@ -31,3 +31,18 @@ Campfire scene: an ember emitter you can place and size, with embers that ride a
 Controls: click or scroll to rack focus, drag to orbit, middle-drag to move the camera, right-drag (or Shift + scroll) to dolly, `G` gust, `R` run the moving object, `L` pixel loupe, `1`–`7` viewer channels.
 
 Single self-contained `index.html`; needs a browser with WebGL 2.
+
+## Nuke tool, and its browser version
+
+**Browser version:** https://x14halo.github.io/mote-field/nuke/
+
+`nuke/motefield.py` is the MoteField prototype for Nuke 15 (plain Python + numpy, no plugins). The browser version runs that same file, unchanged, with Python and numpy compiled to WebAssembly ([Pyodide](https://pyodide.org) 0.26.4, self-hosted in `nuke/pyodide/`). The properties panel is built from the Nuke node's own knob list, and the buttons call the same functions the Nuke buttons do, so the two stay in step and render the same pixels.
+
+- Starts on the stand-in shot (an interior with a window opening and a moving camera), rendered a frame at a time when first needed
+- **Choose EXRs** loads a utility pass sequence (and optionally a plate) from your computer; the files stay in the browser tab
+- **Live update** re-renders the current frame when a knob changes (the Nuke node only renders on a button press)
+- **Save this frame** downloads the dust EXR exactly as the Nuke node writes it (RGBA + `noholdout`, half float)
+- Slower than Nuke (single-threaded WebAssembly): about 2-3 s a frame at 960 x 402 once the pre-roll is simulated
+- Nuke only: the 3D preview and writing to a cache folder
+
+Files: `nuke/index.html` (panel and viewer), `nuke/worker.js` (runs Python off the main thread), `nuke/mfweb.py` (browser glue: in-memory files, on-demand stand-in frames), `nuke/motefield.py` (the Nuke tool).
