@@ -707,7 +707,18 @@ class MFPreview {
     this.pl.frame = frame; this.pl.key = W0 + 'x' + H0;
   }
   // render_frame(): the dust for `frame` into the accumulation buffers. distTex: the shot's distance image
-  renderDust(frame, p, W0, H0, distTex) {
+  lens(p, cam, W) {        // motefield.render_frame + lens_settings
+    const I = this.init, lens = this.cams.lens || {};
+    const focal = p.focal || lens.focal || 35, film = p.film || lens.film || 2 * focal * Math.tan(cam.hfov / 2);
+    const fstop = p.fstop || lens.fstop || 4, focusM = (p.focus || lens.focus || 500) * I.su;
+    const ex = lens.extra || {};
+    const blades = Math.round(p.blades) > 0 ? Math.round(p.blades) : Math.round(ex.blades || 0);
+    const full = p.fstop_full || ex.fstop_full || fstop, vign = Math.min(1, full / Math.max(fstop, 1e-3));
+    return { focal, film, fstop, focusM, su: I.su, blades, catAmt: Math.max((ex.cateye || 0) + p.cateye, 0) * vign,
+             aspect: Math.max((ex.anamorphic || 1) + p.anamorphic, 0.05), fc: (ex.fieldcurv || 0) + p.field_curv,
+             front: p.front_mult, back: p.back_mult, dof: !!p.dof, maxR: p.max_bokeh };
+  }
+  renderDust(frame, p, W0, H0, distTex, hold) {
     const gl = this.gl, I = this.init, S = this.sim;
     const sc = Math.max(Math.min(p.proxy, 1), 0.1), W = Math.max(Math.round(W0 * sc), 8), H = Math.max(Math.round(H0 * sc), 8);
     this._ensureTargets(W, H);
@@ -715,19 +726,13 @@ class MFPreview {
     this._target([this.acc.held, this.acc.free], W, H);
     gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]); gl.clearBufferfv(gl.COLOR, 1, [0, 0, 0, 0]);
     if (!I.n) return { W, H, n: 0 };
-    const cam = this.camAt(frame), lens = this.cams.lens || {};
-    const focal = p.focal || lens.focal || 35, film = p.film || lens.film || 2 * focal * Math.tan(cam.hfov / 2);
-    const fstop = p.fstop || lens.fstop || 4, focusM = (p.focus || lens.focus || 500) * I.su;
-    const ex = lens.extra || {};
-    const blades = Math.round(p.blades) > 0 ? Math.round(p.blades) : Math.round(ex.blades || 0);
-    const full = p.fstop_full || ex.fstop_full || fstop, vign = Math.min(1, full / Math.max(fstop, 1e-3));
-    const catAmt = Math.max((ex.cateye || 0) + p.cateye, 0) * vign;
-    const aspect = Math.max((ex.anamorphic || 1) + p.anamorphic, 0.05), fc = (ex.fieldcurv || 0) + p.field_curv;
+    const cam = this.camAt(hold ? hold : frame);       // hold: the camera stays on that frame while the dust moves
+    const { focal, film, fstop, focusM, blades, catAmt, aspect, fc } = this.lens(p, cam, W);
     const shape = String(p.shutter_shape).toLowerCase().startsWith('back') ? 1 : 0;
     const focalPx = W / (2 * Math.tan(cam.hfov / 2));
     const s = p.mb ? p.shutter / 360 : 0, mode = String(p.shutter_mode).toLowerCase();
     const [tO, tC] = mode.startsWith('back') ? [-s, 0] : mode.startsWith('for') ? [0, s] : [-s / 2, s / 2];
-    const cams = [cam, this.camAt(frame + tO), this.camAt(frame + tC)];
+    const cams = hold ? [cam, cam, cam] : [cam, this.camAt(frame + tO), this.camAt(frame + tC)];
     const C = [], CT = [];
     for (const c of cams) { C.push(...c.pos, ...c.right, ...c.up, ...c.back); const th = Math.tan(c.hfov / 2); CT.push(th, th * H / W); }
     // per-mote maths

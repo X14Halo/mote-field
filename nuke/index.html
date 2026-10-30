@@ -59,6 +59,11 @@ select.nk{background:var(--field);border:1px solid var(--fieldb);border-radius:2
 .keys b{color:#c8c8c8;font-weight:500}
 .vbar .v3 label input{accent-color:var(--orange)}
 .vbar .v3{gap:6px;align-items:center}
+.popwrap{position:relative}
+.pop{position:absolute;top:28px;left:0;z-index:20;width:300px;background:var(--panel);border:1px solid #111;border-radius:4px;padding:10px 12px;box-shadow:0 8px 24px #000a;display:flex;flex-direction:column;gap:8px}
+.pop label{display:grid!important;grid-template-columns:110px 1fr 40px;align-items:center;gap:6px;color:var(--text)!important}
+.pop label:has(input[type=checkbox]){display:flex!important}
+.pop input[type=range]{width:auto!important}
 .hud .ok{color:var(--green)} .hud .st{color:var(--orange)} .hud .no{color:var(--faint)}
 .busy{position:absolute;right:10px;top:8px;display:flex;align-items:center;gap:8px;background:#000a;border:1px solid #333;border-radius:3px;padding:5px 9px;font-size:11px}
 .busy .bar{width:120px;height:4px;background:#333;border-radius:2px;overflow:hidden}
@@ -171,14 +176,24 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
       <div class="sep"></div>
       <label title="Viewer gain in stops (doesn't change the render)">f/stop
         <input type="range" id="gain" min="-6" max="6" step="0.1" value="0"><span class="val" id="gainV">+0.0</span></label>
+      <div class="popwrap"><button class="btn" id="viewBtn" title="Viewer look: set brightness, black sky, glow, haze, tone curve (viewer only)">View ▾</button>
+        <div class="pop" id="viewPop" hidden>
+          <label title="Darkens the plate / set in the viewer so the dust is easier to see">Set brightness <input type="range" id="vSet" min="0" max="1.5" step="0.01"><span class="val" id="vSetV"></span></label>
+          <label title="Show the sky (where the utility pass sees nothing, e.g. through the window) as black"><input type="checkbox" id="vSky"> Black sky</label>
+          <label title="Bloom and a little halation around bright dust, like the MoteField mockup">Glow <input type="range" id="vGlow" min="0" max="2" step="0.01"><span class="val" id="vGlowV"></span></label>
+          <label title="Haze in the stand-in set, so the window throws a light shaft">Stand-in haze <input type="range" id="vHaze" min="0" max="1" step="0.01"><span class="val" id="vHazeV"></span></label>
+          <label title="Filmic: the AgX tone curve the mockup used (highlights roll off). Linear: plain sRGB, clipped.">Tone curve <select class="nk" id="vLook"><option value="filmic">Filmic (AgX)</option><option value="linear">Linear</option></select></label>
+          <div class="note" style="margin:4px 0 0">Viewer only: none of this goes into the dust the tool writes.</div>
+        </div></div>
       </span>
       <span class="v3" style="display:none">
         <button class="btn" id="lookBtn" title="Look through the shot camera (it follows the frame until you move the view)">Shot camera</button>
         <button class="btn" id="frameBtn" title="Frame the dust box (F)">Frame</button>
-        <label title="Utility pass point cloud (first, middle and last frames)"><input type="checkbox" id="showCloud" checked> Scene</label>
+        <label title="The set, as solid surfaces from the utility pass (first, middle and last frames)"><input type="checkbox" id="showCloud" checked> Set</label>
         <label title="The motes of the current frame (shown once the frame is rendered)"><input type="checkbox" id="showMotes" checked> Motes</label>
       </span>
       <div class="sep"></div>
+      <label class="live" title="Keep the camera (and the plate and holdouts) on the current frame while the dust keeps moving, so you can see what the dust does without the camera move"><input type="checkbox" id="holdCam"> Hold camera</label>
       <label class="live" id="liveLab" title="Re-render the current frame whenever a knob changes. The Nuke node only renders when you press a Render button.">
         <input type="checkbox" id="live" checked> Live update</label>
     </div>
@@ -226,6 +241,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
 <input type="file" id="fileBokeh" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
 
 <script src="preview.js"></script>
+<script src="look.js"></script>
 <script>
 'use strict';
 // =====================================================================================================
@@ -259,7 +275,7 @@ const $ = (id) => document.getElementById(id);
 let SCHEMA = null;
 const V = {};                       // knob values
 const shot = { utility: '', plate: '', label: '', standin: true, first: 1001, last: 1048, standinJson: '' };
-let standinWidth = 960;
+let standinWidth = 1280;
 let frame = 1001;
 const dust = new Map();             // frame -> {key, w, h, held, unheld, motes, secs}
 const plates = new Map();           // frame -> {w, h, rgb} | null
@@ -295,6 +311,7 @@ function params() {
   p.utility = shot.utility;
   p.standin_json = shot.standinJson;
   p.cache = '';
+  p.hold_frame = vw.hold ? vw.holdFrame : 0;
   return p;
 }
 function settingsKey() { const p = params(); delete p.cache; return JSON.stringify(p); }
@@ -344,7 +361,7 @@ function changed(commit) {
   $('rngLab').textContent = V.first + '–' + V.last;
   v3dirty();
   if (commit && dim === '3d') loadScene();
-  if (quality === 'preview') ensurePreview();
+  ensurePreview();
   drawHud(); drawTrack();
   if (commit) scheduleLive(350);
 }
@@ -384,7 +401,7 @@ function buildPanel() {
       if (k.extra === 'fit') {          // browser-only: stand-in resolution, right under the stand-in buttons
         const r = row(pg, 'Stand-in size', true);
         const s = document.createElement('select'); s.className = 'nk';
-        for (const w of SCHEMA.standin_res) { const o = document.createElement('option'); o.value = w; o.textContent = w + ' × ' + Math.round(w * 536 / 1280) + (w === 960 ? '  (default)' : w === 1280 ? '  (as in Nuke, slower)' : '  (fastest)'); s.appendChild(o); }
+        for (const w of SCHEMA.standin_res) { const o = document.createElement('option'); o.value = w; o.textContent = w + ' × ' + Math.round(w * 536 / 1280) + (w === 1280 ? '  (default, as in Nuke)' : w === 1920 ? '  (sharpest; Final is slow)' : w === 640 ? '  (fastest Final)' : ''); s.appendChild(o); }
         s.value = standinWidth;
         s.onchange = () => { standinWidth = +s.value; if (shot.standin) onButton('standin'); };
         r.appendChild(s);
@@ -632,7 +649,7 @@ async function renderFrame(f, explicit) {
   setBusy(true, 'Frame ' + f + '…', 0);
   const t0 = performance.now();
   try {
-    if (shot.plate && !plates.has(f)) await fetchPlate(f);
+    if (shot.plate && !plates.has(f) && !glViewer()) await fetchPlate(f);
     const r = await call('render', { p, frame: f }, (x, msg) => { $('busyMsg').textContent = msg; $('busyBar').style.width = (x * 100) + '%'; });
     storeDust(f, key, r);
     if (explicit) setStatus('Rendered frame ' + f + ' in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s.');
@@ -656,38 +673,42 @@ function storeDust(f, key, r) {
   if (f === frame) v3dirty();
 }
 
+let rangeInfo = null;
 async function renderRange(forPlay) {
   if (busy || rangeRunning) return;
   rangeRunning = true; cancelRange = false;
   const a = Math.round(V.first), b = Math.round(V.last), n = b - a + 1;
+  rangeInfo = { i: 0, n, done: 0, t0: performance.now() };
   const t0 = performance.now();
   let done = 0;
   try {
     for (let f = a; f <= b && !cancelRange; f++) {
       const key = settingsKey();
       const c = dust.get(f);
-      if (shot.plate && !plates.has(f) && c && c.key === key) {
+      if (shot.plate && !plates.has(f) && c && c.key === key && !glViewer()) {
         setBusy(true, 'Plate ' + f + ' (' + (f - a + 1) + ' of ' + n + ')', (f - a) / n, true);
         try { await fetchPlate(f); } finally { setBusy(false); }
       }
+      rangeInfo.i = f - a + 1;
       if (!(c && c.key === key)) {
         const p = params();
         setBusy(true, 'Frame ' + f + ' (' + (f - a + 1) + ' of ' + n + ')', (f - a) / n, true);
+        drawHud();
         try {
-          if (shot.plate && !plates.has(f)) await fetchPlate(f);
+          if (shot.plate && !plates.has(f) && !glViewer()) await fetchPlate(f);
           const r = await call('render', { p, frame: f }, (x) => { $('busyBar').style.width = (((f - a) + x) / n * 100) + '%'; });
           storeDust(f, key, r);
         } catch (e) { setStatus('Render failed at frame ' + f + ': ' + e.message, true); break; }
         finally { setBusy(false); }
       }
-      done++;
+      done++; rangeInfo.done++;
       setFrame(f, false);
       drawTrack();
     }
     if (!$('status').classList.contains('err'))
       setStatus((cancelRange ? 'Cancelled after ' + done + ' frames' : 'Rendered frames ' + a + '–' + b) + ' in ' + ((performance.now() - t0) / 1000).toFixed(0) + ' s.' + (forPlay ? '' : ' Press play to watch.'));
     return !cancelRange && done === n;
-  } finally { rangeRunning = false; cancelRange = false; setBusy(false); }
+  } finally { rangeRunning = false; cancelRange = false; rangeInfo = null; setBusy(false); drawHud(); }
 }
 
 async function fetchPlate(f) {
@@ -708,7 +729,7 @@ function scheduleLive(ms) {
   liveTimer = setTimeout(async () => {
     if (busy || rangeRunning || playing || quality !== 'final') return;
     if ($('live').checked && shot.utility && !fresh(frame) && failed !== settingsKey() + '@' + frame) await renderFrame(frame, false);
-    else if (shot.plate && !plates.has(frame)) { setBusy(true, 'Plate ' + frame + '…', 0.5); try { await fetchPlate(frame); } finally { setBusy(false); } }
+    else if (shot.plate && !plates.has(frame) && !glViewer()) { setBusy(true, 'Plate ' + frame + '…', 0.5); try { await fetchPlate(frame); } finally { setBusy(false); } }
   }, ms);
 }
 
@@ -734,7 +755,7 @@ async function saveExr() {
 const cv = $('cv'), ctx = cv.getContext('2d');
 let img = null;
 function draw() {
-  if (quality !== 'final' || dim === '3d') { drawHud(); return; }
+  if (glViewer() || dim === '3d') { v3dirty(); drawHud(); return; }
   const d = dust.get(frame), pl = plates.get(frame);
   const W = pl ? pl.w : d ? d.w : (cv.width || 960), H = pl ? pl.h : d ? d.h : (cv.height || 402);
   if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; img = null; }
@@ -762,7 +783,7 @@ function draw() {
 }
 function drawHud() {
   if (quality === 'preview' && typeof pvs !== 'undefined') {
-    let t = '<b>' + frame + '</b>  <span class="ok">preview</span> <span class="no">(GPU, real time)</span>';
+    let t = '<b>' + frame + '</b>  <span class="ok">preview</span> <span class="no">(GPU, real time)</span>' + (vw.hold ? '  <span class="st">camera held on ' + vw.holdFrame + '</span>' : '');
     if (!pv || !pv.ok) t += '\n<span class="st">GPU preview unavailable: use Final</span>';
     else if (pvs.err) t += '\n<span class="st">' + pvs.err.replace(/</g, '&lt;') + '</span>';
     else if (!previewReady()) t += '\n<span class="no">' + (pvs.lightNote || 'preparing…') + '</span>';
@@ -776,10 +797,15 @@ function drawHud() {
   }
   const d = dust.get(frame);
   const st = !d ? '<span class="no">dust: not rendered</span>' : d.key === settingsKey() ? '<span class="ok">dust: up to date</span>' : '<span class="st">dust: older settings</span>';
-  let s = '<b>' + frame + '</b>  ' + st;
+  let s = '<b>' + frame + '</b>  <span class="ok">final</span> ' + st + (vw.hold ? '  <span class="st">camera held on ' + vw.holdFrame + '</span>' : '');
+  if (rangeInfo) {
+    const el = (performance.now() - rangeInfo.t0) / 1000, per = rangeInfo.done ? el / rangeInfo.done : 0;
+    s += '\n<span class="st">rendering ' + rangeInfo.n + ' frames in Python for Final playback: ' + rangeInfo.i + ' of ' + rangeInfo.n +
+         (per ? ', about ' + Math.ceil(per * (rangeInfo.n - rangeInfo.i + 1)) + ' s left' : '') + '</span>\n<span class="no">it plays by itself when they\'re done; ■ stops. Preview plays in real time.</span>';
+  }
   if (d) s += '\n' + d.motes.toLocaleString() + ' motes · ' + d.w + '×' + d.h + ' · ' + d.secs.toFixed(1) + ' s';
   if (dim === '3d') { if (v3.loading) s += '\n<span class="no">loading the scene…</span>'; else if (!d) s += '\n<span class="no">render the frame to see its motes</span>'; }
-  else if (shot.plate && !plates.get(frame) && view !== 'dust') s += '\n<span class="no">plate: ' + (platePending.has(frame) ? 'loading' : 'not loaded') + '</span>';
+  else if (!glViewer() && shot.plate && !plates.get(frame) && view !== 'dust') s += '\n<span class="no">plate: ' + (platePending.has(frame) ? 'loading' : 'not loaded') + '</span>';
   $('hud').innerHTML = s;
 }
 
@@ -849,7 +875,7 @@ async function play() {
   // like Nuke's viewer cache: the first pass renders the frames it doesn't have yet, then it plays at speed
   const a = Math.round(V.first), b = Math.round(V.last);
   let missing = false;
-  for (let f = a; f <= b; f++) if (!fresh(f) || (shot.plate && !plates.has(f))) { missing = true; break; }
+  for (let f = a; f <= b; f++) if (!fresh(f) || (shot.plate && !plates.has(f) && !glViewer())) { missing = true; break; }
   if (missing && shot.utility && quality === 'final') {
     while (busy || rangeRunning) { await sleep(100); if (!playing) return; }
     if (!playing) return;
@@ -905,7 +931,7 @@ const v3 = { gl: null, coi: [0, 0, 0], dist: 1500, yaw: 0.6, pitch: 0.35, fov: 4
 
 function keysHint() {
   $('keys').innerHTML = dim === '3d'
-    ? '<b>Alt+LMB</b> tumble · <b>Alt+MMB</b> track · <b>Alt+RMB</b> / <b>wheel</b> dolly · <b>F</b> frame · <b>Tab</b> 2D'
+    ? '<b>Alt+LMB</b> tumble · <b>Alt+MMB</b> track · <b>Alt+RMB</b> / <b>wheel</b> dolly · <b>F</b> frame · <b>Tab</b> 2D<br>Box: drag a <b>coloured dot</b> to resize from that side, the <b>gold dot</b> to move (<b>Shift</b>: up / down)'
     : '<b>Alt+MMB</b> pan · <b>Alt+RMB</b> / <b>wheel</b> zoom · <b>F</b> fit · <b>Tab</b> 3D';
 }
 function setDim(d) {
@@ -933,6 +959,15 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     e.preventDefault();
     st.setPointerCapture(e.pointerId);
     const btn = e.button;                     // 0 left, 1 middle, 2 right
+    if (dim === '3d' && btn === 0 && !e.altKey) {
+      const r = cv3.getBoundingClientRect(), hi = pickHandle(e.clientX - r.left, e.clientY - r.top);
+      if (hi >= 0) {
+        const h = boxHandles()[hi]; h.p0 = h.p.slice();
+        drag = v3.drag = { mode: 'handle', i: hi, h, x0: e.clientX - r.left, y0: e.clientY - r.top, center0: V.box_center.map(Number), size0: V.box_size.map(Number),
+                           ray0: rayAt(e.clientX - r.left, e.clientY - r.top), id: e.pointerId, lx: e.clientX, ly: e.clientY };
+        st.style.cursor = 'grabbing'; v3dirty(); return;
+      }
+    }
     let mode;
     if (dim === '3d') mode = btn === 0 ? (e.shiftKey ? 'track' : 'tumble') : btn === 1 ? 'track' : 'dolly';
     else mode = btn === 2 ? 'zoom' : 'pan';
@@ -940,7 +975,12 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     st.style.cursor = mode === 'tumble' ? 'grabbing' : mode === 'pan' || mode === 'track' ? 'move' : 'ns-resize';
   });
   st.addEventListener('pointermove', (e) => {
+    if (dim === '3d' && !drag && v3.vp) {        // hover a handle
+      const r = cv3.getBoundingClientRect(), hi = pickHandle(e.clientX - r.left, e.clientY - r.top);
+      if (hi !== (v3.hover ?? -1)) { v3.hover = hi; st.style.cursor = hi >= 0 ? 'pointer' : ''; v3dirty(); }
+    }
     if (!drag || e.pointerId !== drag.id) return;
+    if (drag.mode === 'handle') { const r = cv3.getBoundingClientRect(); dragHandle(drag, e.clientX - r.left, e.clientY - r.top, e.shiftKey); v3dirty(); return; }
     const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
     drag.lx = e.clientX; drag.ly = e.clientY;
     if (dim === '2d') {
@@ -962,7 +1002,7 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     }
     v3dirty();
   });
-  const end = (e) => { if (drag && e.pointerId === drag.id) { drag = null; st.style.cursor = ''; } };
+  const end = (e) => { if (drag && e.pointerId === drag.id) { const wasHandle = drag.mode === 'handle'; drag = null; v3.drag = null; st.style.cursor = ''; if (wasHandle) { changed(true); v3dirty(); } } };
   st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
   st.addEventListener('wheel', (e) => {
     if (!$('boot').hidden) return;
@@ -1026,9 +1066,8 @@ function shotCam(f) {
   return { pos: [d[i], d[i + 1], d[i + 2]], right: [d[i + 3], d[i + 4], d[i + 5]], up: [d[i + 6], d[i + 7], d[i + 8]], back: [d[i + 9], d[i + 10], d[i + 11]], hfov: d[i + 12] };
 }
 function lookThrough() {
-  const c = shotCam(frame); if (!c) return;
-  const pl = plates.get(frame), dd = dust.get(frame);
-  const W = pl ? pl.w : dd ? dd.w : 16, H = pl ? pl.h : dd ? dd.h : 9;
+  const c = shotCam(camFrame()); if (!c) return;
+  const W = pvs.size ? pvs.size[0] : 16, H = pvs.size ? pvs.size[1] : 9;
   v3.lock = true; v3.up = c.up;
   const b = norm(c.back);
   v3.pitch = Math.asin(Math.max(-1, Math.min(1, b[1]))); v3.yaw = Math.atan2(b[0], b[2]);
@@ -1061,7 +1100,7 @@ async function loadScene() {
     for (let i = 1; i < cl.length; i += 3 * Math.max(1, Math.floor(cl.length / 3 / 4000))) ys.push(cl[i]);
     ys.sort((a, b) => a - b);
     if (ys.length) v3.scene.floor = ys[Math.floor(ys.length * 0.02)];
-    uploadCloud();
+    buildMeshes(r.grids || []);
     if (!v3.framed) { v3.framed = true; frame3d(); }
   } catch (e) { setStatus('3D view: ' + e.message, true); }
   finally { v3.loading = false; drawHud(); v3dirty(); }
@@ -1096,9 +1135,47 @@ function initGL() {
       precision mediump float; in vec3 vC; out vec4 o;
       void main(){ vec2 d = gl_PointCoord*2.0-1.0; float r = dot(d,d); if (r > 1.0) discard; o = vec4(vC, smoothstep(1.0, 0.0, r)); }`),
   };
-  for (const k of ['cloudP', 'cloudC', 'moteP', 'moteC', 'lineP', 'lineC']) glBuf[k] = gl.createBuffer();
+  glP.mesh = (() => {
+    const p = gl.createProgram();
+    const v = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(v, `#version 300 es
+      layout(location=0) in vec3 aP; layout(location=1) in vec3 aN; layout(location=2) in vec3 aC;
+      uniform mat4 uM; uniform vec3 uEye; uniform float uSet; out vec3 vC;
+      void main(){ gl_Position = uM * vec4(aP, 1.0); vec3 v = normalize(uEye - aP);
+        float l = dot(aN, aN) > 0.1 ? abs(dot(normalize(aN), v)) : 0.7; vC = aC * uSet * (0.3 + 0.7 * l); }`); gl.compileShader(v);
+    const f = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(f, `#version 300 es
+      precision mediump float; in vec3 vC; out vec4 o; void main(){ o = vec4(vC, 1.0); }`); gl.compileShader(f);
+    gl.attachShader(p, v); gl.attachShader(p, f); gl.linkProgram(p); return p;
+  })();
+  for (const k of ['cloudP', 'cloudC', 'moteP', 'moteC', 'lineP', 'lineC', 'handleP', 'handleC']) glBuf[k] = gl.createBuffer();
   glBuf.vao = gl.createVertexArray();
   new ResizeObserver(() => v3dirty()).observe(cv3);
+}
+// the utility pass as solid surfaces: a grid mesh per frame, broken wherever the depth jumps
+function buildMeshes(grids) {
+  const gl = v3.gl; if (!gl) return;
+  for (const m of glBuf.meshes || []) { gl.deleteBuffer(m.p); gl.deleteBuffer(m.n); gl.deleteBuffer(m.c); gl.deleteBuffer(m.e); gl.deleteVertexArray(m.vao); }
+  glBuf.meshes = [];
+  for (const g of grids) {
+    const w = g.w, h = g.h, P = new Float32Array(g.P.buffer, g.P.byteOffset, w * h * 3), N = new Float32Array(g.N.buffer, g.N.byteOffset, w * h * 3);
+    const d = new Float32Array(w * h), cam = g.cam;
+    for (let i = 0; i < w * h; i++) { const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+      d[i] = (Math.abs(x) + Math.abs(y) + Math.abs(z)) > 0 ? Math.hypot(x - cam[0], y - cam[1], z - cam[2]) : 0; }
+    const idx = [];
+    const ok = (a, b, c) => { const da = d[a], db = d[b], dc = d[c]; if (!(da > 0 && db > 0 && dc > 0)) return false; return Math.max(da, db, dc) / Math.min(da, db, dc) < 1.06; };
+    for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) {
+      const a = y * w + x, b = a + 1, c = a + w, e = c + 1;
+      if (ok(a, b, e)) idx.push(a, b, e);
+      if (ok(a, e, c)) idx.push(a, e, c);
+    }
+    const m = { vao: gl.createVertexArray(), p: gl.createBuffer(), n: gl.createBuffer(), c: gl.createBuffer(), e: gl.createBuffer(), count: idx.length };
+    gl.bindVertexArray(m.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.p); gl.bufferData(gl.ARRAY_BUFFER, P, gl.STATIC_DRAW); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.n); gl.bufferData(gl.ARRAY_BUFFER, N, gl.STATIC_DRAW); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.c); gl.bufferData(gl.ARRAY_BUFFER, g.C, gl.STATIC_DRAW); gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.UNSIGNED_BYTE, true, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.e); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(idx), gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    glBuf.meshes.push(m);
+  }
 }
 function uploadCloud() {
   const gl = v3.gl; if (!gl || !v3.scene) return;
@@ -1115,7 +1192,7 @@ function uploadMotes() {
   glBuf.moteN = d.pts.length / 3; v3.motesFor = d;
 }
 function v3dirty() {
-  if (dim !== '3d' && quality === 'preview' && v3.gl) { if (!v3.raf) v3.raf = requestAnimationFrame(paintPreview2d); return; }
+  if (dim !== '3d' && v3.gl && glViewer()) { if (!v3.raf) v3.raf = requestAnimationFrame(paintPreview2d); return; }
   if (dim !== '3d' || !v3.gl) return;
   if (v3.lock && v3.scene) lookThrough();
   if (!v3.raf) v3.raf = requestAnimationFrame(render3d);
@@ -1130,16 +1207,17 @@ function render3d() {
   const cw = Math.max(1, Math.round(cv3.clientWidth * dpr)), ch = Math.max(1, Math.round(cv3.clientHeight * dpr));
   if (cv3.width !== cw || cv3.height !== ch) { cv3.width = cw; cv3.height = ch; }
   // letterbox to the plate's shape while looking through the shot camera
-  let vx = 0, vy = 0, vw = cw, vh = ch;
+  let vx = 0, vy = 0, vpw = cw, vph = ch;
   if (v3.lock && v3.aspectLock) {
-    if (cw / ch > v3.aspectLock) { vw = Math.round(ch * v3.aspectLock); vx = (cw - vw) >> 1; }
-    else { vh = Math.round(cw / v3.aspectLock); vy = (ch - vh) >> 1; }
+    if (cw / ch > v3.aspectLock) { vpw = Math.round(ch * v3.aspectLock); vx = (cw - vpw) >> 1; }
+    else { vph = Math.round(cw / v3.aspectLock); vy = (ch - vph) >> 1; }
   }
   gl.disable(gl.SCISSOR_TEST);
-  gl.viewport(0, 0, cw, ch); gl.clearColor(0.08, 0.08, 0.09, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  gl.enable(gl.SCISSOR_TEST); gl.scissor(vx, vy, vw, vh); gl.viewport(vx, vy, vw, vh);
-  gl.clearColor(0.165, 0.176, 0.192, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  const M = viewProj(vw / vh);
+  gl.viewport(0, 0, cw, ch); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.SCISSOR_TEST); gl.scissor(vx, vy, vpw, vph); gl.viewport(vx, vy, vpw, vph);
+  gl.clearColor(0.02, 0.02, 0.025, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const M = viewProj(vpw / vph);
+  v3.M = M; v3.vp = { x: vx, y: vy, w: vpw, h: vph, cw, ch, dpr };
   const P = glP.pts; gl.useProgram(P); gl.bindVertexArray(glBuf.vao);
   const U = (n) => gl.getUniformLocation(P, n);
   gl.uniformMatrix4fv(U('uM'), false, M);
@@ -1157,14 +1235,18 @@ function render3d() {
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.drawArrays(gl.LINES, 0, L.n);
   gl.disable(gl.BLEND);
-  if ($('showCloud').checked && glBuf.cloudN) {
-    attrs(glBuf.cloudP, glBuf.cloudC, gl.UNSIGNED_BYTE, 3, true);
-    gl.uniform1f(U('uSize'), 2 * dpr); gl.uniform1f(U('uGain'), 0.9); gl.uniform1f(U('uRound'), 0);
-    gl.drawArrays(gl.POINTS, 0, glBuf.cloudN);
+  if ($('showCloud').checked && glBuf.meshes && glBuf.meshes.length) {
+    const mp = glP.mesh; gl.useProgram(mp);
+    gl.uniformMatrix4fv(gl.getUniformLocation(mp, 'uM'), false, M);
+    gl.uniform3fv(gl.getUniformLocation(mp, 'uEye'), eyePos()); gl.uniform1f(gl.getUniformLocation(mp, 'uSet'), vw.set * 0.9);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    glBuf.meshes.forEach((m, i) => { gl.polygonOffset(1 + i, 1 + i * 4); gl.bindVertexArray(m.vao); gl.drawElements(gl.TRIANGLES, m.count, gl.UNSIGNED_INT, 0); });
+    gl.disable(gl.POLYGON_OFFSET_FILL); gl.bindVertexArray(glBuf.vao);
+    gl.useProgram(P);
   }
   if ($('showMotes').checked && pready) {
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false);
-    pv.draw3d(M, pp, 3 * dpr);
+    pv.draw3d(M, pp, 2 * dpr);
     gl.depthMask(true); gl.disable(gl.BLEND);
   } else if ($('showMotes').checked) {
     uploadMotes();
@@ -1179,7 +1261,69 @@ function render3d() {
       gl.depthMask(true); gl.disable(gl.BLEND);
     }
   }
+  // box handles, always on top
+  const hs = boxHandles();
+  const hp = new Float32Array(hs.length * 3), hc = new Float32Array(hs.length * 4);
+  hs.forEach((h, i) => { hp.set(h.p, i * 3); hc.set(i === v3.hover || (v3.drag && v3.drag.i === i) ? [1, 1, 1, 1] : h.col, i * 4); });
+  gl.useProgram(P); gl.bindVertexArray(glBuf.vao); gl.uniformMatrix4fv(U('uM'), false, M);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glBuf.handleP); gl.bufferData(gl.ARRAY_BUFFER, hp, gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, glBuf.handleC); gl.bufferData(gl.ARRAY_BUFFER, hc, gl.DYNAMIC_DRAW);
+  attrs(glBuf.handleP, glBuf.handleC, gl.FLOAT, 4, false);
+  gl.disable(gl.DEPTH_TEST); gl.uniform1f(U('uSize'), 12 * dpr); gl.uniform1f(U('uGain'), 1); gl.uniform1f(U('uRound'), 1);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.drawArrays(gl.POINTS, 0, hs.length);
+  gl.disable(gl.BLEND);
   gl.disable(gl.SCISSOR_TEST);
+}
+// ---- box handles: drag a face to resize the box from that side, drag the centre to move it (Shift: up / down) ----
+function boxHandles() {
+  const { c, sz, toW } = boxInfo(), out = [];
+  const cols = [[0.93, 0.36, 0.33, 1], [0.45, 0.82, 0.4, 1], [0.4, 0.6, 0.98, 1]];
+  for (let a = 0; a < 3; a++) for (const sg of [-1, 1]) {
+    const l = [0, 0, 0]; l[a] = sg * sz[a] / 2; const p = toW(l);
+    const u = [0, 0, 0]; u[a] = sg; const q = toW(u);
+    out.push({ kind: 'face', axis: a, p, dir: norm(sub(q, c)), col: cols[a] });
+  }
+  out.push({ kind: 'move', p: c.slice(), col: [0.894, 0.729, 0.42, 1] });
+  return out;
+}
+function toScreen(P) {             // world -> CSS px inside the 3D canvas
+  const M = v3.M, vp = v3.vp; if (!M || !vp) return null;
+  const x = M[0] * P[0] + M[4] * P[1] + M[8] * P[2] + M[12], y = M[1] * P[0] + M[5] * P[1] + M[9] * P[2] + M[13], w = M[3] * P[0] + M[7] * P[1] + M[11] * P[2] + M[15];
+  if (w <= 1e-6) return null;
+  return [(vp.x + (x / w * 0.5 + 0.5) * vp.w) / vp.dpr, (vp.ch - (vp.y + (y / w * 0.5 + 0.5) * vp.h)) / vp.dpr];
+}
+function rayAt(cx, cy) {           // CSS px inside the canvas -> eye ray
+  const vp = v3.vp; const nx = ((cx * vp.dpr - vp.x) / vp.w) * 2 - 1, ny = ((vp.ch - cy * vp.dpr - vp.y) / vp.h) * 2 - 1;
+  const { b, r, u } = basis(), t = Math.tan(v3.fov * Math.PI / 360), asp = vp.w / vp.h;
+  return { o: eyePos(), d: norm([0, 1, 2].map(i => -b[i] + nx * t * asp * r[i] + ny * t * u[i])) };
+}
+function pickHandle(cx, cy) {
+  let best = -1, bd = 14;
+  boxHandles().forEach((h, i) => { const s2 = toScreen(h.p); if (!s2) return; const d = Math.hypot(s2[0] - cx, s2[1] - cy); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+function dragHandle(dr, cx, cy, shift) {
+  const h = dr.h, m = [cx - dr.x0, cy - dr.y0];
+  const along = (p, dir) => {      // mouse movement -> world units along dir at p
+    const U = sceneRadius() * 0.1, a = toScreen(p), b = toScreen(p.map((v, i) => v + dir[i] * U));
+    if (!a || !b) return 0; const sv = [b[0] - a[0], b[1] - a[1]], l2 = sv[0] * sv[0] + sv[1] * sv[1];
+    return l2 > 1e-6 ? (m[0] * sv[0] + m[1] * sv[1]) / l2 * U : 0;
+  };
+  const c0 = dr.center0, s0 = dr.size0;
+  if (h.kind === 'face') {
+    const amt = along(h.p0, h.dir), ns = Math.max(1, s0[h.axis] + amt), real = ns - s0[h.axis];
+    const size = s0.slice(); size[h.axis] = +ns.toFixed(2);
+    setKnob('box_size', size); setKnob('box_center', c0.map((v, i) => +(v + h.dir[i] * real / 2).toFixed(2)));
+  } else if (shift) {
+    const amt = along(c0, [0, 1, 0]); setKnob('box_center', [c0[0], +(c0[1] + amt).toFixed(2), c0[2]]);
+  } else {
+    const r0 = dr.ray0, r1 = rayAt(cx, cy);
+    const hit = (r) => { if (Math.abs(r.d[1]) < 1e-4) return null; const t = (c0[1] - r.o[1]) / r.d[1]; return t > 0 ? r.o.map((v, i) => v + r.d[i] * t) : null; };
+    const a = hit(r0), b = hit(r1);
+    if (a && b) setKnob('box_center', [+(c0[0] + b[0] - a[0]).toFixed(2), c0[1], +(c0[2] + b[2] - a[2]).toFixed(2)]);
+  }
+  changed(false);
 }
 function buildLines() {
   const p = [], c = [];
@@ -1213,8 +1357,8 @@ function buildLines() {
     const sc = v3.scene;
     for (let f = sc.first; f < sc.last; f++) seg(shotCam(f).pos, shotCam(f + 1).pos, [0.55, 0.55, 0.58, 0.8]);
     if (!v3.lock) {
-      const cam = shotCam(frame), pl = plates.get(frame), dd = dust.get(frame);
-      const W = pl ? pl.w : dd ? dd.w : 16, H = pl ? pl.h : dd ? dd.h : 9;
+      const cam = shotCam(camFrame());
+      const W = pvs.size ? pvs.size[0] : 16, H = pvs.size ? pvs.size[1] : 9;
       const d = R * 0.12, th = Math.tan(cam.hfov / 2) * d, tv = th * H / W;
       const at = (x, y) => [0, 1, 2].map(i => cam.pos[i] - cam.back[i] * d + cam.right[i] * x + cam.up[i] * y);
       const k = [at(-th, -tv), at(th, -tv), at(th, tv), at(-th, tv)], col = [0.97, 0.576, 0.118, 1];
@@ -1239,6 +1383,7 @@ function buildLines() {
 //  GPU preview (preview.js): real-time playback with the same simulation and mote model
 // =====================================================================================================
 let quality = 'preview', pv = null;
+const vw = { set: 0.6, blackSky: true, glow: 0.5, haze: 0.3, look: 'filmic', hold: false, holdFrame: 0, finalTex: null, finalFor: null };
 const pvs = { initKey: '', camsKey: '', lightKey: '', busy: false, again: false, boxes: null, plateLight: null, size: null,
               n: 0, fetchKey: '', lastPaint: 0, fps: 0, err: '' };
 const INIT_KEYS = ['units', 'seed', 'box_center', 'box_size', 'box_rot', 'density', 'max_motes', 'size_min', 'size_max', 'size_bias',
@@ -1340,8 +1485,9 @@ async function prefetchFrames() {
     drawHud();
   }
 }
+function glViewer() { return !!(pv && pv.ok); }
 function updateCanvases() {
-  const gpu2d = quality === 'preview' && dim === '2d';
+  const gpu2d = dim === '2d' && glViewer();
   cv.hidden = dim === '3d' || gpu2d;
   cv3.hidden = !(dim === '3d' || gpu2d);
   $('liveLab').style.display = quality === 'final' ? '' : 'none';
@@ -1351,45 +1497,77 @@ function setQuality(q) {
   quality = q;
   [...$('qualSeg').children].forEach(b => b.classList.toggle('on', b.dataset.q === q));
   updateCanvases();
-  if (q === 'preview') { initGL(); ensurePreview(); }
+  initGL(); ensurePreview();
   draw(); v3dirty();
   if (q === 'final') scheduleLive(50);
   try { localStorage.setItem('mf_quality', q); } catch (e) {}
 }
 for (const b of $('qualSeg').children) b.onclick = () => setQuality(b.dataset.q);
+(function viewerControls() {
+  try { Object.assign(vw, JSON.parse(localStorage.getItem('mf_view') || '{}'), { hold: false }); } catch (e) {}
+  const save = () => { try { const { set, blackSky, glow, haze, look } = vw; localStorage.setItem('mf_view', JSON.stringify({ set, blackSky, glow, haze, look })); } catch (e) {} };
+  const slider = (id, key, fmt) => { const el = $(id), lab = $(id + 'V'); el.value = vw[key]; lab.textContent = fmt(vw[key]);
+    el.oninput = () => { vw[key] = +el.value; lab.textContent = fmt(vw[key]); if (key === 'haze' && look) look.clear(); save(); v3dirty(); }; };
+  slider('vSet', 'set', v => v.toFixed(2)); slider('vGlow', 'glow', v => v.toFixed(2)); slider('vHaze', 'haze', v => v.toFixed(2));
+  $('vSky').checked = vw.blackSky; $('vSky').onchange = () => { vw.blackSky = $('vSky').checked; save(); v3dirty(); };
+  $('vLook').value = vw.look; $('vLook').onchange = () => { vw.look = $('vLook').value; save(); v3dirty(); };
+  $('viewBtn').onclick = (e) => { e.stopPropagation(); $('viewPop').hidden = !$('viewPop').hidden; };
+  document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.popwrap')) $('viewPop').hidden = true; });
+  $('holdCam').onchange = () => {
+    vw.hold = $('holdCam').checked; vw.holdFrame = frame;
+    if (vw.hold && v3.lock) v3.lock = true;
+    setStatus(vw.hold ? 'Camera held on frame ' + frame + ': play to watch the dust move with the camera still.' : 'Camera follows the shot again.');
+    changed(false); v3dirty(); drawHud();
+  };
+})();
 
+// the 2D viewer, for both Preview (GPU dust) and Final (Python dust): plate, dust, glow and tone curve on the GPU
+let look = null;
+function camFrame() { return vw.hold ? vw.holdFrame : frame; }
+function uploadFinal(d) {
+  const gl = v3.gl;
+  if (vw.finalFor === d && vw.finalLayer === layer) return vw.finalTex;
+  if (vw.finalTex) gl.deleteTexture(vw.finalTex);
+  const src = layer === 'noholdout' ? d.unheld : d.held;
+  vw.finalTex = pv._tex(d.w, d.h, gl.RGB16F, gl.RGB, gl.HALF_FLOAT, src);
+  vw.finalFor = d; vw.finalLayer = layer;
+  return vw.finalTex;
+}
 function paintPreview2d() {
   v3.raf = 0;
   const gl = v3.gl;
-  if (!gl || dim !== '2d' || quality !== 'preview') return;
+  if (!gl || dim !== '2d' || !pv || !pv.ok) return;
+  if (!look) { try { look = new MFLook(pv); } catch (e) { console.error(e); pvs.err = 'viewer: ' + e.message; drawHud(); return; } }
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const cw = Math.max(1, Math.round(cv3.clientWidth * dpr)), ch = Math.max(1, Math.round(cv3.clientHeight * dpr));
   if (cv3.width !== cw || cv3.height !== ch) { cv3.width = cw; cv3.height = ch; }
-  const ready = previewReady();
-  let res = null;
-  if (ready) {
-    const p = pparams();
-    try {
+  const black = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, cw, ch); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); };
+  const fin = dust.get(frame);
+  const size = pvs.size || (fin ? [fin.w, fin.h] : null);
+  if (!size || !pv.cams || !shot.utility) { black(); drawHud(); return; }
+  try {
+    const [W0, H0] = size, p = pparams(), cf = camFrame();
+    let plateTex = null, distTex = null, defocus = false;
+    if (shot.standin && pv.boxes && pvs.plateLight) {
+      const e = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01);
+      plateTex = e.plate; distTex = e.dist; defocus = true;      // a render comes with its own defocus; the stand-in gets the lens here
+    } else { const fi = pv.frameTex.get(cf); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; } }
+    let dustSrc = null;
+    if (quality === 'preview' && previewReady()) {
       pv.simTo(frame, p, simStepKey(p));
-      const [W0, H0] = pvs.size;
-      let plateTex = null, distTex = null;
-      if (shot.standin) { pv.standinPlate(frame, W0, H0, pvs.plateLight); plateTex = pv.pl.plate; distTex = pv.pl.dist; }
-      else { const fi = pv.frameTex.get(frame); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; } }
-      res = pv.renderDust(frame, p, W0, H0, distTex);
-      // place the image like the 2D canvas: fit inside the viewer, then the pan / zoom
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.disable(gl.SCISSOR_TEST); gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
-      gl.viewport(0, 0, cw, ch); gl.clearColor(0.051, 0.051, 0.051, 1); gl.clear(gl.COLOR_BUFFER_BIT);
-      const fit = Math.min(1, cw / dpr / W0, ch / dpr / H0) * dpr;     // same size as the Final canvas
-      const w = W0 * fit * nav2.s, h = H0 * fit * nav2.s;
-      const cx = cw / 2 + nav2.x * dpr, cy = ch / 2 + nav2.y * dpr;
-      const x0 = cx - w / 2, x1 = cx + w / 2, yTop = cy - h / 2, yBot = cy + h / 2;
-      pv.composite([x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2], { view, layer, gain: Math.pow(2, gain) }, plateTex);
-    } catch (e) { console.error(e); pvs.err = e.message; }
-  } else {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, cw, ch); gl.clearColor(0.051, 0.051, 0.051, 1); gl.clear(gl.COLOR_BUFFER_BIT);
-  }
+      pv.renderDust(frame, p, W0, H0, distTex, vw.hold ? cf : 0);
+      dustSrc = { tex: layer === 'noholdout' ? pv.acc.free : pv.acc.held, flip: 1 };
+    } else if (quality === 'final' && fin) dustSrc = { tex: uploadFinal(fin), flip: 0 };
+    const cam = pv.camAt(cf), L = pv.init ? pv.lens(p, cam, W0) : { focal: 35, film: 36, fstop: 4, focusM: 5, su: 0.01, front: 1, back: 1, dof: false, maxR: 0 };
+    // largest plate blur: the circle of confusion of the nearest and farthest things, capped like the dust's
+    L.maxR = Math.min(p.max_bokeh, 60);
+    const fit = Math.min(1, cw / dpr / W0, ch / dpr / H0) * dpr, w = W0 * fit * nav2.s, h = H0 * fit * nav2.s;
+    const cx = cw / 2 + nav2.x * dpr, cy = ch / 2 + nav2.y * dpr;
+    const x0 = cx - w / 2, x1 = cx + w / 2, yTop = cy - h / 2, yBot = cy + h / 2;
+    look.show({ W: W0, H: H0, cw, ch, plate: plateTex, dist: distTex, defocusPlate: defocus && p.dof, lens: L, dust: dustSrc, view,
+                set: vw.set, skyMul: vw.blackSky ? 0 : 1, gain: Math.pow(2, gain), glow: vw.glow, look: vw.look,
+                rect: [x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2] });
+  } catch (e) { console.error(e); pvs.err = e.message; black(); }
   const now = performance.now();
   if (playing && pvs.lastPaint) pvs.fps = pvs.fps * 0.85 + 0.15 * (1000 / Math.max(now - pvs.lastPaint, 1));
   pvs.lastPaint = now;
@@ -1417,6 +1595,7 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
     ensurePreview();
   } catch (e) { bootFail(e.message); console.error(e.detail || e); }
 })();
+window.__mfdbg = { boxHandles, toScreen, get v3() { return v3; } };
 window.__mfweb = { get pv() { return pv; }, get pvs() { return pvs; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
 </script>
 </body>

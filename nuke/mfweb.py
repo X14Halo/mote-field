@@ -12,7 +12,7 @@ import numpy as np
 import motefield as mf
 
 ROOT = '/work'
-STANDIN_RES = {640: 268, 960: 402, 1280: 536}
+STANDIN_RES = {640: 268, 960: 402, 1280: 536, 1920: 804}
 _BaseShot = mf.Shot
 _shots = {}
 _light = {'key': None, 'fn': None}
@@ -83,7 +83,7 @@ def schema():
                            standin_res=sorted(STANDIN_RES)))
 
 
-def setup_standin(width=960):
+def setup_standin(width=1280):
     """Like the Nuke 'Create stand-in shot' button, but frames are made on demand."""
     width = int(width)
     S = dict(mf.STANDIN, width=width, height=STANDIN_RES.get(width, int(round(width * 536 / 1280.0))))
@@ -208,7 +208,7 @@ def scene(pjson, with_cloud=True, max_points=240000):
         c = shot.camera(f)
         cams.extend(list(c.pos) + list(c.right) + list(c.up) + list(c.back) + [c.hfov])
     fs = sorted(set([first, (first + last) // 2, last])) if with_cloud else []
-    P_all, C_all = [], []
+    P_all, C_all, grids = [], [], []
     for f in fs:
         e = shot._open(f)
         try:
@@ -224,15 +224,22 @@ def scene(pjson, with_cloud=True, max_points=240000):
                 dc = e.read(ci, cn)
                 C = np.stack([dc[n] for n in cn], -1)
                 C = np.clip(C, 0, 1) ** (1 / 2.2)
-            elif 'N' in found:
+            else:
+                C = np.full_like(P, 0.5)
+            if 'N' in found:
                 ni, nn = found['N']
                 dn = e.read(ni, nn)
                 N = np.stack([dn[n] for n in nn], -1)
-                C = np.repeat((0.35 + 0.45 * np.clip(N[..., 1:2] * 0.5 + 0.5, 0, 1)), 3, -1)
             else:
-                C = np.full_like(P, 0.6)
+                N = np.zeros_like(P)
         finally:
             e.close()
+        # a coarse grid of the pass for a solid mesh in the 3D view (about 320 columns)
+        st = max(1, int(round(W / 320.0)))
+        cam = shot.camera(f)
+        grids.append(dict(w=len(range(0, W, st)), h=len(range(0, H, st)), P=P[::st, ::st].astype(np.float32).tobytes(),
+                          N=N[::st, ::st].astype(np.float32).tobytes(), C=(np.clip(C[::st, ::st], 0, 1) * 255).astype(np.uint8).tobytes(),
+                          cam=list(cam.pos)))
         P, C = P.reshape(-1, 3), C.reshape(-1, 3)
         ok = (np.abs(P).sum(1) > 0) & np.isfinite(P).all(1)
         P, C = P[ok], C[ok]
@@ -249,7 +256,7 @@ def scene(pjson, with_cloud=True, max_points=240000):
         size = [e.parts[0]['width'], e.parts[0]['height']]
         e.close()
     lens = dict(focal=c0.focal or 0.0, film=c0.film or 0.0, fstop=c0.fstop or 0.0, focus=c0.focus or 0.0, extra=dict(c0.extra))
-    return dict(first=first, last=last, cams=np.array(cams, np.float32).tobytes(), cloud=P.tobytes(), col=C.tobytes(),
+    return dict(first=first, last=last, cams=np.array(cams, np.float32).tobytes(), cloud=P.tobytes(), col=C.tobytes(), grids=grids,
                 light=list(mf.light_dir(p['light_az'], p['light_el'])), lens=lens, size=size)
 
 

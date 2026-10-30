@@ -707,7 +707,7 @@ DEFAULTS = dict(
     shutter=180.0, shutter_mode='backward', shutter_shape='backwardsShape', mb=True,
     # holdouts
     holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0,
-    cache='', standin_json='',
+    cache='', standin_json='', hold_frame=0,
 )
 
 # keys that change the simulation (everything else only changes how frames are rendered)
@@ -1328,8 +1328,9 @@ def _tumble_axis(h4, h5, h6, rate, t):
 def render_frame(p, shot, frame, sim, progress=None):
     """Renders the dust for one frame. Returns (held, unheld) float32 arrays (H, W, 3)."""
     su = sim.su
-    cam = shot.camera(frame)
-    dist_img, _ = shot.surface(frame)
+    hold = int(p.get('hold_frame') or 0)          # review aid: keep the camera (and holdouts) on one frame while the dust moves
+    cam = shot.camera(hold or frame)
+    dist_img, _ = shot.surface(hold or frame)
     H0, W0 = dist_img.shape
     sc = max(min(float(p['proxy']), 1.0), 0.1)
     W, H = max(int(round(W0 * sc)), 8), max(int(round(H0 * sc)), 8)
@@ -1348,7 +1349,7 @@ def render_frame(p, shot, frame, sim, progress=None):
     s = p['shutter'] / 360.0 if p['mb'] else 0.0
     mode = str(p['shutter_mode']).lower()
     t_open, t_close = (-s, 0.0) if mode.startswith('back') else (0.0, s) if mode.startswith('for') else (-s / 2, s / 2)
-    cam_o, cam_c = shot.camera(frame + t_open), shot.camera(frame + t_close)
+    cam_o, cam_c = (cam, cam) if hold else (shot.camera(frame + t_open), shot.camera(frame + t_close))
     tsec = (frame - p['first']) / float(p['fps']) * p['speed']
     sec_per_frame = p['speed'] / float(p['fps'])
 
