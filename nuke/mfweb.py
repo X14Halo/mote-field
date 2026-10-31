@@ -358,7 +358,7 @@ def shaded_plate(p, shot, frame):
     Pf, Nf, Cf = P.reshape(-1, 3), N.reshape(-1, 3), C.reshape(-1, 3)
     hit = np.abs(Pf).sum(1) > 0
     L = mf.light_dir(p['light_az'], p['light_el'])
-    sun = mf.kelvin_rgb(p['light_k']) * p['light_int']
+    sun = mf.sun_rgb(p)
     nl = np.clip(Nf @ L, 0, None)
     lit = np.zeros(len(Pf))
     cand = hit & (nl > 0)
@@ -446,3 +446,70 @@ def preview_bounce(pjson):
     pos, nrm, flx, amb = mf.bounce_lights(p, shot, light)
     return dict(n=len(pos), pos=np.asarray(pos, np.float32).tobytes(), nrm=np.asarray(nrm, np.float32).tobytes(),
                 flux=np.asarray(flx, np.float32).tobytes(), amb=[float(x) for x in amb])
+
+
+def use_path(kind, path):
+    """Native (Nuke / live server) only: use a sequence on disk, given as a pattern with #### or %04d.
+    Returns the same summary as add_files()."""
+    import glob
+    path = str(path).strip()
+    if not path:
+        raise ValueError('Give a path, like /shots/sq010/sh0010/utility/sh0010_utility.####.exr')
+    m = re.search(r'#+|%0?(\d*)d', path)
+    if m:
+        globp = path[:m.start()] + '*' + path[m.end():]
+        rx = re.compile('^' + re.escape(path[:m.start()]) + r'(\d+)' + re.escape(path[m.end():]) + '$')
+        frames = sorted(int(rx.match(f).group(1)) for f in glob.glob(globp) if rx.match(f))
+    else:
+        frames = [1] if os.path.exists(path) else []
+    if not frames:
+        raise ValueError('No files found for %s' % path)
+    for k in list(_shots):
+        if k.startswith(path):
+            _shots.pop(k)
+    out = dict(pattern=path, first=frames[0], last=frames[-1], count=len(frames))
+    if kind == 'utility':
+        e = mf.ExrFile(mf.frame_path(path, frames[0]))
+        cam = mf.camera_from_headers(e.headers())
+        found = mf.survey_layers(e)
+        out['size'] = [e.parts[0]['width'], e.parts[0]['height']]
+        e.close()
+        out['camera'] = cam is not None
+        out['layers'] = sorted(found)
+        if cam is None:
+            raise ValueError('No camera in the EXR header of %s' % mf.frame_path(path, frames[0]))
+    return json.dumps(out)
+
+
+def use_path(kind, path):
+    """Live viewer next to real files (mflive.py): use a frame pattern on disk (#### or %04d) instead of picked files."""
+    import glob
+    pat = str(path).strip()
+    if not pat:
+        return json.dumps(dict(pattern='', first=0, last=0, count=0))
+    m = re.search(r'(#+|%0?(\d*)d)', pat)
+    if not m:
+        if not os.path.exists(pat):
+            raise IOError('File not found: %s' % pat)
+        frames = [1]
+    else:
+        g = pat[:m.start()] + '*' + pat[m.end():]
+        rx = re.compile('^' + re.escape(pat[:m.start()]) + r'(\d+)' + re.escape(pat[m.end():]) + '$')
+        frames = sorted(int(rx.match(f).group(1)) for f in glob.glob(g) if rx.match(f))
+        if not frames:
+            raise IOError('No frames found for %s' % pat)
+    out = dict(pattern=pat, first=min(frames), last=max(frames), count=len(frames))
+    for k in list(_shots):
+        if k.startswith(pat + '|'):
+            _shots.pop(k)
+    if kind == 'utility':
+        e = mf.ExrFile(mf.frame_path(pat, min(frames)))
+        cam = mf.camera_from_headers(e.headers())
+        found = mf.survey_layers(e)
+        out['size'] = [e.parts[0]['width'], e.parts[0]['height']]
+        e.close()
+        out['camera'] = cam is not None
+        out['layers'] = sorted(found)
+        if cam is None:
+            raise ValueError('No camera in the EXR header (looked for camToWorld / worldToCamera and a field of view or focal length + aperture).')
+    return json.dumps(out)

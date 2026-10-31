@@ -1,33 +1,39 @@
 """
-MoteField for Nuke (prototype): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.2): camera-aware dust motes for comp.
 
-Plain Python + numpy only (no plugins, no BlinkScript, no NukeX), so it runs in regular Nuke 15, on the farm, or outside Nuke.
+WHAT IT IS
+    A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
+    (world position, normals, depth, surface colour, and the camera in the EXR header), simulates dust in a box you place
+    in scene space, lights it with a directional key light (shadows from the set), and renders it through the shot's lens
+    (depth of field, motion blur) with depth holdouts. Output: RGBA dust + a "noholdout" layer, to merge over the plate.
 
-Setup (once per Nuke session)
-    In the Script Editor (Windows > Script Editor), run:
-        import sys; sys.path.append('/folder/with/this/file'); import motefield; motefield.create()
-    or put the file in ~/.nuke and just run:  import motefield; motefield.create()
+HOW IT IS BUILT (see TD_GUIDE.md next to this file for the full write-up and the pipeline checklist)
+    motefield.py   this file: EXR I/O, cameras, the simulation, the renderer, the Nuke node. Plain Python + numpy only
+                   (no plugins, no NukeX), so it runs in Nuke 15, on the farm, or from the command line.
+    mflive.py      the live viewer: the same GPU viewer as the browser version, run against this module (native Python),
+                   shown in a Nuke panel (QtWebEngine) or a browser, synced with the node's knobs. Real-time playback.
+    mfweb.py, index.html, preview.js, look.js, worker.js   the viewer and its glue (also the browser version).
 
-Trying it
-    1. Press "Create stand-in shot" for a placeholder interior with a window opening and a moving camera, or point
-       "Utility pass" at a shot's utility EXRs (world position + the camera in the EXR header; #### for the frame).
-    2. Set the dust box (scene units) and its edge fade, and the key light's direction (a directional light).
-    3. "Render this frame" to look, "Render frame range" for the shot. Frames go to the cache folder and the node's
-       output reads them back. Merge it over the plate with plus. The noholdout layer has the dust without holdouts.
+    Sections below: EXR I/O | cameras | helpers | stand-in shot | settings | Shot | light | DustSim | renderer |
+                    running (render_frames, CLI) | Nuke glue.  Places a pipeline TD will change are marked  # PIPELINE:
+
+SETUP (once per Nuke session)
+    import sys; sys.path.append('/folder/with/these/files'); import motefield; motefield.create()
+
+TRYING IT
+    1. "Create stand-in shot" (a placeholder interior with a window, wide or close-up camera), or point "Utility pass"
+       at a shot's utility EXRs (#### for the frame).
+    2. Place the dust box, set the light, the dust and the lens. "Live viewer" shows it in real time on the GPU.
+    3. "Render this frame" / "Render frame range" write dust.####.exr to the cache folder; the node reads them back.
+       Merge over the plate with plus. The farm can render the same thing with:  python motefield.py render ...
 
 The dust is simulated from a fixed seed, so a frame always comes out the same, whatever order frames are rendered in.
-
-Shadows from
-    stand-in geometry   exact, for the stand-in shot
-    utility pass        a light depth map built from the utility pass. It only knows what the camera saw, so with
-                        "Interior" on, light only comes in where the camera saw sky (a window).
-    none                everything in the box is lit
 """
 
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.1'
+__version__ = '0.2'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -260,6 +266,7 @@ def write_exr(path, channels, attrs=None, half=False):
 
 
 # ---- which layers are which ------------------------------------------------------------------------
+# PIPELINE: the utility pass layer names this looks for (world position, normals, depth, surface colour). Add the studio's.
 _ROLE = {
     'P': ['pos', 'p', 'pworld', 'position', 'worldposition', 'worldpos', 'pw', 'wp', 'ppass', 'world', 'positionworld', 'worldp'],
     'N': ['normal', 'n', 'nworld', 'normals', 'worldnormal', 'nw', 'normalworld', 'nn', 'worldnormals'],
@@ -359,6 +366,8 @@ def _orthonormal(right, up, back):
 
 
 def camera_from_headers(headers):
+    # PIPELINE: the header keys our renderer writes for the camera and lens. Matching is loose (any key ending in camToWorld,
+    #   focalLength, fStop, ...); pin it to the studio's exact names, or read the camera from USD instead (Shot._cam).
     cam, extra = {}, {}
     for h in headers:
         for k, v in h.items():
@@ -442,6 +451,19 @@ def kelvin_rgb(K):
     b = 255.0 if t >= 66 else (0.0 if t <= 19 else 138.5177312231 * math.log(t - 10) - 305.0447927307)
     c = np.array([min(max(v, 0.0), 255.0) / 255.0 for v in (r, g, b)]) ** 2.2
     return c / (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+
+
+def sun_rgb(p):
+    """The key light's colour x intensity: colour temperature, times an RGB colour (e.g. imported from Houdini)."""
+    return kelvin_rgb(p['light_k']) * np.asarray(p.get('light_rgb', (1.0, 1.0, 1.0)), np.float64) * p['light_int']
+
+
+def light_from_direction(L):
+    """(azimuth, elevation) in degrees for a unit vector pointing toward the light (the inverse of light_dir)."""
+    L = np.asarray(L, np.float64) / max(np.linalg.norm(L), 1e-12)
+    el = math.degrees(math.asin(max(-1.0, min(1.0, L[1]))))
+    az = math.degrees(math.atan2(-L[2], -L[0]))
+    return az, el
 
 
 def light_dir(azimuth, elevation):
@@ -547,8 +569,10 @@ def standin_boxes():
 STANDIN_VIEWS = {
     'wide': dict(E0=(310.0, 165.0, 320.0), E1=(190.0, 150.0, 290.0), T0=(-160.0, 105.0, -290.0), T1=(-235.0, 118.0, -300.0),
                  focal=24.0, fstop=4.0, focus=430.0),
-    'close-up': dict(E0=(-80.0, 150.0, -40.0), E1=(-110.0, 146.0, -60.0), T0=(-420.0, 185.0, -280.0), T1=(-425.0, 180.0, -300.0),
-                     focal=50.0, fstop=2.8, focus=110.0),
+    # standing in the sunbeam, looking back up it toward the window: the motes right at the lens are lit (big, soft bokeh)
+    # and the beam through the middle of the room sits at the focus distance (sharp sparkles)
+    'close-up': dict(E0=(-170.0, 120.0, -150.0), E1=(-182.0, 118.0, -162.0), T0=(-380.0, 160.0, -430.0), T1=(-386.0, 157.0, -440.0),
+                     focal=50.0, fstop=2.8, focus=190.0),
 }
 
 
@@ -691,6 +715,7 @@ def make_standin_shot(folder, progress=None, view='wide'):
 # =====================================================================================================
 #  Settings
 # =====================================================================================================
+# PIPELINE: scene units (cm here) and Y-up are assumed; a Z-up scene needs a swap where the utility pass is read.
 UNITS = {'centimetres': 0.01, 'metres': 1.0, 'millimetres': 0.001, 'inches': 0.0254, 'feet': 0.3048}
 
 DEFAULTS = dict(
@@ -707,7 +732,7 @@ DEFAULTS = dict(
     speed=1.0, drift=1.2, drift_dir=200.0, lift=0.0, eddies=3.0, eddy_size=1.4, micro=0.8, thermal=1.5, settle=0.5,
     preroll=48, substeps=2,
     # key light: a directional light
-    light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
+    light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, light_rgb=(1.0, 1.0, 1.0), bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
     # lens (0 = use the camera from the utility pass headers)
     focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, blades=0, max_bokeh=110.0,
     cateye=0.0, anamorphic=0.0, field_curv=0.0, fstop_full=0.0, front_mult=1.0, back_mult=1.0,
@@ -751,6 +776,8 @@ def frame_path(pattern, f):
 
 
 class Shot(object):
+    # PIPELINE: the utility pass is a frame pattern on disk. A pipeline version resolves it from the shot context
+    #   (show / sequence / shot / render layer / version) so artists pick a shot, not a path.
     def __init__(self, pattern, units):
         self.pattern = pattern
         self.su = UNITS.get(units, 0.01)
@@ -864,6 +891,9 @@ class LightMap(object):
 
 
 def make_light(p, shot=None):
+    # PIPELINE: shadows come from the stand-in boxes or from the utility pass (only what the camera saw). With USD access,
+    #   add a mode that ray-casts the shot's geometry (pxr + a BVH, or the studio's own tools) for exact shadows.
+    #   The key light is a directional light set by knobs; it could be read from the lighting scene instead.
     """Returns a function: world points (scene units, (N,3)) -> 0..1 visibility to the key light."""
     L = light_dir(p['light_az'], p['light_el'])
     mode = str(p['shadows']).lower()
@@ -1081,13 +1111,13 @@ def bounce_lights(p, shot, light, count=24):
     """The sunlit patches of the set, as a few point lights (and an overall fill), so motes outside the beam pick up the
     warm bounce light the way they do in a real room. Built from the utility pass: where the key light lands, how big that
     patch is and its surface colour. Returns (positions m (n,3), normals (n,3), flux (n,3), ambient rgb)."""
-    key = json.dumps([p[k] for k in ('utility', 'units', 'shadows', 'interior', 'light_az', 'light_el', 'light_int', 'light_k',
+    key = json.dumps([p.get(k) for k in ('utility', 'units', 'shadows', 'interior', 'light_az', 'light_el', 'light_int', 'light_k', 'light_rgb',
                                      'first', 'last', 'standin_json')], default=str)
     if key in _BOUNCE_CACHE:
         return _BOUNCE_CACHE[key]
     su = shot.su
     L = light_dir(p['light_az'], p['light_el'])
-    sun = kelvin_rgb(p['light_k']) * p['light_int']
+    sun = sun_rgb(p)
     fs = sorted(set([p['first'], (p['first'] + p['last']) // 2, p['last']]))
     cells, tot, nfr = {}, np.zeros(3), 0
     for f in fs:
@@ -1550,7 +1580,7 @@ def render_frame(p, shot, frame, sim, progress=None):
     gph[m] = p['forward'] * 0.45
     tcol[m] = [0.9, 0.9, 0.93]
 
-    sun = kelvin_rgb(p['light_k']) * p['light_int']
+    sun = sun_rgb(p)
     c = (-L * Vd).sum(1)
     hg = (1 - gph ** 2) / np.power(np.maximum(1 + gph ** 2 - 2 * gph * c, 1e-4), 1.5)
     rad = sun[None, :] * (vis * hg)[:, None]
@@ -1708,6 +1738,7 @@ def dust_path(p, f, name='dust'):
 
 
 def write_dust(path, held, unheld):
+    # PIPELINE: half-float EXR, ZIP, scene-linear (no colour transform). Match the studio's comp working space and naming.
     lum = lambda a: np.clip(0.2126 * a[:, :, 0] + 0.7152 * a[:, :, 1] + 0.0722 * a[:, :, 2], 0, 1)
     ch = {'R': held[:, :, 0], 'G': held[:, :, 1], 'B': held[:, :, 2], 'A': lum(held),
           'noholdout.red': unheld[:, :, 0], 'noholdout.green': unheld[:, :, 1], 'noholdout.blue': unheld[:, :, 2], 'noholdout.alpha': lum(unheld)}
@@ -1715,6 +1746,8 @@ def write_dust(path, held, unheld):
 
 
 def render_frames(p, frames, progress=None, name='dust'):
+    # PIPELINE: frames go to p['cache']/dust.####.exr. A pipeline version writes to the studio's cache / publish location,
+    #   versions it, and registers it with asset management. The farm calls this through the command line at the bottom.
     """Simulate and render the given frames (in order) into the cache folder. Returns the paths written."""
     if not p['cache']:
         raise ValueError('Set a cache folder first.')
@@ -1776,6 +1809,7 @@ _KNOBS = [
     ('MoteField', 'btn_standin', 'button', 'Create stand-in shot', 'standin'),
     ('MoteField', 'btn_fit', 'button', 'Fit box to shot', 'fit'),
     ('MoteField', 'btn_3d', 'button', '3D preview', 'preview3d'),
+    ('MoteField', 'btn_live', 'button', 'Live viewer (GPU)', 'live'),
     ('MoteField', None, 'divider', 'Dust volume (scene units)', None),
     ('MoteField', 'box_center', 'xyz', 'Box centre', None),
     ('MoteField', 'box_size', 'xyz', 'Box size', None),
@@ -1788,6 +1822,8 @@ _KNOBS = [
     ('MoteField', 'proxy', 'float', 'Resolution', (0.1, 1)),
     ('MoteField', 'btn_frame', 'button', 'Render this frame', 'frame'),
     ('MoteField', 'btn_range', 'button', 'Render frame range', 'range'),
+    ('MoteField', 'btn_export', 'button', 'Export settings (farm)', 'export'),
+    ('MoteField', 'hold_frame', 'int', 'Hold camera on frame (0 = off)', 'Review aid: the camera, plate and holdouts stay on this frame while the dust keeps moving.'),
     ('MoteField', 'status', 'text', '', None),
     ('Dust', 'density', 'float', 'Density (per m³)', (1, 1000)),
     ('Dust', 'seed', 'int', 'Seed', None),
@@ -1823,6 +1859,9 @@ _KNOBS = [
     ('Light', 'light_el', 'float', 'Elevation', (0, 90)),
     ('Light', 'light_int', 'float', 'Intensity', (0, 20)),
     ('Light', 'light_k', 'float', 'Colour temperature (K)', (2500, 10000)),
+    ('Light', 'light_rgb', 'color', 'Light colour', None),
+    ('Light', 'btn_nklight', 'button', 'Key light from selected Nuke light', 'nklight'),
+    ('Light', 'btn_lights', 'button', 'Import lights (.json / USD)', 'lights'),
     ('Light', 'bounce', 'float', 'Bounce fill', (0, 4)),
     ('Light', 'shadows', 'enum', 'Shadows from', ['stand-in geometry', 'utility pass', 'none']),
     ('Light', 'shadow_soft', 'float', 'Shadow edge softness (cm)', (0, 20)),
@@ -1870,6 +1909,7 @@ def _nk():
 
 def create():
     """Builds a MoteField node in the current Nuke script."""
+    # PIPELINE: ship as a gizmo / menu entry; the Group's knobs come from _KNOBS, so a gizmo can be generated from it.
     nuke = _nk()
     g = nuke.nodes.Group(name='MoteField1')
     g['tile_color'].setValue(0xe4ba6bff)
@@ -2055,6 +2095,43 @@ def _nk_thread(g, title, work):
 
 def _nk_button(g, what):
     nuke = _nk()
+    if what == 'live':
+        import mflive                                  # the GPU viewer, synced with this node
+        return mflive.open(g)
+    if what == 'nklight':
+        lights = [n for n in nuke.selectedNodes() if n.Class() in ('DirectLight', 'Light', 'Light2', 'Light3', 'Spotlight', 'Environment') or 'light' in n.Class().lower()]
+        if not lights:
+            nuke.message('Select the key light node in the node graph (e.g. the one your Houdini light export made), then press this again.')
+            return
+        vals = light_from_nuke_node(lights[0])
+        for k, v in vals.items():
+            g[k].setValue(list(v) if isinstance(v, (list, tuple)) else v)
+        nuke.message('Key light from %s:\nazimuth %.1f, elevation %.1f, intensity %.2f' % (lights[0].name(), vals['light_az'], vals['light_el'], vals['light_int']))
+        return
+    if what == 'lights':
+        import mflights
+        path = nuke.getFilename('Lights exported from Houdini (.json) or a USD file', '*.json *.usd *.usda *.usdc', type='open')
+        if not path:
+            return
+        lights = mflights.load(path)
+        keys = [l for l in lights if l['type'] == 'distant']
+        if not keys:
+            nuke.message('No distant (sun) light in %s.\nFound: %s' % (path, ', '.join('%s (%s)' % (l['name'], l['type']) for l in lights) or 'nothing'))
+            return
+        names = [l['name'] for l in keys]
+        pick = keys[0] if len(keys) == 1 else keys[names.index(nuke.choice('MoteField', 'Key light', names))] if hasattr(nuke, 'choice') else max(keys, key=lambda l: l['intensity'])
+        for k, v in mflights.to_settings(pick).items():
+            g[k].setValue(list(v) if isinstance(v, (list, tuple)) else v)
+        nuke.message('Key light: %s\nazimuth %.1f, elevation %.1f, intensity %.2f' % (pick['name'], g['light_az'].value(), g['light_el'].value(), g['light_int'].value()))
+        return
+    if what == 'export':
+        p = _nk_settings(g)
+        path = nuke.getFilename('MoteField settings for the farm', '*.json', default=os.path.join(p['cache'] or '', 'motefield_settings.json'), type='save')
+        if path:
+            save_settings(path, p)
+            nuke.message('Saved %s\n\nOn the farm:\n  python %s render --settings %s --frames %d-%d'
+                         % (path, os.path.abspath(__file__).replace('.pyc', '.py'), path, p['first'], p['last']))
+        return
     if what == 'standin':
         return _nk_standin(g)
     p = _nk_settings(g)
@@ -2125,6 +2202,25 @@ def _nk_standin(g):
         nuke.executeInMainThread(apply)
         return True
     _nk_thread(g, 'MoteField: creating the stand-in shot', work)
+
+
+def light_from_nuke_node(n, frame=None):
+    """A Nuke light node (DirectLight, Light2 set to directional, ...) -> MoteField key-light knobs.
+    Nuke lights shine down their local -Z, so the direction toward the light is their world +Z axis."""
+    nuke = _nk()
+    t = nuke.frame() if frame is None else frame
+    m = nuke.math.Matrix4()
+    wm = n.knob('world_matrix') or n.knob('matrix')
+    for i in range(16):
+        m[i] = wm.valueAt(t, i)
+    z = m.transform(nuke.math.Vector4(0.0, 0.0, 1.0, 0.0))
+    az, el = light_from_direction([z.x, z.y, z.z])
+    inten = n['intensity'].valueAt(t) if n.knob('intensity') else 1.0
+    col = [n['color'].valueAt(t, i) for i in range(3)] if n.knob('color') else [1.0, 1.0, 1.0]
+    lum = 0.2126 * col[0] + 0.7152 * col[1] + 0.0722 * col[2] or 1.0
+    kr = kelvin_rgb(6500.0)
+    rgb = tuple(round(c / lum / max(kr[i], 1e-6), 5) for i, c in enumerate(col))
+    return dict(light_az=round(az, 3), light_el=round(el, 3), light_int=round(float(inten) * lum, 5), light_k=6500.0, light_rgb=rgb)
 
 
 def _nk_preview3d(g, p):
@@ -2230,3 +2326,67 @@ def _nk_camera(p):
         import traceback
         traceback.print_exc()
     return cam
+
+
+# =====================================================================================================
+#  Settings files and the command line (the farm)
+# =====================================================================================================
+def save_settings(path, p):
+    """The node's settings as JSON: what the farm needs to render exactly what the artist saw."""
+    with open(path, 'w') as fh:
+        json.dump({k: (list(v) if isinstance(v, tuple) else v) for k, v in p.items()}, fh, indent=1, sort_keys=True)
+
+
+def load_settings(path):
+    with open(path) as fh:
+        raw = json.load(fh)
+    return settings(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in raw.items()})
+
+
+def _frames_arg(text):
+    out = []
+    for part in str(text).split(','):
+        part = part.strip()
+        if '-' in part[1:]:
+            a, b = part.split('-', 1) if not part.startswith('-') else ('-' + part[1:].split('-', 1)[0], part[1:].split('-', 1)[1])
+            out.extend(range(int(a), int(b) + 1))
+        elif part:
+            out.append(int(part))
+    return out
+
+
+def main(argv=None):
+    """python motefield.py render --settings node.json [--frames 1001-1048] [--cache /path]
+       python motefield.py standin /folder [--view close-up]"""
+    import argparse
+    ap = argparse.ArgumentParser(prog='motefield', description='MoteField dust renderer (the farm / command line).')
+    sub = ap.add_subparsers(dest='cmd')
+    r = sub.add_parser('render', help='render frames from a settings file (MoteField node > Export settings)')
+    r.add_argument('--settings', required=True)
+    r.add_argument('--frames', help='e.g. 1001-1048 or 1001,1010; default: the settings first-last')
+    r.add_argument('--cache', help='output folder (default: the settings cache)')
+    st = sub.add_parser('standin', help='write the stand-in shot (utility + plate EXRs)')
+    st.add_argument('folder')
+    st.add_argument('--view', default='wide', choices=sorted(STANDIN_VIEWS))
+    a = ap.parse_args(argv)
+    if a.cmd == 'render':
+        p = load_settings(a.settings)
+        if a.cache:
+            p['cache'] = a.cache
+        frames = _frames_arg(a.frames) if a.frames else list(range(int(p['first']), int(p['last']) + 1))
+        t0 = time.time()
+
+        def prog(x, msg):
+            print('%5.1f%%  %s' % (x * 100, msg))
+            return True
+        out = render_frames(p, frames, prog)
+        print('MoteField: wrote %d frames to %s in %.1f s' % (len(out), p['cache'], time.time() - t0))
+    elif a.cmd == 'standin':
+        res = make_standin_shot(a.folder, None, view=a.view)
+        print('Stand-in shot: %s (frames %d-%d)' % (res['utility'], res['first'], res['last']))
+    else:
+        ap.print_help()
+
+
+if __name__ == '__main__':
+    main()

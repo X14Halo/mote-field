@@ -34,6 +34,10 @@ Single self-contained `index.html`; needs a browser with WebGL 2.
 
 ## Nuke tool, and its browser version
 
+**Start here:** [`nuke/TD_GUIDE.md`](nuke/TD_GUIDE.md): what the tool is, how it works, how fast it is and why, and the checklist for porting it into the pipeline.
+In Nuke, **Live viewer (GPU)** runs this same viewer against native Python (`nuke/mflive.py`), synced with the node; **Render range on GPU → cache** writes the node's frames in seconds; the farm renders finals with `python motefield.py render --settings ...`. Lights come from Houdini through a Nuke light node or `nuke/mflights.py`.
+
+
 **Browser version:** https://x14halo.github.io/mote-field/nuke/
 
 `nuke/motefield.py` is the MoteField prototype for Nuke 15 (plain Python + numpy, no plugins). The browser version runs that same file, unchanged, with Python and numpy compiled to WebAssembly ([Pyodide](https://pyodide.org) 0.26.4, self-hosted in `nuke/pyodide/`). The properties panel is built from the Nuke node's own knob list, and the buttons call the same functions the Nuke buttons do, so the two stay in step and render the same pixels.

@@ -152,6 +152,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
   <div class="logo"><i></i>MoteField</div>
   <div class="sub">browser version of the Nuke tool · same Python, running in your browser</div>
   <div class="sp"></div>
+  <a href="https://github.com/X14Halo/mote-field/blob/main/nuke/TD_GUIDE.md" target="_blank" rel="noopener" title="What the tool is, how it works, and how to port it into the pipeline">How it works / TD guide</a>
   <a href="motefield.py" download>Download motefield.py</a>
   <a href="../">Web mockup</a>
 </div>
@@ -241,6 +242,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
 
 <input type="file" id="fileUtil" accept=".exr" multiple hidden>
 <input type="file" id="filePlate" accept=".exr" multiple hidden>
+<input type="file" id="fileLights" accept=".json" hidden>
 <input type="file" id="fileBokeh" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
 
 <script src="preview.js"></script>
@@ -250,10 +252,13 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
 // =====================================================================================================
 //  Worker plumbing
 // =====================================================================================================
-const worker = new Worker('worker.js');
+// Two backends, same jobs: Python in the browser (Pyodide, worker.js), or native Python next to Nuke (mflive.py, ?live=1)
+let worker = null, NATIVE = false, NODE = false;
 let nextId = 1;
 const waiting = new Map();
 const progressFns = new Map();
+function startWorker() {
+worker = new Worker('worker.js');
 worker.onmessage = (e) => {
   const m = e.data;
   if (m.type === 'boot') return bootMsg(m.msg, m.x);
@@ -265,7 +270,40 @@ worker.onmessage = (e) => {
   }
 };
 worker.onerror = (e) => { bootFail(e.message || 'The worker failed to start'); };
+}
+// native backend messages: [uint32 header length][JSON header][blobs], blobs referenced as {"__b": [offset, length]}
+function encodeMsg(obj) {
+  const blobs = []; let size = 0;
+  const walk = (o) => {
+    if (o instanceof ArrayBuffer) o = new Uint8Array(o);
+    if (ArrayBuffer.isView(o)) { const b = new Uint8Array(o.buffer, o.byteOffset, o.byteLength); blobs.push(b); const r = { __b: [size, b.length] }; size += b.length; return r; }
+    if (Array.isArray(o)) return o.map(walk);
+    if (o && typeof o === 'object') { const r = {}; for (const k in o) r[k] = walk(o[k]); return r; }
+    return o;
+  };
+  const head = new TextEncoder().encode(JSON.stringify(walk(obj)));
+  const out = new Uint8Array(4 + head.length + size); new DataView(out.buffer).setUint32(0, head.length, true);
+  out.set(head, 4); let o = 4 + head.length; for (const b of blobs) { out.set(b, o); o += b.length; }
+  return out;
+}
+function decodeMsg(buf) {
+  const n = new DataView(buf).getUint32(0, true), head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, n))), base = 4 + n;
+  const walk = (o) => {
+    if (Array.isArray(o)) return o.map(walk);
+    if (o && typeof o === 'object') { if (o.__b && Object.keys(o).length === 1) return new Uint8Array(buf.slice(base + o.__b[0], base + o.__b[0] + o.__b[1]));
+      const r = {}; for (const k in o) r[k] = walk(o[k]); return r; }
+    return o;
+  };
+  return walk(head);
+}
+async function nativeCall(cmd, args) {
+  const r = await fetch('api/' + cmd, { method: 'POST', body: encodeMsg(args || {}) });
+  const m = decodeMsg(await r.arrayBuffer());
+  if (!m.ok) throw new Error(m.error);
+  return m.result;
+}
 function call(cmd, args, onProgress) {
+  if (NATIVE) return nativeCall(cmd, args);
   const id = nextId++;
   if (onProgress) progressFns.set(id, onProgress);
   return new Promise((res, rej) => { waiting.set(id, { res, rej }); worker.postMessage({ id, cmd, args: Object.assign({ id }, args || {}) }); });
@@ -361,10 +399,13 @@ function numInput(get, set, int) {
 }
 
 function changed(commit) {
+  const hf = Math.round(Number(V.hold_frame) || 0);
+  if (typeof vw !== 'undefined' && hf !== (vw.hold ? vw.holdFrame : 0)) { vw.hold = hf > 0; vw.holdFrame = hf; const hc = $('holdCam'); if (hc) hc.checked = vw.hold; }
   $('rngLab').textContent = V.first + '–' + V.last;
   v3dirty();
   if (commit && dim === '3d') loadScene();
   ensurePreview();
+  if (commit) pushToNode();
   if (commit && pv && pv.ok && !shot.standin && pv.cams && pvs.fetchKey && pvs.fetchKey !== frameKey()) { pv.clearFrameImages(); prefetchFrames(); }
   drawHud(); drawTrack();
   if (commit) scheduleLive(350);
@@ -401,6 +442,8 @@ function buildPanel() {
       const b = document.createElement('button'); b.className = 'btn' + (k.extra === 'frame' || k.extra === 'range' ? ' go' : ''); b.textContent = k.label; b.id = 'btn_' + k.extra;
       if (k.extra === 'frame' || k.extra === 'range') { b.disabled = true; b.dataset.nuke = '1'; b.textContent += ' (Nuke / farm)';
         b.title = 'In the browser the viewer is live; final frames are rendered by the Nuke node (on the farm). Save this frame writes the exact EXR the Nuke node would.'; }
+      if (k.extra === 'live') continue;                                  // this is the live viewer
+      if (k.extra === 'nklight') { b.disabled = true; b.dataset.nuke = '1'; b.textContent += ' (Nuke only)'; b.title = 'In Nuke: select the light node your Houdini light export made and press this. Here: use Import lights with an mflights .json.'; }
       if (k.extra === 'preview3d') { b.disabled = true; b.title = 'Nuke only: builds a point cloud of the utility pass and the dust box in Nuke\'s 3D viewer'; b.textContent = '3D preview (Nuke only)'; }
       b.onclick = () => onButton(k.extra);
       btnRow.appendChild(b);
@@ -420,6 +463,11 @@ function buildPanel() {
         const cl = document.createElement('button'); cl.className = 'btn'; cl.textContent = 'Clear cache';
         cl.onclick = () => { dust.clear(); drawTrack(); draw(); setStatus('Cache cleared.'); };
         r2.append(sv);
+        if (NATIVE) {
+          const gr = document.createElement('button'); gr.className = 'btn go'; gr.textContent = 'Render range on GPU → cache'; gr.id = 'btn_gpu';
+          gr.title = 'Renders the frame range on the graphics card at the shot resolution and writes dust.####.exr into the node\'s cache folder (the same files the node\'s Python render writes, matching it within about 1%). The node\'s Read reloads.';
+          gr.onclick = gpuRenderRange; r2.prepend(gr);
+        }
         const tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = 'browser'; tg.style.alignSelf = 'center';
         r2.appendChild(tg);
         pg.appendChild(r2);
@@ -431,7 +479,13 @@ function buildPanel() {
     if (k.kind === 'file') {
       const t = document.createElement('input'); t.className = 'txt'; t.readOnly = true; t.id = 'f_' + key;
       ctl.appendChild(t);
-      if (key === 'utility') {
+      if (key === 'utility' && NATIVE) {           // live viewer: real paths, like the Nuke knob
+        t.readOnly = false; t.placeholder = '/path/shot_utility.####.exr  (Enter to load)';
+        t.onkeydown = (e) => { if (e.key === 'Enter') usePath('utility', t.value); };
+        const pr = row(pg, 'Plate', true, 'Optional plate frames to see the dust over in the viewer (the node itself never needs it).');
+        const pt = document.createElement('input'); pt.className = 'txt'; pt.id = 'f_plate'; pt.placeholder = '/path/shot_plate.####.exr  (Enter)';
+        pt.onkeydown = (e) => { if (e.key === 'Enter') usePath('plate', pt.value); }; pr.appendChild(pt);
+      } else if (key === 'utility') {
         const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Choose EXRs…'; b.onclick = () => $('fileUtil').click(); ctl.appendChild(b);
         // browser-only: a plate sequence for the viewer
         const pr = row(pg, 'Plate', true, 'Optional plate EXRs to see the dust over in the viewer (the Nuke node doesn\'t need this; merge over your plate there).');
@@ -539,6 +593,13 @@ function showUtility() {
 // =====================================================================================================
 async function onButton(what) {
   if (what === 'standin') return makeStandin();
+  if (what === 'lights') return $('fileLights').click();
+  if (what === 'export') {           // the settings the farm renders from (python motefield.py render --settings ...)
+    const p = params(); p.cache = p.cache || ''; const blob = new Blob([JSON.stringify(p, null, 1)], { type: 'application/json' });
+    const el = document.createElement('a'); el.href = URL.createObjectURL(blob); el.download = 'motefield_settings.json'; document.body.appendChild(el); el.click(); el.remove();
+    return setStatus('Saved motefield_settings.json. On the farm: python motefield.py render --settings motefield_settings.json --frames ' + V.first + '-' + V.last +
+                     (NATIVE ? '' : '  (in the browser the utility path is browser-only; set it to the real path first).'));
+  }
   if (what === 'fit') {
     if (!shot.utility) return setStatus('Choose a utility pass first (or press Create stand-in shot).', true);
     setBusy(true, 'Fitting the box to the shot…', 0.3);
@@ -554,6 +615,29 @@ async function onButton(what) {
   if (what === 'range') { setQuality('final'); return renderRange(); }
 }
 
+// ---- live viewer from Nuke: the node's knobs and the viewer stay the same --------------------------------------
+async function syncFromNode() {
+  if (!NODE) return;
+  const st = await call('node_get', {}); if (!st) return;
+  for (const k of SCHEMA.knobs) {
+    if (!k.key || ['button', 'text', 'divider', 'file'].includes(k.kind)) continue;
+    if (k.key === 'fade_neg') setKnob(k.key, [st.fade_xn, st.fade_yn, st.fade_zn]);
+    else if (k.key === 'fade_pos') setKnob(k.key, [st.fade_xp, st.fade_yp, st.fade_zp]);
+    else if (k.key in st) setKnob(k.key, st[k.key]);
+  }
+  if (st.utility) { await usePath('utility', st.utility); setStatus('Synced with the Nuke node: ' + st.utility); }
+  else setStatus('Synced with the Nuke node (no utility pass set: showing the stand-in).');
+}
+let nodeT = 0;
+function pushToNode() {
+  if (!NODE) return;
+  clearTimeout(nodeT);
+  nodeT = setTimeout(() => {
+    const p = params();
+    for (const k of ['utility', 'cache', 'standin_json', 'hold_frame']) delete p[k];
+    call('node_set', { values: p }).catch(e => console.warn(e));
+  }, 250);
+}
 // the close-up uses the mockup's close-up dust: more motes, more flakes and lint, more glints
 const CLOSEUP_DUST = { density: 360, flakes: 28, fibers: 5, fluff: 1.5, glint: 0.5 };
 function onStandinView() {
@@ -592,10 +676,24 @@ async function pickFiles(kind, fileList) {
     const data = [];
     for (const f of files) data.push({ name: f.name, data: await f.arrayBuffer() });
     const r = await call('files', { kind, files: data });
+    applyShotFiles(kind, r, 'browser memory');
+  } catch (e) { setStatus((kind === 'utility' ? 'Utility pass' : 'Plate') + ': ' + e.message, true); }
+  finally { setBusy(false); }
+  scheduleLive(10);
+}
+// live viewer next to real files: a frame pattern on disk
+async function usePath(kind, path) {
+  setBusy(true, 'Reading ' + path + '…', 0.3);
+  try { const r = await call('setpath', { kind, path }); if (r.pattern) applyShotFiles(kind, r, 'on disk'); else if (kind === 'plate') { shot.plate = ''; showUtility(); v3dirty(); } }
+  catch (e) { setStatus((kind === 'utility' ? 'Utility pass' : 'Plate') + ': ' + e.message, true); }
+  finally { setBusy(false); }
+}
+function applyShotFiles(kind, r, where) {
+  {
     if (kind === 'utility') {
       shot.utility = r.pattern; shot.standin = false; shot.standinJson = '';
       pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = ''; if (pv && pv.ok) pv.clearFrameImages(); if (look) look.clear();
-      shot.label = r.pattern.split('/').pop() + '  (' + r.count + ' frames, browser memory)';
+      shot.label = (NATIVE ? r.pattern : r.pattern.split('/').pop()) + '  (' + r.count + ' frames, ' + where + ')';
       if (shot.plate && shot.plate.includes('/standin_')) shot.plate = '';
       setKnob('first', r.first); setKnob('last', r.last);
       if (String(V.shadows).startsWith('stand')) setKnob('shadows', 'utility pass');
@@ -612,9 +710,7 @@ async function pickFiles(kind, fileList) {
     }
     showUtility(); draw();
     if (quality === 'preview') { ensurePreview(); if (kind === 'plate' && !shot.standin) { pvs.fetchKey = ''; prefetchFrames(); } }
-  } catch (e) { setStatus((kind === 'utility' ? 'Utility pass' : 'Plate') + ': ' + e.message, true); }
-  finally { setBusy(false); }
-  scheduleLive(10);
+  }
 }
 // custom bokeh shape: decoded here, handed to Python as an EXR (what the Nuke node's file knob reads) and to the GPU
 async function setBokehImage(file) {
@@ -640,6 +736,7 @@ async function setBokehImage(file) {
     changed(true);
   } catch (e) { setStatus('Bokeh image: ' + e.message, true); }
 }
+$('fileLights').onchange = (e) => { if (e.target.files[0]) importLights(e.target.files[0]); e.target.value = ''; };
 $('fileBokeh').onchange = (e) => { if (e.target.files[0]) setBokehImage(e.target.files[0]); e.target.value = ''; };
 $('fileUtil').onchange = (e) => { pickFiles('utility', e.target.files); e.target.value = ''; };
 $('filePlate').onchange = (e) => { pickFiles('plate', e.target.files); e.target.value = ''; };
@@ -653,7 +750,7 @@ function setBusy(on, msg, x, cancellable) {
   if (msg) $('busyMsg').textContent = msg;
   $('busyBar').style.width = ((x || 0) * 100) + '%';
   $('cancelBtn').hidden = !cancellable;
-  for (const id of ['btn_frame', 'btn_range', 'btn_fit', 'btn_standin', 'btn_save']) { const b = $(id); if (b && !b.dataset.nuke) b.disabled = on; }
+  for (const id of ['btn_frame', 'btn_range', 'btn_fit', 'btn_standin', 'btn_save', 'btn_gpu']) { const b = $(id); if (b && !b.dataset.nuke) b.disabled = on; }
 }
 $('cancelBtn').onclick = () => { cancelRange = true; $('busyMsg').textContent = 'Cancelling after this frame…'; if (playing) stop(); };
 
@@ -748,6 +845,55 @@ function scheduleLive(ms) {
   }, ms);
 }
 
+// live viewer: render the range on the GPU and hand the frames to Python to write into the node's cache
+async function gpuRenderRange() {
+  if (!NATIVE || busy || !previewReady()) return;
+  stop();
+  const a = Math.round(V.first), b = Math.round(V.last), n = b - a + 1, p = pparams(), [W0, H0] = pvs.size, t0 = performance.now();
+  cancelRange = false; rangeRunning = true;
+  const gl = v3.gl;
+  try {
+    const info = await call('cache_info', {});
+    for (let f = a; f <= b && !cancelRange; f++) {
+      setBusy(true, 'GPU frame ' + f + ' (' + (f - a + 1) + ' of ' + n + ')', (f - a) / n, true);
+      const cf = vw.hold ? vw.holdFrame : f;
+      let dist = null;
+      if (shot.standin && pv.boxes && pvs.plateLight) { pv.standinPlate(cf, W0, H0, pvs.plateLight); dist = pv.pl.dist; }   // depth only, for holdouts
+      else { if (!pv.frameTex.has(cf)) pv.setFrameImages(cf, await call('fimages', { p: params(), frame: cf, pattern: shot.plate })); dist = pv.frameTex.get(cf).dist; }
+      pv.simTo(f, p, simStepKey(p));
+      const r = pv.renderDust(f, p, W0, H0, dist, vw.hold ? cf : 0);
+      const read = (tex) => { gl.bindFramebuffer(gl.FRAMEBUFFER, pv.fb);
+        for (let i = 0; i < 4; i++) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, i ? null : tex, 0);
+        gl.readBuffer(gl.COLOR_ATTACHMENT0); const o = new Float32Array(r.W * r.H * 4); gl.readPixels(0, 0, r.W, r.H, gl.RGBA, gl.FLOAT, o); return o; };
+      await call('write_frame', { frame: f, w: r.W, h: r.H, held: read(pv.acc.held), free: read(pv.acc.free), last: f === b || cancelRange });
+      setFrame(f, false);
+    }
+    setStatus((cancelRange ? 'Stopped. ' : '') + 'Wrote frames to ' + info.cache + ' in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s' + (info.node ? '; the node reloaded them.' : '.'));
+  } catch (e) { setStatus('GPU render: ' + e.message, true); }
+  finally { rangeRunning = false; cancelRange = false; setBusy(false); v3dirty(); }
+}
+// key light from Houdini: the .json mflights.py exports (a .usd file goes through the Nuke node's button)
+function applyLight(l) {
+  const d = l.direction, n = Math.hypot(...d), L = d.map(v => v / n);
+  const az = Math.atan2(-L[2], -L[0]) * 180 / Math.PI, el = Math.asin(Math.max(-1, Math.min(1, L[1]))) * 180 / Math.PI;
+  let col = (l.color || [1, 1, 1]).map(c => Math.max(+c, 0));
+  const lum = 0.2126 * col[0] + 0.7152 * col[1] + 0.0722 * col[2] || 1;
+  col = col.map(c => c / lum);
+  if (!l.temperature) { const k = kelvinRGB(6500); col = col.map((c, i) => c / Math.max(k[i], 1e-6)); }
+  setKnob('light_az', +az.toFixed(3)); setKnob('light_el', +el.toFixed(3));
+  setKnob('light_int', +((l.intensity ?? 1) * Math.pow(2, l.exposure || 0) * lum).toFixed(5));
+  setKnob('light_k', l.temperature || 6500); setKnob('light_rgb', col.map(c => +c.toFixed(5)));
+  changed(true);
+}
+async function importLights(file) {
+  try {
+    const js = JSON.parse(await file.text()), lights = js.lights || [], keys = lights.filter(l => l.type === 'distant');
+    if (!keys.length) throw new Error('no distant (sun) light in ' + file.name + (lights.length ? ' (found ' + lights.map(l => l.name + ' ' + l.type).join(', ') + ')' : ''));
+    const pick = keys.reduce((a, b) => (b.intensity * Math.pow(2, b.exposure || 0) > a.intensity * Math.pow(2, a.exposure || 0) ? b : a));
+    applyLight(pick);
+    setStatus('Key light from ' + file.name + ': ' + pick.name + (keys.length > 1 ? ' (the brightest of ' + keys.length + ' distant lights)' : '') + '.');
+  } catch (e) { setStatus('Lights: ' + e.message, true); }
+}
 async function saveExr() {
   if (busy) return;
   if (!shot.utility) return setStatus('Choose a utility pass first.', true);
@@ -1446,7 +1592,8 @@ function pparams() {
   const p = params();
   const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
   p.L = [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)];
-  p.sun = kelvinRGB(p.light_k).map(v => v * p.light_int);
+  const lc = p.light_rgb || [1, 1, 1];
+  p.sun = kelvinRGB(p.light_k).map((v, i) => v * lc[i] * p.light_int);
   p.lightMode = lightMode(p);
   return p;
 }
@@ -1479,7 +1626,7 @@ async function ensurePreview() {
         pv.setInit(r); pvs.n = r.n; pvs.initKey = ik;
         v3dirty(); continue;
       }
-      const bk = JSON.stringify([shot.utility, p.units, p.shadows, p.interior, p.light_az, p.light_el, p.light_int, p.light_k, p.first, p.last, shot.standinJson]);
+      const bk = JSON.stringify([shot.utility, p.units, p.shadows, p.interior, p.light_az, p.light_el, p.light_int, p.light_k, p.light_rgb, p.first, p.last, shot.standinJson]);
       if (pvs.bounceKey !== bk && pvs.camsKey) {
         pv.setBounce(await call('pbounce', { p })); pvs.bounceKey = bk;
         v3dirty(); continue;
@@ -1502,7 +1649,7 @@ async function ensurePreview() {
 }
 // picked utility passes: each frame's distance image (holdouts) and plate, read once in the background
 // what the per-frame images depend on: the shot, the plate, and (when the set is shaded from the utility pass) the light
-function frameKey() { return pvs.camsKey + '|' + shot.plate + (shot.plate ? '' : '|' + ['light_az', 'light_el', 'light_int', 'light_k', 'bounce', 'shadows', 'interior'].map(k => V[k]).join(',')); }
+function frameKey() { return pvs.camsKey + '|' + shot.plate + (shot.plate ? '' : '|' + ['light_az', 'light_el', 'light_int', 'light_k', 'light_rgb', 'bounce', 'shadows', 'interior'].map(k => V[k]).join(',')); }
 async function prefetchFrames() {
   const key = frameKey();
   if (pvs.fetchKey === key) return;
@@ -1552,7 +1699,7 @@ for (const b of $('qualSeg').children) b.onclick = () => setQuality(b.dataset.q)
   $('viewBtn').onclick = (e) => { e.stopPropagation(); $('viewPop').hidden = !$('viewPop').hidden; };
   document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.popwrap')) $('viewPop').hidden = true; });
   $('holdCam').onchange = () => {
-    vw.hold = $('holdCam').checked; vw.holdFrame = frame;
+    vw.hold = $('holdCam').checked; vw.holdFrame = frame; setKnob('hold_frame', vw.hold ? frame : 0);
     if (vw.hold && v3.lock) v3.lock = true;
     setStatus(vw.hold ? 'Camera held on frame ' + frame + ': play to watch the dust move with the camera still.' : 'Camera follows the shot again.');
     changed(false); v3dirty(); drawHud();
@@ -1714,6 +1861,10 @@ function bootMsg(msg, x) { $('bootMsg').textContent = msg; $('bootBar').style.wi
 function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textContent = 'Could not start: ' + msg; }
 (async () => {
   try {
+    if (/[?&]live=1/.test(location.search)) {
+      try { const r = await nativeCall('ping', {}); NATIVE = !!(r && r.native); NODE = !!r.node; } catch (e) { NATIVE = false; }
+    }
+    if (!NATIVE) startWorker(); else bootMsg('Connected to MoteField Live (native Python' + (NODE ? ', synced with the Nuke node' : '') + ')…', 0.6);
     SCHEMA = await call('init');
     $('verLab').textContent = 'v' + SCHEMA.version;
     buildPanel();
@@ -1725,6 +1876,7 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
     try { if (localStorage.getItem('mf_dim') === '3d') setDim('3d'); } catch (e) {}
     await makeStandin();
     ensurePreview();
+    if (NODE) await syncFromNode();
   } catch (e) { bootFail(e.message); console.error(e.detail || e); }
 })();
 window.__mfdbg = { boxHandles, toScreen, get v3() { return v3; } };
