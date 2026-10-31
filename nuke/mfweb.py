@@ -192,8 +192,8 @@ def render(pjson, frame, progress=None):
     sim = mf.sim_at(p, frame, light, cb, pushers)
     if progress:
         progress(0.75, 'Rendering frame %d' % frame)
-    held, unheld = mf.render_frame(p, shot, frame, sim)
-    _last.update(key=(pjson, frame), held=held, unheld=unheld)
+    held, unheld, emb = mf.render_all(p, shot, frame, sim, mf.embers_at(p, frame, shot.su))
+    _last.update(key=(pjson, frame), held=held, unheld=unheld, embers=emb)
     H, W = held.shape[:2]
     wgt = sim.edge_weight()
     inside = wgt > 1e-4
@@ -285,6 +285,23 @@ def preview_init(pjson):
     return dict(n=len(sim.local), local=sim.local.astype(np.float32).tobytes(), h=sim.h.astype(np.float32).tobytes(),
                 st=st.tobytes(), modes0=pack(m0).tobytes(), modes1=pack(m1).tobytes(), M0=len(m0[0]), M1=len(m1[0]),
                 center=list(sim.center), size=list(sim.size), R=list(sim.R.reshape(-1)), wind=list(sim.wind), su=sim.su)
+
+
+def ember_init(pjson):
+    """The embers' starting state exactly as motefield.EmberSim makes it, plus what the GPU needs to step them the same way."""
+    p = _params(pjson)
+    su = mf.UNITS[p['units']]
+    es = mf.EmberSim(p, su)
+    f0 = int(p['first']) - mf.ember_preroll(p)
+    t0 = (f0 - p['first']) / float(p['fps']) * p['speed']
+    es.start(t0)
+    pack = lambda m: np.concatenate([m[0], m[1], m[2][:, None], m[3][:, None]], 1).astype(np.float32)
+    pos = np.concatenate([es.P, es.cyc[:, None].astype(np.float64)], 1).astype(np.float32)
+    vel = np.concatenate([es.V, es.age[:, None]], 1).astype(np.float32)
+    return dict(n=es.n, ns=es.ns, ng=es.ng, nm=es.nm, seedoff=int((int(p['seed']) * 7919) & mf.M32), emit=list(es.emit), rad=es.rad,
+                hgt=es.hgt, wind=list(es.wind), modes0=pack(es.modes[0]).tobytes(), modes1=pack(es.modes[1]).tobytes(),
+                M0=len(es.modes[0][0]), M1=len(es.modes[1][0]), t0=t0, f0=f0, sub=max(2, int(p['substeps'])),
+                pos=pos.tobytes(), vel=vel.tobytes(), su=su)
 
 
 def preview_light(pjson):
@@ -423,7 +440,7 @@ def save_exr(pjson, frame):
     if _last['key'] != (pjson, int(frame)):
         render(pjson, frame)
     path = ROOT + '/dust.%04d.exr' % int(frame)
-    mf.write_dust(path, _last['held'], _last['unheld'])
+    mf.write_dust(path, _last['held'], _last['unheld'], _last.get('embers'))
     with open(path, 'rb') as fh:
         data = fh.read()
     os.remove(path)

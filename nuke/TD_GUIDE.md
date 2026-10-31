@@ -92,6 +92,15 @@ The GPU preview and the Python render agree within about 1% of total light, with
   **Mover stand-ins** (viewer only, *Show mover stand-ins*): each part is drawn as a circle in its mover's colour, with an arrow for where it will be in 0.2 s, in the shot camera, the free camera and 3D. They're drawn on the current frame even with the camera held. They're never held out, never lit, never rendered.
   - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a swinging arm on the camera side and a `backward` layer made like the studio util pass). One mover is found, on every frame, with no false movers and no parts off the walker. Body and arm velocities come out exact (1.79 and up to 4.73 m/s; the arm gets its own part whenever it moves differently from the body).
 
+### Embers (`EmberSim`, `render_embers`)
+A second emitter, for fire (Embers tab, off by default). Embers rise from a disc you place and size to the fire (position, radius, emission height; **Place** in the viewer puts it on the surface you click).
+- **Air:** a buoyant plume that widens and slows with height, entrainment near the base, a gusting rhythm, turbulence (divergence-free sine modes, like the dust's, drifting upward), wind, and *flutter*: a spinning flake of ash swings round a small helix, so paths squiggle and sometimes loop. Each ember follows the air with a lag that grows with its size, and heavy ones sink a little.
+- **Pops:** the crackle of burning wood. Groups of spark slots fire together on a schedule (*Pops per second*), thrown out fast; heavier, they keep their momentum and arc back down.
+- **Look:** they glow by their own heat. Colour is black-body radiation at a temperature that falls as they rise (yellow-orange to dull red, gone below about 750 K), with a twinkle and a fade in and out. Brightness comes from their size and distance, like the dust. They get the same lens, shutter (streaks), holdouts and noholdout layer as the dust.
+- **Deterministic, so farm frames match:** every random choice is an integer hash (PCG) of (slot, life number, what for), which gives the same 24-bit numbers in numpy and GLSL. Steady embers live in slots that respawn when their life ends; the slot count is rate × mean life. The simulation starts at least 3.5 s before the first frame, so the plume is full on frame one. A frame rendered alone equals the same frame in a sequence.
+- **Output:** added to RGBA and noholdout with the dust, and on their own (held out) in the **embers** layer.
+- **Checked:** GPU vs Python at frame 1024 of the walker shot: the same 192 embers alive, positions within 0.002 cm (median), total light 61.2 vs 61.3, image block correlation 0.99997.
+
 ### Light
 - **Key light.** A directional light. `light_dir(az, el)` points toward the light; colour = temperature × RGB × intensity (`sun_rgb`).
 - **Shadows:**
@@ -116,7 +125,7 @@ The GPU preview and the Python render agree within about 1% of total light, with
 - **Splatting:** motes are splatted in blur-radius bins. Tiny ones get a Gaussian; larger ones get an FFT convolution with the aperture kernel, grouped by cat-eye direction when cat-eye is on.
 
 ### Output
-`dust.####.exr`: half float, ZIP, scene-linear. Channels `R G B A` (held out) and `noholdout.red/green/blue/alpha`.
+`dust.####.exr`: half float, ZIP, scene-linear. Channels `R G B A` (held out) and `noholdout.red/green/blue/alpha`; with embers on, also `embers.red/green/blue/alpha` (the embers alone, held out).
 
 ## 5. Files
 
@@ -244,6 +253,24 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Lens | `shutter_mode` | Shutter | backward |
 | Lens | `shutter_shape` | Shutter shape | backwardsShape |
 | Lens | `mb` | Motion blur | True |
+| Embers | `embers` | Embers | False |
+| Embers | `ember_pos` | Emitter position | (-150.0, 0.0, -250.0) |
+| Embers | `ember_radius` | Emitter radius | 30.0 |
+| Embers | `ember_height` | Emission height | 55.0 |
+| Embers | `ember_rate` | Embers per second | 60.0 |
+| Embers | `ember_life` | Lifetime | 1.0 |
+| Embers | `ember_temp` | Start temperature (K) | 1300.0 |
+| Embers | `ember_size` | Ember size (mm) | 0.6 |
+| Embers | `ember_gain` | Brightness | 1.0 |
+| Embers | `ember_twinkle` | Twinkle | 0.6 |
+| Embers | `ember_rise` | Plume speed (m/s) | 2.2 |
+| Embers | `ember_spread` | Launch spread | 1.0 |
+| Embers | `ember_flutter` | Flutter | 1.0 |
+| Embers | `ember_turb` | Turbulence | 0.9 |
+| Embers | `ember_wind` | Wind (m/s) | 0.3 |
+| Embers | `ember_wind_dir` | Wind heading | 200.0 |
+| Embers | `ember_pops` | Pops per second | 0.6 |
+| Embers | `ember_pop_size` | Pop size | 0.45 |
 | Holdouts | `holdout` | Depth holdouts | True |
 | Holdouts | `fg_fade` | Fade out foreground holdouts | False |
 | Holdouts | `fg_near` | No holdout nearer than | 0.0 |
@@ -273,7 +300,7 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **More lights:** point, spot and area lights, practicals. Light visibility and phase per light. `mflights.py` already exports them.
 - **Exact shadows from USD geometry** when there's `pxr` access: ray-cast the shot's geometry instead of the utility-pass light map.
 - **Bounce from the beauty render:** use the rendered plate (or a diffuse lighting AOV) at every visible surface as the fill light. That captures all of the render's GI, not just the key light's first bounce.
-- **Embers:** the mockup's fire emitter (buoyant plume, black-body cooling, pops) as a second emitter type.
+- **Fire light on the dust:** the fire as a flickering point light for the motes (the mockup had it); with more lights this comes almost free.
 - **Mote shapes when sharp:** tilted ellipses for flakes, curved strands for lint (the mockup had these).
 - **In-graph GPU render (optional):** a BlinkScript kernel that splats a per-frame mote list from Python with tile binning, so the Nuke viewer itself is real time without the panel. The GPU render-to-cache button already covers most of that need.
 

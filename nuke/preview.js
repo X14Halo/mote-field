@@ -269,20 +269,148 @@ void main(){
   o3 = vec4(fd, 0.0, 0.0);
 }`;
 
+
+// ---- embers (motefield.EmberSim / render_embers) ------------------------------------------------------------
+const GLSL_EMBER = `
+uniform uint uSeedOff; uniform int uNS, uNM, uNG;
+uint pcg(uint v){ uint st = v * 747796405u + 2891336453u; uint w = ((st >> ((st >> 28u) + 4u)) ^ st) * 277803737u; return (w >> 22u) ^ w; }
+float ernd(uint slot, int cyc, uint k){ return float(pcg(pcg(pcg(slot + uSeedOff) + uint(cyc)) + k) >> 8u) * (1.0 / 16777216.0); }
+uniform float uELife;
+float elife(uint sl, int cy){ float h = ernd(sl, cy, 6u); return (0.45 + 2.75 * h * h) * max(uELife, 0.05); }
+float esize(uint sl, int cy){ return 0.25 + 1.25 * pow(ernd(sl, cy, 7u), 2.5); }
+`;
+const FS_ESTEP = GLSL_COMMON + GLSL_EMBER + `
+uniform sampler2D uEP, uEV; uniform int uN;
+uniform float uT, uDt, uRad, uHgt, uRise, uSpread, uTurb, uFlutter, uPops, uPopSize; uniform vec3 uEmit, uWind;
+uniform vec4 uE0[48], uE1[32]; uniform int uNE0, uNE1;
+layout(location=0) out vec4 oP; layout(location=1) out vec4 oV;
+void spawn(uint sl, int cy, bool burst, inout vec3 P, inout vec3 V){
+  float hh = pow(ernd(sl, cy, 0u), 0.7), a = ernd(sl, cy, 1u) * 2.0 * PI, r = sqrt(ernd(sl, cy, 2u)) * uRad * (1.0 - 0.6 * hh);
+  P = uEmit + vec3(cos(a) * r, hh * uHgt, sin(a) * r);
+  if (burst) { float ca = ernd(sl, cy, 17u) * 2.0 * PI, el = 0.45 + 0.95 * ernd(sl, cy, 18u), sp = (2.5 + 3.0 * uPopSize) * (0.45 + 0.85 * ernd(sl, cy, 19u));
+    V = vec3(cos(ca) * cos(el), sin(el), sin(ca) * cos(el)) * sp; }
+  else { float ca = ernd(sl, cy, 3u) * 2.0 * PI, cone = uSpread * 0.6 * sqrt(ernd(sl, cy, 4u)), sp = uRise * (0.5 + 0.85 * ernd(sl, cy, 5u));
+    V = vec3(sin(cone) * cos(ca), cos(cone), sin(cone) * sin(ca)) * sp; }
+}
+void main(){
+  ivec2 ip = ivec2(gl_FragCoord.xy); int i = ip.y * ${MF_TW} + ip.x;
+  vec4 A = texelFetch(uEP, ip, 0), B = texelFetch(uEV, ip, 0);
+  if (i >= uN) { oP = A; oV = B; return; }
+  bool burst = i >= uNS;
+  uint sl = burst ? 1000000u + uint(i - uNS) : uint(i);
+  int grp = burst ? (i - uNS) / max(uNM, 1) : 0;
+  vec3 P = A.xyz, V = B.xyz; int cyc = int(floor(A.w + 0.5)); float age = B.w, dt = uDt;
+  bool alive = age >= 0.0;
+  if (alive) {                                   // ride the air (EmberSim._air)
+    int cy = burst ? cyc - 1 : cyc;
+    vec3 rel = P - uEmit; float h = max(rel.y, 0.0), r = length(rel.xz);
+    float sig = uRad * 0.9 + 0.08 + h * 0.18;
+    float gust = 0.7 + 0.6 * (0.5 + 0.25 * sin(2.1 * uT - 1.1 * h + 0.3) + 0.25 * sin(3.7 * uT - 0.6 * h + 1.7));
+    vec3 air = uWind * min(h * 0.8 + 0.25, 1.0);
+    air.y += 0.75 * uRise * exp(-r * r / (2.0 * sig * sig)) * gust / (1.0 + h * 0.25);
+    air.xz -= rel.xz * (0.06 * exp(-h * 2.0) * uRise / (r + 0.15));
+    if (uTurb > 0.0) {
+      vec3 q = P - vec3(0.0, 0.4 * uT, 0.0), f = vec3(0.0);
+      for (int m = 0; m < 24; m++) { if (m >= uNE0) break; vec4 a = uE0[m*2], b = uE0[m*2+1]; f += sin(dot(q, a.xyz) + a.w + b.w * (uT * 0.5)) * b.xyz; }
+      air += 0.6 * f * uTurb * (0.25 + min(h, 2.0) * 0.5);
+      q = P - vec3(0.0, 0.3 * uT, 0.0); f = vec3(0.0);
+      for (int m = 0; m < 16; m++) { if (m >= uNE1) break; vec4 a = uE1[m*2], b = uE1[m*2+1]; f += sin(dot(q, a.xyz) + a.w + b.w * (uT * 0.5)) * b.xyz; }
+      air += 0.6 * f * uTurb * 0.16 * min(0.3 + h, 1.5);
+    }
+    float fa = uFlutter * (0.08 + 0.34 * ernd(sl, cy, 13u)), fw = 2.0 * PI * (1.5 + 4.5 * ernd(sl, cy, 14u)), fph = ernd(sl, cy, 15u) * 2.0 * PI;
+    float sg = ernd(sl, cy, 16u) < 0.5 ? -1.0 : 1.0, tt = age * fw + fph;
+    air += vec3(cos(tt), 0.35 * sin(tt * 1.7 + fph), sg * sin(tt)) * fa;
+    float sz = esize(sl, cy), tau = burst ? 0.35 + 0.6 * sz : 0.12 + 0.35 * sz;
+    air.y -= burst ? 0.8 + 2.5 * sz : 0.22 * sz;
+    V += (air - V) * (1.0 - exp(-dt / tau));
+    P += V * dt; age += dt;
+  } else if (!burst) {                           // steady: born when the age passes 0
+    age += dt;
+    if (age >= 0.0) spawn(sl, cyc, false, P, V);
+  }
+  if (alive) {
+    float lf = elife(sl, burst ? cyc - 1 : cyc);
+    if (!burst && age >= lf) { age -= lf; cyc += 1; spawn(sl, cyc, false, P, V); }   // respawned when it passes its life
+    else if (burst && age >= lf) age = -1.0;                                        // a burned-out spark waits for its group
+  } else if (burst) {                            // pops: waiting groups fire when their time comes
+    float tf = (float(cyc * uNG + grp) + 0.8 * ernd(1000000u + uint(grp), cyc, 20u)) / max(uPops, 1e-6);
+    if (uT >= tf) { if (uT - tf <= 0.25) { spawn(sl, cyc, true, P, V); age = 0.0; } cyc += 1; }
+  }
+  oP = vec4(P, float(cyc)); oV = vec4(V, age);
+}`;
+const FS_EPREP = GLSL_COMMON + GLSL_EMBER + `
+uniform sampler2D uEP, uEV, uDist; uniform int uN; uniform float uSu;
+uniform vec3 uC[12]; uniform float uCT[6]; uniform vec2 uWH, uWH0;
+uniform float uFocal, uFilm, uFstop, uFocusM, uMaxR, uFocalPx; uniform int uDof;
+uniform float uTOpen, uTClose, uSpf, uFC, uFront, uBack, uExpT;
+uniform float uTemp, uESize, uEGain, uTwinkle;
+uniform int uHold, uFg; uniform float uFgNear, uFgFar;
+layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
+vec3 proj(int k, vec3 P){
+  vec3 d = P - uC[k*4];
+  float z = -dot(d, uC[k*4+3]), zs = max(z, 1e-6);
+  return vec3((dot(d, uC[k*4+1])/zs/uCT[k*2]*0.5 + 0.5)*uWH.x, (0.5 - dot(d, uC[k*4+2])/zs/uCT[k*2+1]*0.5)*uWH.y, z);
+}
+vec3 planck(float T){ vec3 lam = vec3(0.61, 0.55, 0.465); return 1.0 / (lam*lam*lam*lam*lam * (exp(min(14388.0 / (lam * T), vec3(80.0))) - 1.0)); }
+void cull(){ o0 = vec4(0.0); o1 = vec4(0.0, 0.0, 0.0, -1.0); o2 = vec4(0.0); o3 = vec4(0.0); }
+void main(){
+  ivec2 ip = ivec2(gl_FragCoord.xy); int i = ip.y * ${MF_TW} + ip.x;
+  if (i >= uN) { cull(); return; }
+  vec4 A = texelFetch(uEP, ip, 0), B = texelFetch(uEV, ip, 0);
+  float age = B.w; if (age < 0.0) { cull(); return; }
+  bool burst = i >= uNS; uint sl = burst ? 1000000u + uint(i - uNS) : uint(i);
+  int cy = int(floor(A.w + 0.5)) - (burst ? 1 : 0);
+  vec3 P = A.xyz / uSu, V = B.xyz / uSu;
+  vec3 cpos = uC[0];
+  vec3 pp = proj(0, P);
+  float margin = uMaxR + 40.0;
+  if (pp.z * uSu <= 0.05 || pp.x <= -margin || pp.x >= uWH.x + margin || pp.y <= -margin || pp.y >= uWH.y + margin) { cull(); return; }
+  float life = elife(sl, cy);
+  float T0 = uTemp * (0.9 + 0.2 * ernd(sl, cy, 8u)), T = 650.0 + (T0 - 650.0) * exp(-age / (life * 0.95));
+  float env = smooth01(age / 0.03) * (1.0 - smooth01((age / life - 0.82) / 0.18));
+  float f1 = 3.0 + 11.0 * ernd(sl, cy, 9u), p1 = ernd(sl, cy, 10u), f2 = 0.8 + 3.2 * ernd(sl, cy, 11u), p2 = ernd(sl, cy, 12u);
+  float tw = 0.0;
+  for (int j = -1; j <= 1; j++) { float a = age + float(j) * uExpT * 0.5; tw += 1.0 + uTwinkle * 0.6 * sin(2.0*PI*(a * f1 + p1)) * sin(2.0*PI*(a * f2 + p2)); }
+  tw /= 3.0;
+  float dmm = uESize * esize(sl, cy), dist = length(P - cpos), dist_m = dist * uSu, z_m = pp.z * uSu;
+  vec3 col = planck(T) * (2e10 * uEGain * tw * env * dmm * dmm / pow(max(dist_m, 0.05), 2.0)) * pow(uFocalPx / 1100.0, 2.0);
+  float rs = 0.5 * dmm * 1e-3 * uFocalPx / max(z_m, 1e-3);
+  float coc = 0.0;
+  if (uDof == 1) {
+    vec2 dc = pp.xy - uWH * 0.5; float rn2 = dot(dc, dc) / dot(uWH * 0.5, uWH * 0.5);
+    float s1 = uFocusM * 1000.0 * max(1.0 + uFC * rn2, 0.05), s2 = max(z_m, 0.02) * 1000.0;
+    coc = (uFocal / uFstop) * uFocal * (s2 - s1) / (s2 * max(s1 - uFocal, 1.0)) / uFilm * uWH.x;
+    coc *= coc < 0.0 ? uFront : uBack; }
+  float R = clamp(abs(coc) * 0.5, 0.25, uMaxR), Reff = sqrt(R * R + 0.5 * rs * rs);
+  vec3 po = proj(1, P + V * (uTOpen * uSpf)), pc = proj(2, P + V * (uTClose * uSpf));
+  float S = clamp(ceil(length(pc.xy - po.xy) / max(Reff * 0.6, 0.6)), 1.0, 48.0);
+  float hold = 1.0;
+  if (uHold == 1) {
+    ivec2 sp = ivec2(clamp(int(pp.x / uWH.x * uWH0.x), 0, int(uWH0.x) - 1), clamp(int(pp.y / uWH.y * uWH0.y), 0, int(uWH0.y) - 1));
+    float surf = texelFetch(uDist, sp, 0).r;
+    float occl = surf > 0.0 ? smooth01(((dist - surf) / max(surf, 1e-6) + 0.01) / 0.04) : 0.0;
+    float fgw = 1.0;
+    if (uFg == 1 && uFgFar > uFgNear) fgw = smooth01((surf - uFgNear) / (uFgFar - uFgNear));
+    else if (uFg == 1) fgw = surf >= uFgNear ? 1.0 : 0.0;
+    hold = 1.0 - occl * fgw;
+  }
+  o0 = vec4(po.xy, pc.xy); o1 = vec4(col, Reff); o2 = vec4(hold, S, 1.0, 0.0); o3 = vec4(0.0);
+}`;
+
 // ---- splat: instanced quads, one per mote sample ----------------------------------------------------
-const VS_SPLAT = GLSL_COMMON + `
+const vsSplat = (NS) => GLSL_COMMON + `
 uniform sampler2D uT0, uT1, uT2, uT3; uniform vec2 uWH; uniform float uMaxR, uCat, uAspect; uniform int uShape;
 flat out vec3 vE; flat out float vHold, vR, vSig; flat out vec2 vCat; out vec2 vOff;
 float shutterW(float u){ return uShape == 1 ? 1.0 / (1.0 + exp(-9.0 * (u - 0.55))) : 1.0; }
 void main(){
-  int m = gl_InstanceID / ${MF_NS}, s = gl_InstanceID % ${MF_NS};
+  int m = gl_InstanceID / ${NS}, s = gl_InstanceID % ${NS};
   ivec2 tp = texel(m);
   vec4 t1 = texelFetch(uT1, tp, 0);
   gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
   if (t1.w < 0.0) return;
   vec4 t0 = texelFetch(uT0, tp, 0), t2 = texelFetch(uT2, tp, 0), t3 = texelFetch(uT3, tp, 0);
   int S = int(t2.y + 0.5), K = int(t2.z + 0.5);
-  int Kq = min(K, ${MF_NS}), Sq = min(S, max(1, ${MF_NS} / Kq));
+  int Kq = min(K, ${NS}), Sq = min(S, max(1, ${NS} / Kq));
   if (s >= Sq * Kq) return;
   int si = s / Kq, ki = s % Kq;
   float ts = (float(si) + 0.5) / float(Sq);
@@ -294,7 +422,7 @@ void main(){
   float sa = sqrt(uAspect);
   if (Rr < 1.8) { vSig = sqrt(0.25*Rr*Rr + 0.12 + 1.0/6.0); half_ = 3.0*vSig + 1.0; vR = 0.0; }
   else { vR = min(Rr, uMaxR); vSig = 0.0; half_ = vR * max(sa, 1.0 / sa) + 2.0; }
-  float ws = 0.0; for (int q = 0; q < ${MF_NS}; q++) { if (q >= Sq) break; ws += shutterW((float(q) + 0.5) / float(Sq)); }
+  float ws = 0.0; for (int q = 0; q < ${NS}; q++) { if (q >= Sq) break; ws += shutterW((float(q) + 0.5) / float(Sq)); }
   vE = t1.rgb * (shutterW(ts) / (ws * float(Kq))); vHold = t2.x;
   vCat = (vec2(X, Y) - uWH * 0.5) / length(uWH * 0.5) * uCat;     // cat-eye offset, image axes (y down)
   int c = gl_VertexID;
@@ -303,6 +431,7 @@ void main(){
   vec2 pix = vec2(X, Y) + vec2(vOff.x, -vOff.y);            // vOff.y points up the screen
   gl_Position = vec4(pix.x / uWH.x * 2.0 - 1.0, 1.0 - pix.y / uWH.y * 2.0, 0.0, 1.0);
 }`;
+const VS_SPLAT = vsSplat(MF_NS);
 const FS_SPLAT = GLSL_COMMON + `
 flat in vec3 vE; flat in float vHold, vR, vSig; flat in vec2 vCat; in vec2 vOff;
 uniform int uBlades, uImg; uniform float uApN[32], uRot, uFall, uAspect, uImgRot; uniform sampler2D uShapeTex;
@@ -462,7 +591,7 @@ class MFPreview {
     if (!this.ok) return;
     const P = (vs, fs) => this._prog(vs, fs);
     this.pVis = P(VS_FULL, FS_VIS); this.pStep = P(VS_FULL, FS_STEP); this.pPrep = P(VS_FULL, FS_PREP);
-    this.pSplat = P(VS_SPLAT, FS_SPLAT); this.pPlate = P(VS_FULL, FS_PLATE); this.pComp = P(VS_QUAD, FS_COMP);
+    this.pSplat = P(VS_SPLAT, FS_SPLAT); this.pSplatE = P(vsSplat(48), FS_SPLAT); this.pEStep = P(VS_FULL, FS_ESTEP); this.pEPrep = P(VS_FULL, FS_EPREP); this.pPlate = P(VS_FULL, FS_PLATE); this.pComp = P(VS_QUAD, FS_COMP);
     this.p3d = P(VS_MOTES3D, FS_MOTES3D); this.pCopy = P(VS_FULL, FS_COPY);
     this.vao = gl.createVertexArray();
     this.fb = gl.createFramebuffer();
@@ -686,6 +815,46 @@ class MFPreview {
     S.cur = 0;
   }
   // sim_at(): state at `frame`, simulated from first - preroll
+  // ---- embers: motefield.EmberSim on the GPU, from the same starting state (mfweb.ember_init) ----------------
+  setEmbers(d) {
+    const gl = this.gl;
+    if (this.emb) this._free(...this.emb.pos, ...this.emb.vel, ...this.emb.prep);
+    this.emb = null;
+    if (!d || !d.n) return;
+    const TH = Math.max(1, Math.ceil(d.n / MF_TW)), N = MF_TW * TH;
+    const grow = (b) => { const a = new Float32Array(N * 4); a.set(new Float32Array(b.buffer, b.byteOffset, d.n * 4)); return a; };
+    const z = () => this._rgba32(MF_TW, TH, null);
+    const modes = (b, M) => this._modes(b, M);
+    this.emb = { d, TH, init: [grow(d.pos), grow(d.vel)], pos: [z(), z()], vel: [z(), z()], prep: [z(), z(), z(), z()], cur: 0, frame: null, t: 0, key: null,
+                 m0: modes(d.modes0, d.M0), m1: modes(d.modes1, d.M1) };
+  }
+  _emberTo(frame, p) {
+    const E = this.emb; if (!E || !p.embers) return;
+    const gl = this.gl, d = E.d, key = JSON.stringify(['ember_life', 'ember_rise', 'ember_spread', 'ember_turb', 'ember_flutter', 'ember_pops', 'ember_pop_size', 'speed', 'fps'].map(k => p[k]));
+    if (E.key !== key || E.frame === null || frame < E.frame) {
+      for (const [tex, data] of [[E.pos[0], E.init[0]], [E.vel[0], E.init[1]]]) { gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_2D, tex); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, MF_TW, E.TH, gl.RGBA, gl.FLOAT, data); }
+      E.cur = 0; E.frame = d.f0; E.t = d.t0; E.key = key;
+    }
+    const sub = d.sub, dt = p.speed / p.fps / sub, prog = this.pEStep;
+    gl.disable(gl.BLEND); gl.useProgram(prog); gl.bindVertexArray(this.vao);
+    const u = prog.u;
+    gl.uniform1ui(u.uSeedOff, d.seedoff); gl.uniform1i(u.uNS, d.ns); gl.uniform1i(u.uNM, d.nm); gl.uniform1i(u.uNG, d.ng); gl.uniform1i(u.uN, d.n);
+    gl.uniform1f(u.uELife, p.ember_life); gl.uniform1f(u.uDt, dt); gl.uniform1f(u.uRad, d.rad); gl.uniform1f(u.uHgt, d.hgt);
+    gl.uniform1f(u.uRise, p.ember_rise); gl.uniform1f(u.uSpread, p.ember_spread); gl.uniform1f(u.uTurb, p.ember_turb); gl.uniform1f(u.uFlutter, p.ember_flutter);
+    gl.uniform1f(u.uPops, p.ember_pops); gl.uniform1f(u.uPopSize, p.ember_pop_size); gl.uniform3fv(u.uEmit, d.emit); gl.uniform3fv(u.uWind, d.wind);
+    gl.uniform4fv(u.uE0, E.m0); gl.uniform4fv(u.uE1, E.m1); gl.uniform1i(u.uNE0, d.M0); gl.uniform1i(u.uNE1, d.M1);
+    while (E.frame < frame) {
+      for (let k = 0; k < sub; k++) {
+        const nx = 1 - E.cur;
+        this._target([E.pos[nx], E.vel[nx]], MF_TW, E.TH);
+        this._bind(prog, 0, 'uEP', E.pos[E.cur]); this._bind(prog, 1, 'uEV', E.vel[E.cur]);
+        gl.uniform1f(u.uT, E.t);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        E.cur = nx; E.t += dt;
+      }
+      E.frame++;
+    }
+  }
   // character pushers: {frame: [[cx, cy, cz, r, vx, vy, vz], ...]} (metres, m/s), the chosen movers from motefield.find_movers
   setPushers(d) { this.pushers = d || null; }
   _pushersFor(F, p) {          // motefield.pushers_for_step: this frame's, plus a fading wake from the 5 before; at most 144
@@ -715,6 +884,7 @@ class MFPreview {
     }
     this._visPass(p);
     this._visPass(p, true);           // what the render uses: soft edges
+    this._emberTo(frame, p);
     return n;
   }
 
@@ -810,7 +980,7 @@ class MFPreview {
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST);
     this._target([this.acc.held, this.acc.free], W, H);
     gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]); gl.clearBufferfv(gl.COLOR, 1, [0, 0, 0, 0]);
-    if (!I.n) return { W, H, n: 0 };
+    // (no motes: the passes below draw nothing, but the embers still do)
     const cam = this.camAt(hold ? hold : frame);       // hold: the camera stays on that frame while the dust moves
     const { focal, film, fstop, focusM, blades, catAmt, aspect, fc } = this.lens(p, cam, W);
     const shape = String(p.shutter_shape).toLowerCase().startsWith('back') ? 1 : 0;
@@ -862,6 +1032,39 @@ class MFPreview {
     gl.uniform1fv(prog.u.uApN, useImg ? this._apNormImage(p.bokeh_falloff) : this._apNorm(blades >= 3 ? blades : 0, p.bokeh_falloff, blades >= 3 ? 0.25 + rot : 0.25));
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, I.n * MF_NS);
     gl.disable(gl.BLEND);
+    // embers: their own per-point maths (render_embers), then the same splat with more samples along their streaks
+    const E = this.emb;
+    if (p.embers && E && E.frame === frame) {
+      const ep = this.pEPrep, eu = ep.u, d = E.d;
+      gl.useProgram(ep); gl.bindVertexArray(this.vao);
+      this._target(E.prep, MF_TW, E.TH);
+      this._bind(ep, 0, 'uEP', E.pos[E.cur]); this._bind(ep, 1, 'uEV', E.vel[E.cur]); this._bind(ep, 2, 'uDist', distTex || this.dummy);
+      gl.uniform1ui(eu.uSeedOff, d.seedoff); gl.uniform1i(eu.uNS, d.ns); gl.uniform1i(eu.uNM, d.nm); gl.uniform1i(eu.uNG, d.ng); gl.uniform1i(eu.uN, d.n);
+      gl.uniform1f(eu.uELife, p.ember_life); gl.uniform1f(eu.uSu, I.su);
+      gl.uniform3fv(eu.uC, C); gl.uniform1fv(eu.uCT, CT);
+      gl.uniform2f(eu.uWH, W, H); gl.uniform2f(eu.uWH0, distTex ? distTex.w : 1, distTex ? distTex.h : 1);
+      gl.uniform1f(eu.uFocal, focal); gl.uniform1f(eu.uFilm, film); gl.uniform1f(eu.uFstop, fstop); gl.uniform1f(eu.uFocusM, focusM);
+      gl.uniform1f(eu.uMaxR, p.max_bokeh * sc); gl.uniform1f(eu.uFocalPx, focalPx); gl.uniform1i(eu.uDof, p.dof ? 1 : 0);
+      gl.uniform1f(eu.uTOpen, tO); gl.uniform1f(eu.uTClose, tC); gl.uniform1f(eu.uSpf, p.speed / p.fps); gl.uniform1f(eu.uExpT, (tC - tO) * p.speed / p.fps);
+      gl.uniform1f(eu.uFC, fc); gl.uniform1f(eu.uFront, p.front_mult); gl.uniform1f(eu.uBack, p.back_mult);
+      gl.uniform1f(eu.uTemp, p.ember_temp); gl.uniform1f(eu.uESize, p.ember_size); gl.uniform1f(eu.uEGain, p.ember_gain); gl.uniform1f(eu.uTwinkle, p.ember_twinkle);
+      gl.uniform1i(eu.uHold, p.holdout && distTex ? 1 : 0); gl.uniform1i(eu.uFg, p.fg_fade ? 1 : 0); gl.uniform1f(eu.uFgNear, p.fg_near); gl.uniform1f(eu.uFgFar, p.fg_far);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      const sp = this.pSplatE;
+      gl.useProgram(sp); gl.bindVertexArray(this.vao);
+      this._target([this.acc.held, this.acc.free], W, H);
+      gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
+      for (let k = 0; k < 4; k++) this._bind(sp, k, 'uT' + k, E.prep[k]);
+      gl.uniform2f(sp.u.uWH, W, H); gl.uniform1f(sp.u.uMaxR, p.max_bokeh * sc);
+      const useImg = !!(this.shapeTex && p.bokeh_image), rot = p.bokeh_rot * Math.PI / 180;
+      gl.uniform1i(sp.u.uBlades, blades); gl.uniform1i(sp.u.uImg, useImg ? 1 : 0);
+      gl.uniform1f(sp.u.uRot, 0.25 + rot); gl.uniform1f(sp.u.uImgRot, rot); gl.uniform1f(sp.u.uFall, p.bokeh_falloff);
+      gl.uniform1f(sp.u.uAspect, aspect); gl.uniform1f(sp.u.uCat, catAmt); gl.uniform1i(sp.u.uShape, shape);
+      this._bind(sp, 4, 'uShapeTex', this.shapeTex || this.dummy);
+      gl.uniform1fv(sp.u.uApN, useImg ? this._apNormImage(p.bokeh_falloff) : this._apNorm(blades >= 3 ? blades : 0, p.bokeh_falloff, blades >= 3 ? 0.25 + rot : 0.25));
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, d.n * 48);
+      gl.disable(gl.BLEND);
+    }
     return { W, H, n: I.n };
   }
   // viewer: draw into the default framebuffer, image placed at rect (clip space)

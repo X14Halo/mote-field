@@ -1,5 +1,5 @@
 """
-MoteField for Nuke (prototype v0.4): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.5): camera-aware dust motes for comp.
 
 WHAT IT IS
     A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.4'
+__version__ = '0.5'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -803,6 +803,10 @@ DEFAULTS = dict(
     bokeh_image='', bokeh_rot=0.0, bokeh_falloff=0.0,
     # shutter: as on the studio cameras (180 degrees, backward, backwardsShape)
     shutter=180.0, shutter_mode='backward', shutter_shape='backwardsShape', mb=True,
+    # embers (scene units for the emitter, mm for ember size, m/s for speeds)
+    embers=False, ember_pos=(-150.0, 0.0, -250.0), ember_radius=30.0, ember_height=55.0, ember_rate=60.0, ember_life=1.0,
+    ember_temp=1300.0, ember_size=0.6, ember_gain=1.0, ember_twinkle=0.6, ember_rise=2.2, ember_spread=1.0, ember_turb=0.9,
+    ember_flutter=1.0, ember_wind=0.3, ember_wind_dir=200.0, ember_pops=0.6, ember_pop_size=0.45,
     # holdouts
     holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0,
     cache='', standin_json='', hold_frame=0, standin_view='wide',
@@ -1939,9 +1943,8 @@ def _tumble_axis(h4, h5, h6, rate, t):
     return np.stack([np.sin(a) * np.cos(b), np.cos(a), np.sin(a) * np.sin(b)], -1)
 
 
-def render_frame(p, shot, frame, sim, progress=None):
-    """Renders the dust for one frame. Returns (held, unheld) float32 arrays (H, W, 3)."""
-    su = sim.su
+def _frame_ctx(p, shot, frame, su):
+    """What every point drawn into a frame shares: the camera(s), resolution, lens, shutter, holdout image."""
     hold = int(p.get('hold_frame') or 0)          # review aid: keep the camera (and holdouts) on one frame while the dust moves
     cam = shot.camera(hold or frame)
     dist_img, _ = shot.surface(hold or frame)
@@ -1949,23 +1952,169 @@ def render_frame(p, shot, frame, sim, progress=None):
     sc = max(min(float(p['proxy']), 1.0), 0.1)
     W, H = max(int(round(W0 * sc)), 8), max(int(round(H0 * sc)), 8)
     focal = p['focal'] or cam.focal or 35.0
-    film = p['film'] or cam.film or (2 * focal * math.tan(cam.hfov / 2))
     fstop = p['fstop'] or cam.fstop or 4.0
-    focus_m = (p['focus'] or cam.focus or 500.0) * su
-    focal_px = W / (2 * math.tan(cam.hfov / 2))          # matches the camera's field of view exactly
+    s = p['shutter'] / 360.0 if p['mb'] else 0.0
+    mode = str(p['shutter_mode']).lower()
+    t_open, t_close = (-s, 0.0) if mode.startswith('back') else (0.0, s) if mode.startswith('for') else (-s / 2, s / 2)
+    return dict(su=su, hold=hold, cam=cam, dist_img=dist_img, W0=W0, H0=H0, W=W, H=H, sc=sc, focal=focal,
+                film=p['film'] or cam.film or (2 * focal * math.tan(cam.hfov / 2)), fstop=fstop,
+                focus_m=(p['focus'] or cam.focus or 500.0) * su, focal_px=W / (2 * math.tan(cam.hfov / 2)),
+                t_open=t_open, t_close=t_close,
+                cam_o=cam if hold else shot.camera(frame + t_open), cam_c=cam if hold else shot.camera(frame + t_close),
+                tsec=(frame - p['first']) / float(p['fps']) * p['speed'], sec_per_frame=p['speed'] / float(p['fps']),
+                margin=p['max_bokeh'] * sc + 40, lens=lens_settings(p, cam, fstop))
+
+
+def _coc(p, X, px, py, z_m):
+    """Circle of confusion (px) of points at depth z_m (m), image position px, py."""
+    W, H = X['W'], X['H']
+    blades, cat_amt, aspect, fcurv = X['lens']
+    if not p['dof']:
+        return np.zeros(len(z_m))
+    focal, fstop = X['focal'], X['fstop']
+    rn2 = ((px - W / 2.0) ** 2 + (py - H / 2.0) ** 2) / ((W / 2.0) ** 2 + (H / 2.0) ** 2)
+    s1 = X['focus_m'] * 1000.0 * np.maximum(1 + fcurv * rn2, 0.05)       # field curvature: focus shifts toward the edges
+    s2 = np.maximum(z_m, 0.02) * 1000.0
+    coc = (focal / fstop) * focal * (s2 - s1) / (s2 * np.maximum(s1 - focal, 1.0)) / X['film'] * W
+    return coc * np.where(coc < 0, p.get('front_mult', 1.0), p.get('back_mult', 1.0))
+
+
+def _draw(p, X, P, V, col, rs, rsk, held, unheld, fiber=None, max_s=24):
+    """Draws points through the lens into held / unheld (H, W, 3): P scene units, V scene units per second, col their light,
+    rs their own size (px), rsk how much of it adds to the blur (Reff^2 = R^2 + rsk rs^2). Motion blur along the shutter,
+    defocus with the lens aperture, depth holdouts. fiber: optional (mask, x0, y0, x1, y1, bend) to spread lint along its length."""
+    su, cam, W, H, W0, H0 = X['su'], X['cam'], X['W'], X['H'], X['W0'], X['H0']
+    blades, cat_amt, aspect, fcurv = X['lens']
+    sc, margin, n = X['sc'], X['margin'], len(P)
+    px, py, zc = cam.project(P, W, H)
+    dist = np.linalg.norm(P - cam.pos, axis=1)
+    R = np.clip(np.abs(_coc(p, X, px, py, zc * su)) * 0.5, 0.25, p['max_bokeh'] * sc)
+
+    # shutter: where each point is on screen when the shutter opens and closes
+    spf = X['sec_per_frame']
+    xo, yo, _ = X['cam_o'].project(P + V * (X['t_open'] * spf), W, H)
+    xc, yc, _ = X['cam_c'].project(P + V * (X['t_close'] * spf), W, H)
+    streak = np.hypot(xc - xo, yc - yo)
+    Reff = np.sqrt(R * R + rsk * rs * rs)
+    S = np.clip(np.ceil(streak / np.maximum(Reff * 0.6, 0.6)), 1, max_s).astype(np.intp)
+
+    # lint fibres also spread along their length
+    K = np.ones(n, np.intp)
+    fdx = fdy = bend = np.zeros(n)
+    if fiber is not None and fiber[0].any():
+        fm, x0f, y0f, x1f, y1f, fb = fiber
+        flen = np.hypot(x1f - x0f, y1f - y0f)
+        K[fm] = np.clip(np.ceil(flen / np.maximum(R[fm] * 0.7, 0.7)), 1, 24)
+        fdx, fdy, bend = np.zeros(n), np.zeros(n), np.zeros(n)
+        fdx[fm], fdy[fm], bend[fm] = x1f - x0f, y1f - y0f, fb
+
+    # holdouts: the surface each point sits in front of or behind
+    hold = np.ones(n)
+    if p['holdout']:
+        dist_img = X['dist_img']
+        sx = np.clip((px / W * W0).astype(np.intp), 0, W0 - 1)
+        sy = np.clip((py / H * H0).astype(np.intp), 0, H0 - 1)
+        surf = dist_img[sy, sx].astype(np.float64)
+        occl = np.where(surf > 0, _smooth01(((dist - surf) / np.maximum(surf, 1e-6) + 0.01) / 0.04), 0.0)
+        fgw = np.ones(n)
+        if p['fg_fade'] and p['fg_far'] > p['fg_near']:
+            fgw = _smooth01((surf - p['fg_near']) / (p['fg_far'] - p['fg_near']))
+        elif p['fg_fade']:
+            fgw = (surf >= p['fg_near']).astype(np.float64)
+        hold = 1 - occl * fgw
+
+    # expand into samples along the shutter (and along fibres)
+    NS = S * K
+    rep = np.repeat(np.arange(n), NS)
+    j = np.arange(len(rep)) - np.repeat(np.cumsum(NS) - NS, NS)
+    Ks = K[rep]
+    si, ki = j // Ks, j % Ks
+    ts = (si + 0.5) / S[rep]
+    kf = np.where(Ks > 1, ki / np.maximum(Ks - 1, 1) - 0.5, 0.0)
+    Xs = xo[rep] + (xc[rep] - xo[rep]) * ts + fdx[rep] * kf - fdy[rep] * bend[rep] * (0.25 - kf * kf)
+    Ys = yo[rep] + (yc[rep] - yo[rep]) * ts + fdy[rep] * kf + fdx[rep] * bend[rep] * (0.25 - kf * kf)
+    sw = shutter_weight(ts, p.get('shutter_shape', 'box'))
+    sw = sw / np.bincount(rep, weights=sw, minlength=n)[rep]     # each point's samples sum to 1
+    E = col[rep] * sw[:, None]
+    Eh = E * hold[rep][:, None]
+    Rr = Reff[rep]
+    inside = (Xs > -margin) & (Xs < W + margin) & (Ys > -margin) & (Ys < H + margin)
+    Xs, Ys, E, Eh, Rr = Xs[inside], Ys[inside], E[inside], Eh[inside], Rr[inside]
+    if not len(Xs):
+        return
+    # cat-eye: offset of each sample's bokeh, from where it sits in the frame
+    half_diag = math.hypot(W / 2.0, H / 2.0)
+    CX, CY = (Xs - W / 2.0) / half_diag * cat_amt, (Ys - H / 2.0) / half_diag * cat_amt
+
+    # bin by blur radius: tiny ones get a small gaussian, the rest the lens aperture
+    edges = [0.0, 0.6, 0.9, 1.3, 1.8]
+    r = 1.8
+    while r < p['max_bokeh'] * sc + 1:
+        r *= 1.22
+        edges.append(r)
+    edges.append(1e9)
+    which = np.digitize(Rr, edges) - 1
+    W6 = np.concatenate([Eh, E], 1)
+    nb = len(edges) - 1
+    # with cat-eye on, large bokeh are also grouped by their cat-eye offset (12 directions x 4 strengths)
+    if cat_amt > 0:
+        cm = np.hypot(CX, CY)
+        zone_m = np.clip(np.round(cm / max(cat_amt, 1e-6) * 4), 0, 4).astype(np.intp)
+        zone_a = np.mod(np.round(np.arctan2(CY, CX) / (2 * math.pi / 12)), 12).astype(np.intp)
+        zone = np.where(zone_m == 0, 0, 1 + (zone_m - 1) * 12 + zone_a)
+    else:
+        zone = np.zeros(len(Xs), np.intp)
+    groups = []
+    for b in range(nb):
+        mb = which == b
+        if not mb.any():
+            continue
+        if b < 4:
+            groups.append((b, mb, (0.0, 0.0)))
+            continue
+        for z in np.unique(zone[mb]):
+            mz = mb & (zone == z)
+            if z == 0:
+                cvec = (0.0, 0.0)
+            else:
+                zm, za = (z - 1) // 12 + 1, (z - 1) % 12
+                cvec = (math.cos(za * math.pi / 6) * cat_amt * zm / 4.0, math.sin(za * math.pi / 6) * cat_amt * zm / 4.0)
+            groups.append((b, mz, cvec))
+    for b, mb, cvec in groups:
+        lo, hi = edges[b], min(edges[b + 1], p['max_bokeh'] * sc)
+        Rb = math.sqrt(max(lo, 0.25) * max(hi, 0.25)) if b >= 1 else 0.4
+        if b < 4:
+            pad = int(math.ceil(3 * math.sqrt(0.25 * Rb * Rb + 0.12))) + 2
+        else:
+            sa = math.sqrt(aspect)
+            pad = int(math.ceil(Rb * max(sa, 1 / sa))) + 3
+        bx0 = int(max(math.floor(Xs[mb].min()) - pad, 0))
+        by0 = int(max(math.floor(Ys[mb].min()) - pad, 0))
+        bx1 = int(min(math.ceil(Xs[mb].max()) + pad, W))
+        by1 = int(min(math.ceil(Ys[mb].max()) + pad, H))
+        if bx1 <= bx0 or by1 <= by0:
+            continue
+        img = _splat((by1 - by0, bx1 - bx0), Xs[mb] - bx0, Ys[mb] - by0, W6[mb])
+        if b < 4:
+            img = _blur_sep(img, math.sqrt(0.25 * Rb * Rb + 0.12))
+        else:
+            brot, bfall, bimg, irot = bokeh_shape(p)
+            img = _fft_conv(img, _aperture(Rb, blades, rot=brot, aspect=aspect, cat=cvec, falloff=bfall, image=bimg, img_rot=irot))
+        held[by0:by1, bx0:bx1] += img[:, :, :3]
+        unheld[by0:by1, bx0:bx1] += img[:, :, 3:]
+
+
+def render_frame(p, shot, frame, sim, progress=None):
+    """Renders the dust for one frame. Returns (held, unheld) float32 arrays (H, W, 3)."""
+    su = sim.su
+    X = _frame_ctx(p, shot, frame, su)
+    cam, W, H, sc = X['cam'], X['W'], X['H'], X['sc']
+    focal_px, tsec, t_open, t_close, sec_per_frame = X['focal_px'], X['tsec'], X['t_open'], X['t_close'], X['sec_per_frame']
     held = np.zeros((H, W, 3))
     unheld = np.zeros((H, W, 3))
     n = len(sim.local)
     if n == 0:
         return held.astype(np.float32), unheld.astype(np.float32)
-
-    # shutter
-    s = p['shutter'] / 360.0 if p['mb'] else 0.0
-    mode = str(p['shutter_mode']).lower()
-    t_open, t_close = (-s, 0.0) if mode.startswith('back') else (0.0, s) if mode.startswith('for') else (-s / 2, s / 2)
-    cam_o, cam_c = (cam, cam) if hold else (shot.camera(frame + t_open), shot.camera(frame + t_close))
-    tsec = (frame - p['first']) / float(p['fps']) * p['speed']
-    sec_per_frame = p['speed'] / float(p['fps'])
 
     Pw_m = sim.world()
     P = Pw_m / su                                   # scene units
@@ -1977,7 +2126,7 @@ def render_frame(p, shot, frame, sim, progress=None):
     weight = weight * _smooth01((zc * su - 0.06) / 0.24)      # motes fade out as they come right up to the lens
     keep = (weight > 1e-4) & (zc > near)
     px, py, _ = cam.project(P, W, H)
-    margin = p['max_bokeh'] * sc + 40
+    margin = X['margin']
     keep &= (px > -margin) & (px < W + margin) & (py > -margin) & (py < H + margin)
     idx = np.where(keep)[0]
     if not len(idx):
@@ -1991,20 +2140,7 @@ def render_frame(p, shot, frame, sim, progress=None):
     dist = np.linalg.norm(P - cam.pos, axis=1)
     dist_m = dist * su
     Vd = (cam.pos - P) / dist[:, None]
-
-    # defocus: circle of confusion in pixels
-    blades, cat_amt, aspect, fcurv = lens_settings(p, cam, fstop)
-    if p['dof']:
-        rn2 = ((px[idx] - W / 2.0) ** 2 + (py[idx] - H / 2.0) ** 2) / ((W / 2.0) ** 2 + (H / 2.0) ** 2)
-        s1 = focus_m * 1000.0 * np.maximum(1 + fcurv * rn2, 0.05)       # field curvature: focus shifts toward the edges
-        s2 = np.maximum(z_m, 0.02) * 1000.0
-        coc = (focal / fstop) * focal * (s2 - s1) / (s2 * np.maximum(s1 - focal, 1.0)) / film * W
-        coc = coc * np.where(coc < 0, p.get('front_mult', 1.0), p.get('back_mult', 1.0))
-    else:
-        coc = np.zeros(len(idx))
-    R = np.clip(np.abs(coc) * 0.5, 0.25, p['max_bokeh'] * sc)
     ppm = focal_px / np.maximum(z_m, 1e-3)
-
     # what each mote is, how big and how bright (same model as the MoteField mockup)
     L = light_dir(p['light_az'], p['light_el'])
     u = hh[:, 1]
@@ -2072,126 +2208,289 @@ def render_frame(p, shot, frame, sim, progress=None):
     tint = np.asarray(p['tint'], np.float64)
     col = rad * tint[None, :] * tcol * (p['brightness'] * 0.8 * sigma / np.maximum(dist_m, 0.05) ** 2 * weight)[:, None] * (focal_px / 1100.0) ** 2
 
-    # shutter: where each mote is on screen when the shutter opens and closes
-    po = P + V * (t_open * sec_per_frame)
-    pc = P + V * (t_close * sec_per_frame)
-    xo, yo, _ = cam_o.project(po, W, H)
-    xc, yc, _ = cam_c.project(pc, W, H)
-    streak = np.hypot(xc - xo, yc - yo)
-    Reff = np.where(typ == FLUFF, np.sqrt(R * R + 0.6 * rs * rs), np.where(typ == FIBER, R, np.sqrt(R * R + 0.5 * rs * rs)))
-    S = np.clip(np.ceil(streak / np.maximum(Reff * 0.6, 0.6)), 1, 24).astype(np.intp)
-
-    # fibres also spread along their length
-    K = np.ones(len(idx), np.intp)
+    # lint fibres also spread along their length
+    fiber = None
     fm = typ == FIBER
     if fm.any():
         half_len = (300.0 * 8.0 ** (u[fm] ** 1.8) * p['fiber_scale']) * 0.5e-6 / su
-        a0 = P[fm] - ax[fm] * half_len[:, None]
-        a1 = P[fm] + ax[fm] * half_len[:, None]
-        x0f, y0f, _ = cam.project(a0, W, H)
-        x1f, y1f, _ = cam.project(a1, W, H)
-        flen = np.hypot(x1f - x0f, y1f - y0f)
-        K[fm] = np.clip(np.ceil(flen / np.maximum(R[fm] * 0.7, 0.7)), 1, 24)
-        fdx, fdy = np.zeros(len(idx)), np.zeros(len(idx))
-        fdx[fm], fdy[fm] = x1f - x0f, y1f - y0f
-        bend = np.zeros(len(idx))
-        bend[fm] = (hh[fm, 2] - 0.5) * 0.6
-    else:
-        fdx = fdy = bend = np.zeros(len(idx))
-
-    # holdouts: the surface each mote sits in front of or behind
-    hold = np.ones(len(idx))
-    if p['holdout']:
-        sx = np.clip((px[idx] / W * W0).astype(np.intp), 0, W0 - 1)
-        sy = np.clip((py[idx] / H * H0).astype(np.intp), 0, H0 - 1)
-        surf = dist_img[sy, sx].astype(np.float64)
-        has = surf > 0
-        occl = np.where(has, _smooth01(((dist - surf) / np.maximum(surf, 1e-6) + 0.01) / 0.04), 0.0)
-        fgw = np.ones(len(idx))
-        if p['fg_fade'] and p['fg_far'] > p['fg_near']:
-            fgw = _smooth01((surf - p['fg_near']) / (p['fg_far'] - p['fg_near']))
-        elif p['fg_fade']:
-            fgw = (surf >= p['fg_near']).astype(np.float64)
-        hold = 1 - occl * fgw
-
-    # expand into samples along the shutter (and along fibres)
-    NS = S * K
-    rep = np.repeat(np.arange(len(idx)), NS)
-    j = np.arange(len(rep)) - np.repeat(np.cumsum(NS) - NS, NS)
-    Ks = K[rep]
-    si, ki = j // Ks, j % Ks
-    ts = (si + 0.5) / S[rep]
-    kf = np.where(Ks > 1, ki / np.maximum(Ks - 1, 1) - 0.5, 0.0)
-    X = xo[rep] + (xc[rep] - xo[rep]) * ts + fdx[rep] * kf - fdy[rep] * bend[rep] * (0.25 - kf * kf)
-    Y = yo[rep] + (yc[rep] - yo[rep]) * ts + fdy[rep] * kf + fdx[rep] * bend[rep] * (0.25 - kf * kf)
-    sw = shutter_weight(ts, p.get('shutter_shape', 'box'))
-    sw = sw / np.bincount(rep, weights=sw, minlength=len(idx))[rep]     # each mote's samples sum to 1
-    E = col[rep] * sw[:, None]
-    Eh = E * hold[rep][:, None]
-    Rr = Reff[rep]
-    inside = (X > -margin) & (X < W + margin) & (Y > -margin) & (Y < H + margin)
-    X, Y, E, Eh, Rr = X[inside], Y[inside], E[inside], Eh[inside], Rr[inside]
-    # cat-eye: offset of each sample's bokeh, from where it sits in the frame
-    half_diag = math.hypot(W / 2.0, H / 2.0)
-    CX, CY = (X - W / 2.0) / half_diag * cat_amt, (Y - H / 2.0) / half_diag * cat_amt
-
-    # bin by blur radius: tiny ones get a small gaussian, the rest the lens aperture
-    edges = [0.0, 0.6, 0.9, 1.3, 1.8]
-    r = 1.8
-    while r < p['max_bokeh'] * sc + 1:
-        r *= 1.22
-        edges.append(r)
-    edges.append(1e9)
-    which = np.digitize(Rr, edges) - 1
-    W6 = np.concatenate([Eh, E], 1)
-    nb = len(edges) - 1
-    # with cat-eye on, large bokeh are also grouped by their cat-eye offset (12 directions x 4 strengths)
-    if cat_amt > 0:
-        cm = np.hypot(CX, CY)
-        zone_m = np.clip(np.round(cm / max(cat_amt, 1e-6) * 4), 0, 4).astype(np.intp)
-        zone_a = np.mod(np.round(np.arctan2(CY, CX) / (2 * math.pi / 12)), 12).astype(np.intp)
-        zone = np.where(zone_m == 0, 0, 1 + (zone_m - 1) * 12 + zone_a)
-    else:
-        zone = np.zeros(len(X), np.intp)
-    groups = []
-    for b in range(nb):
-        mb = which == b
-        if not mb.any():
-            continue
-        if b < 4:
-            groups.append((b, mb, (0.0, 0.0)))
-            continue
-        for z in np.unique(zone[mb]):
-            mz = mb & (zone == z)
-            if z == 0:
-                cvec = (0.0, 0.0)
-            else:
-                zm, za = (z - 1) // 12 + 1, (z - 1) % 12
-                cvec = (math.cos(za * math.pi / 6) * cat_amt * zm / 4.0, math.sin(za * math.pi / 6) * cat_amt * zm / 4.0)
-            groups.append((b, mz, cvec))
-    for b, mb, cvec in groups:
-        lo, hi = edges[b], min(edges[b + 1], p['max_bokeh'] * sc)
-        Rb = math.sqrt(max(lo, 0.25) * max(hi, 0.25)) if b >= 1 else 0.4
-        if b < 4:
-            pad = int(math.ceil(3 * math.sqrt(0.25 * Rb * Rb + 0.12))) + 2
-        else:
-            sa = math.sqrt(aspect)
-            pad = int(math.ceil(Rb * max(sa, 1 / sa))) + 3
-        bx0 = int(max(math.floor(X[mb].min()) - pad, 0))
-        by0 = int(max(math.floor(Y[mb].min()) - pad, 0))
-        bx1 = int(min(math.ceil(X[mb].max()) + pad, W))
-        by1 = int(min(math.ceil(Y[mb].max()) + pad, H))
-        if bx1 <= bx0 or by1 <= by0:
-            continue
-        img = _splat((by1 - by0, bx1 - bx0), X[mb] - bx0, Y[mb] - by0, W6[mb])
-        if b < 4:
-            img = _blur_sep(img, math.sqrt(0.25 * Rb * Rb + 0.12))
-        else:
-            brot, bfall, bimg, irot = bokeh_shape(p)
-            img = _fft_conv(img, _aperture(Rb, blades, rot=brot, aspect=aspect, cat=cvec, falloff=bfall, image=bimg, img_rot=irot))
-        held[by0:by1, bx0:bx1] += img[:, :, :3]
-        unheld[by0:by1, bx0:bx1] += img[:, :, 3:]
+        x0f, y0f, _ = cam.project(P[fm] - ax[fm] * half_len[:, None], W, H)
+        x1f, y1f, _ = cam.project(P[fm] + ax[fm] * half_len[:, None], W, H)
+        fiber = (fm, x0f, y0f, x1f, y1f, (hh[fm, 2] - 0.5) * 0.6)
+    rsk = np.where(typ == FLUFF, 0.6, np.where(typ == FIBER, 0.0, 0.5))
+    _draw(p, X, P, V, col, rs, rsk, held, unheld, fiber)
     return held.astype(np.float32), unheld.astype(np.float32)
+
+
+def render_embers(p, X, es, held, unheld):
+    """Draws the embers into held / unheld. They glow by their own heat: black-body colour from a temperature that falls as
+    they cool, a twinkle, and a fade in and out; brightness from their size and distance like the dust."""
+    alive = es.age >= 0
+    if not alive.any():
+        return
+    su, cam = X['su'], X['cam']
+    i = np.nonzero(alive)[0]
+    sl, cy, age = es.slot[i], es.attr_cycle()[i], es.age[i]
+    P = es.P[i] / su
+    V = es.V[i] / su
+    zc = -((P - cam.pos) @ cam.back)
+    W, H, margin = X['W'], X['H'], X['margin']
+    px, py, _ = cam.project(P, W, H)
+    k = (zc * su > 0.05) & (px > -margin) & (px < W + margin) & (py > -margin) & (py < H + margin)
+    if not k.any():
+        return
+    sl, cy, age, P, V, zc = sl[k], cy[k], age[k], P[k], V[k], zc[k]
+    rnd = lambda q: ember_rnd(sl, cy, q, es.seed)
+    life = es.life(sl, cy)
+    T0 = p['ember_temp'] * (0.9 + 0.2 * rnd(8))
+    T = 650.0 + (T0 - 650.0) * np.exp(-age / (life * 0.95))          # radiative cooling: yellow-orange, then dull red
+    env = _smooth01(age / 0.03) * (1 - _smooth01((age / life - 0.82) / 0.18))
+    f1, p1, f2, p2 = 3 + 11 * rnd(9), rnd(10), 0.8 + 3.2 * rnd(11), rnd(12)
+    exp_t = (X['t_close'] - X['t_open']) * X['sec_per_frame']
+    tw = np.zeros(len(sl))
+    for j in (-1, 0, 1):                                              # twinkle, averaged over the shutter
+        a_ = age + j * exp_t * 0.5
+        tw += 1 + p['ember_twinkle'] * 0.6 * np.sin(2 * math.pi * (a_ * f1 + p1)) * np.sin(2 * math.pi * (a_ * f2 + p2))
+    tw /= 3.0
+    d_mm = p['ember_size'] * es.size(sl, cy)
+    dist_m = np.linalg.norm(P - cam.pos, axis=1) * su
+    col = planck_rgb(T) * (2e10 * p['ember_gain'] * tw * env * d_mm * d_mm / np.maximum(dist_m, 0.05) ** 2)[:, None] * (X['focal_px'] / 1100.0) ** 2
+    rs = 0.5 * d_mm * 1e-3 * X['focal_px'] / np.maximum(zc * su, 1e-3)
+    _draw(p, X, P, V, col, rs, np.full(len(sl), 0.5), held, unheld, max_s=EMBER_NS)
+
+
+def render_all(p, shot, frame, sim, es=None):
+    """Dust and embers for a frame: held, unheld (dust + embers) and the embers alone (held), float32 (H, W, 3)."""
+    held, unheld = render_frame(p, shot, frame, sim)
+    if es is None:
+        return held, unheld, None
+    X = _frame_ctx(p, shot, frame, sim.su)
+    eh, eu = np.zeros((X['H'], X['W'], 3)), np.zeros((X['H'], X['W'], 3))
+    render_embers(p, X, es, eh, eu)
+    return held + eh.astype(np.float32), unheld + eu.astype(np.float32), eh.astype(np.float32)
+
+
+# =====================================================================================================
+#  Embers: a second emitter, for fire
+# =====================================================================================================
+# The mockup's embers, made deterministic so a farm frame equals the same frame in a sequence and the GPU viewer matches:
+# every random choice is an integer hash of (slot, life, what), the same in numpy and GLSL, and the turbulence is made of
+# divergence-free sine modes like the dust's. Steady embers live in slots that respawn when their life ends; pops (the crackle
+# of burning wood) are groups of slots that fire together on a schedule.
+M32 = 0xffffffff
+EMBER_STEADY_MAX = 48 * 256        # GPU state texture rows x 256
+EMBER_BURST_MAX = 16 * 256
+EMBER_NS = 48                      # samples along an ember's streak (they move fast)
+
+
+def _pcg(v):
+    """PCG hash, uint32 -> uint32 (numpy uint64 arrays holding uint32 values; GLSL does the same with uint)."""
+    v = (np.asarray(v, np.uint64) * np.uint64(747796405) + np.uint64(2891336453)) & np.uint64(M32)
+    w = (((v >> ((v >> np.uint64(28)) + np.uint64(4))) ^ v) * np.uint64(277803737)) & np.uint64(M32)
+    return ((w >> np.uint64(22)) ^ w) & np.uint64(M32)
+
+
+def ember_rnd(slot, cyc, k, seed):
+    """0..1 (24-bit exact, so float32 and float64 agree) for an ember slot, its life number and what it's for."""
+    s = (np.asarray(slot, np.uint64) + np.uint64((int(seed) * 7919) & M32)) & np.uint64(M32)
+    h = _pcg((_pcg((_pcg(s) + (np.asarray(cyc, np.int64).astype(np.uint64) & np.uint64(M32))) & np.uint64(M32)) + np.uint64(k)) & np.uint64(M32))
+    return (h >> np.uint64(8)).astype(np.float64) * (1.0 / 16777216.0)
+
+
+def planck_rgb(T):
+    """Black-body emission at three wavelengths (R G B), as in the mockup."""
+    lam = np.array([0.61, 0.55, 0.465])
+    T = np.asarray(T, np.float64)[..., None]
+    return 1.0 / (lam ** 5 * (np.exp(np.minimum(14388.0 / (lam * T), 80.0)) - 1.0))
+
+
+def ember_counts(p):
+    """steady slots, burst groups, sparks per pop."""
+    ns = int(min(EMBER_STEADY_MAX, round(max(p['ember_rate'], 0.0) * 1.38 * max(p['ember_life'], 0.05))))
+    rp = max(float(p['ember_pops']), 0.0)
+    if rp <= 0:
+        return ns, 0, 0
+    m = int(np.clip(round(4096 * (0.004 + 0.05 * p['ember_pop_size'])), 1, EMBER_BURST_MAX))
+    g = int(np.clip(math.ceil(rp * 3.5 * max(p['ember_life'], 0.05)) + 1, 1, EMBER_BURST_MAX // m))
+    return ns, g, m
+
+
+class EmberSim(object):
+    """Embers in metres and seconds. State per slot: position, velocity, age (s; < 0 = not born / waiting) and its life
+    number (steady: how many times it has respawned; pops: the next firing)."""
+    BURST_ID = 1000000
+
+    def __init__(self, p, su):
+        self.p, self.su = p, su
+        self.seed = int(p['seed'])
+        self.emit = np.asarray(p['ember_pos'], np.float64) * su
+        self.rad, self.hgt = max(p['ember_radius'], 0.1) * su, max(p['ember_height'], 0.0) * su
+        self.ns, self.ng, self.nm = ember_counts(p)
+        nb = self.ng * self.nm
+        n = self.ns + nb
+        self.n = n
+        self.slot = np.concatenate([np.arange(self.ns), self.BURST_ID + np.arange(nb)]).astype(np.int64)
+        self.burst = np.arange(n) >= self.ns
+        self.group = np.where(self.burst, (np.arange(n) - self.ns) // max(self.nm, 1), 0)
+        self.P = np.tile(self.emit, (n, 1))
+        self.V = np.zeros((n, 3))
+        self.cyc = np.where(self.burst, 0, 0).astype(np.int64)
+        self.age = np.where(self.burst, -1.0, 0.0)
+        mrng = np.random.default_rng(self.seed * 7919 + 4242)
+        self.modes = [DustSim._modes(mrng, 24, 0.6), DustSim._modes(mrng, 16, 0.15)]
+        a = math.radians(p['ember_wind_dir'])
+        self.wind = np.array([math.cos(a), 0.0, math.sin(a)]) * p['ember_wind']
+        self.t = 0.0
+
+    def start(self, t0):
+        self.t = t0
+        st = ~self.burst            # steady slots are born at staggered times over their first life
+        self.age[st] = -ember_rnd(self.slot[st], 0, 21, self.seed) * self.life(self.slot[st], self.cyc[st])
+
+    def life(self, slot, cyc):
+        h = ember_rnd(slot, cyc, 6, self.seed)
+        return (0.45 + 2.75 * h * h) * max(self.p['ember_life'], 0.05)
+
+    def size(self, slot, cyc):
+        return 0.25 + 1.25 * ember_rnd(slot, cyc, 7, self.seed) ** 2.5
+
+    def fire_time(self, g, n):
+        rp = max(float(self.p['ember_pops']), 1e-6)
+        return (n * self.ng + g + 0.8 * ember_rnd(self.BURST_ID + g, n, 20, self.seed)) / rp
+
+    def _spawn(self, i, cy):
+        """New embers at slots i (index array), life number cy: born in the flames, more often near the tips (the flame
+        narrows with height); steady ones launched up in a cone, pops thrown out fast."""
+        if not len(i):
+            return
+        sl, p = self.slot[i], self.p
+        r_ = lambda k: ember_rnd(sl, cy, k, self.seed)
+        hh = r_(0) ** 0.7
+        a, r = r_(1) * 2 * math.pi, np.sqrt(r_(2)) * self.rad * (1 - 0.6 * hh)
+        self.P[i] = self.emit + np.stack([np.cos(a) * r, hh * self.hgt, np.sin(a) * r], 1)
+        ca, cone, sp = r_(3) * 2 * math.pi, p['ember_spread'] * 0.6 * np.sqrt(r_(4)), p['ember_rise'] * (0.5 + 0.85 * r_(5))
+        V = np.stack([np.sin(cone) * np.cos(ca), np.cos(cone), np.sin(cone) * np.sin(ca)], 1) * sp[:, None]
+        bca, bel = r_(17) * 2 * math.pi, 0.45 + 0.95 * r_(18)
+        bsp = (2.5 + 3.0 * p['ember_pop_size']) * (0.45 + 0.85 * r_(19))
+        Vb = np.stack([np.cos(bca) * np.cos(bel), np.sin(bel), np.sin(bca) * np.cos(bel)], 1) * bsp[:, None]
+        self.V[i] = np.where(self.burst[i][:, None], Vb, V)
+
+    def attr_cycle(self):
+        """The life number each slot's look comes from (a pop slot has already counted its firing)."""
+        return np.where(self.burst, self.cyc - 1, self.cyc)
+
+    def _air(self, i):
+        """The air an ember rides in: a buoyant plume that widens and slows with height, entrainment near the base,
+        turbulence, wind, and the flutter of a spinning flake of ash."""
+        p, P, t = self.p, self.P[i], self.t
+        rel = P - self.emit
+        h = np.maximum(rel[:, 1], 0.0)
+        r = np.hypot(rel[:, 0], rel[:, 2])
+        rise = p['ember_rise']
+        sig = self.rad * 0.9 + 0.08 + h * 0.18
+        gust = 0.7 + 0.6 * (0.5 + 0.25 * np.sin(2.1 * t - 1.1 * h + 0.3) + 0.25 * np.sin(3.7 * t - 0.6 * h + 1.7))
+        air = self.wind[None, :] * np.minimum(h * 0.8 + 0.25, 1.0)[:, None]
+        air[:, 1] += 0.75 * rise * np.exp(-r * r / (2 * sig * sig)) * gust / (1 + h * 0.25)
+        k = 0.06 * np.exp(-h * 2) * rise / (r + 0.15)
+        air[:, 0] -= rel[:, 0] * k
+        air[:, 2] -= rel[:, 2] * k
+        turb = p['ember_turb']
+        if turb > 0:
+            for (K, A, ph, om), adv, amp in ((self.modes[0], 0.4, turb * (0.25 + np.minimum(h, 2.0) * 0.5)),
+                                              (self.modes[1], 0.3, turb * 0.16 * np.minimum(0.3 + h, 1.5))):
+                q = P - np.array([0.0, adv * t, 0.0])
+                air += (0.6 * (np.sin(q @ K.T + ph + om * (t * 0.5)) @ A)) * amp[:, None]
+        sl, cy = self.slot[i], np.where(self.burst[i], self.cyc[i] - 1, self.cyc[i])
+        fa = p['ember_flutter'] * (0.08 + 0.34 * ember_rnd(sl, cy, 13, self.seed))
+        fw = 2 * math.pi * (1.5 + 4.5 * ember_rnd(sl, cy, 14, self.seed))
+        fph = ember_rnd(sl, cy, 15, self.seed) * 2 * math.pi
+        sg = np.where(ember_rnd(sl, cy, 16, self.seed) < 0.5, -1.0, 1.0)
+        tt = self.age[i] * fw + fph
+        air += np.stack([np.cos(tt), 0.35 * np.sin(tt * 1.7 + fph), sg * np.sin(tt)], 1) * fa[:, None]
+        sz = self.size(sl, cy)
+        b = self.burst[i]
+        tau = np.where(b, 0.35 + 0.6 * sz, 0.12 + 0.35 * sz)
+        air[:, 1] -= np.where(b, 0.8 + 2.5 * sz, 0.22 * sz)
+        return air, tau
+
+    def step(self, dt):
+        if not self.n:
+            self.t += dt
+            return
+        t, bu, st = self.t, self.burst, ~self.burst
+        alive = self.age >= 0
+        wait_s, wait_b = st & ~alive, bu & ~alive
+        i = np.nonzero(alive)[0]
+        if len(i):                                       # ride the air
+            air, tau = self._air(i)
+            k = 1 - np.exp(-dt / tau)
+            self.V[i] += (air - self.V[i]) * k[:, None]
+            self.P[i] += self.V[i] * dt
+            self.age[i] += dt
+        self.age[wait_s] += dt                           # steady: born when the age passes 0
+        born = np.nonzero(wait_s & (self.age >= 0))[0]
+        self._spawn(born, self.cyc[born])
+        lf = self.life(self.slot, self.attr_cycle())
+        es = np.nonzero(st & alive & (self.age >= lf))[0]  # ...and respawned when it passes its life
+        self.age[es] -= lf[es]
+        self.cyc[es] += 1
+        self._spawn(es, self.cyc[es])
+        self.age[bu & alive & (self.age >= lf)] = -1.0     # a pop spark that burned out waits for its group's next firing
+        iw = np.nonzero(wait_b)[0]                       # pops: waiting groups fire when their time comes
+        if len(iw):
+            tf = self.fire_time(self.group[iw], self.cyc[iw])
+            due = t >= tf
+            go = iw[due & (t - tf <= 0.25)]              # a firing missed by more than that is skipped, not made up
+            self._spawn(go, self.cyc[go])
+            self.age[go] = 0.0
+            self.cyc[iw[due]] += 1
+        self.t += dt
+
+    def state(self):
+        return self.P.copy(), self.V.copy(), self.age.copy(), self.cyc.copy(), self.t
+
+    def set_state(self, s):
+        self.P, self.V, self.age, self.cyc, self.t = s[0].copy(), s[1].copy(), s[2].copy(), s[3].copy(), s[4]
+
+
+EMBER_KEYS = ('units', 'first', 'fps', 'seed', 'speed', 'substeps', 'preroll', 'embers', 'ember_pos', 'ember_radius', 'ember_height',
+              'ember_rate', 'ember_life', 'ember_rise', 'ember_spread', 'ember_turb', 'ember_flutter', 'ember_wind', 'ember_wind_dir',
+              'ember_pops', 'ember_pop_size', 'utility')
+_EMBER_CACHE = {}
+
+
+def ember_preroll(p):
+    """Frames simulated before the first: enough for the plume to fill (at least 3.5 seconds)."""
+    return max(int(p['preroll']), int(math.ceil(3.5 * float(p['fps']))))
+
+
+def embers_at(p, frame, su):
+    """Ember state at a frame, simulated from before the first frame (like sim_at)."""
+    if not p.get('embers'):
+        return None
+    key = hashlib.md5(json.dumps([p.get(k) for k in EMBER_KEYS], default=str).encode()).hexdigest()
+    cache = _EMBER_CACHE.setdefault(key, {})
+    if len(_EMBER_CACHE) > 3:
+        _EMBER_CACHE.pop(next(iter(_EMBER_CACHE)))
+    es = EmberSim(p, su)
+    sub = max(2, int(p['substeps']))
+    dt = p['speed'] / float(p['fps']) / sub
+    f0 = int(p['first']) - ember_preroll(p)
+    start = max([f for f in cache if f <= frame], default=None)
+    if start is not None:
+        es.set_state(cache[start])
+        f = start
+    else:
+        es.start((f0 - p['first']) / float(p['fps']) * p['speed'])
+        f = f0
+    while f < frame:
+        for _ in range(sub):
+            es.step(dt)
+        f += 1
+        if f >= int(p['first']) - 1:
+            cache[f] = es.state()
+            while len(cache) > 6:
+                cache.pop(min(cache))
+    return es
 
 
 # =====================================================================================================
@@ -2201,11 +2500,13 @@ def dust_path(p, f, name='dust'):
     return os.path.join(p['cache'], '%s.%04d.exr' % (name, f))
 
 
-def write_dust(path, held, unheld):
+def write_dust(path, held, unheld, embers=None):
     # PIPELINE: half-float EXR, ZIP, scene-linear (no colour transform). Match the studio's comp working space and naming.
     lum = lambda a: np.clip(0.2126 * a[:, :, 0] + 0.7152 * a[:, :, 1] + 0.0722 * a[:, :, 2], 0, 1)
     ch = {'R': held[:, :, 0], 'G': held[:, :, 1], 'B': held[:, :, 2], 'A': lum(held),
           'noholdout.red': unheld[:, :, 0], 'noholdout.green': unheld[:, :, 1], 'noholdout.blue': unheld[:, :, 2], 'noholdout.alpha': lum(unheld)}
+    if embers is not None:
+        ch.update({'embers.red': embers[:, :, 0], 'embers.green': embers[:, :, 1], 'embers.blue': embers[:, :, 2], 'embers.alpha': lum(embers)})
     write_exr(path, ch, {'motefield/version': ('string', __version__)}, half=True)
 
 
@@ -2230,9 +2531,9 @@ def render_frames(p, frames, progress=None, name='dust'):
             break
         if progress and progress((i + 0.6) / float(len(frames)), 'Rendering frame %d' % f) is False:
             break
-        held, unheld = render_frame(p, shot, f, sim)
+        held, unheld, emb = render_all(p, shot, f, sim, embers_at(p, f, shot.su))
         path = dust_path(p, f, name)
-        write_dust(path, held, unheld)
+        write_dust(path, held, unheld, emb)
         out.append(path)
     return out
 
@@ -2370,6 +2671,29 @@ _KNOBS = [
     ('Lens', 'shutter_mode', 'enum', 'Shutter', ['centred', 'backward', 'forward']),
     ('Lens', 'shutter_shape', 'enum', 'Shutter shape', ['backwardsShape', 'box']),
     ('Lens', 'mb', 'bool', 'Motion blur', None),
+    ('Embers', 'embers', 'bool', 'Embers', 'A second emitter, for fire: embers rise from an area you place and size to the fire, ride a buoyant plume, cool from yellow-orange to dull red, and pop in bursts.'),
+    ('Embers', 'ember_pos', 'xyz', 'Emitter position', 'The base of the fire (scene units).'),
+    ('Embers', 'ember_radius', 'float', 'Emitter radius', (1, 200)),
+    ('Embers', 'ember_height', 'float', 'Emission height', (0, 150)),
+    ('Embers', 'ember_rate', 'float', 'Embers per second', (0, 1500)),
+    ('Embers', None, 'divider', 'Look', None),
+    ('Embers', 'ember_life', 'float', 'Lifetime', (0.2, 4)),
+    ('Embers', 'ember_temp', 'float', 'Start temperature (K)', (900, 1700)),
+    ('Embers', 'ember_size', 'float', 'Ember size (mm)', (0.1, 3)),
+    ('Embers', 'ember_gain', 'float', 'Brightness', (0, 20)),
+    ('Embers', 'ember_twinkle', 'float', 'Twinkle', (0, 1)),
+    ('Embers', None, 'divider', 'Motion', None),
+    ('Embers', 'ember_rise', 'float', 'Plume speed (m/s)', (0, 6)),
+    ('Embers', 'ember_spread', 'float', 'Launch spread', (0, 2)),
+    ('Embers', 'ember_flutter', 'float', 'Flutter', (0, 2)),
+    ('Embers', 'ember_turb', 'float', 'Turbulence', (0, 3)),
+    ('Embers', 'ember_wind', 'float', 'Wind (m/s)', (0, 6)),
+    ('Embers', 'ember_wind_dir', 'float', 'Wind heading', (0, 360)),
+    ('Embers', 'ember_pops', 'float', 'Pops per second', (0, 4)),
+    ('Embers', 'ember_pop_size', 'float', 'Pop size', (0, 1)),
+    ('Embers', None, 'text', 'Embers glow by their own heat, so their colour comes from temperature as they cool. Pops are the crackle of '
+                            'burning wood: short bursts of fast sparks that arc back down. They get the same lens, shutter and holdouts as the dust, '
+                            'and are written into RGBA with the dust and on their own in the <b>embers</b> layer.', None),
     ('Holdouts', 'holdout', 'bool', 'Depth holdouts', 'Dust behind what the utility pass sees is held out.'),
     ('Holdouts', 'fg_fade', 'bool', 'Fade out foreground holdouts', None),
     ('Holdouts', 'fg_near', 'float', 'No holdout nearer than', (0, 2000)),

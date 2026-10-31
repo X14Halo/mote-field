@@ -152,6 +152,8 @@ def _job(cmd, a):
         return mfweb.preview_light(p())
     if cmd == 'pbounce':
         return mfweb.preview_bounce(p())
+    if cmd == 'einit':
+        return mfweb.ember_init(p())
     if cmd == 'movers':
         return mfweb.find_movers(p())
     if cmd == 'fimages':

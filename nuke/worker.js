@@ -53,6 +53,7 @@ const jobs = {
   pinit: ({ p }) => out(mf.preview_init(JSON.stringify(p))),
   plight: ({ p }) => out(mf.preview_light(JSON.stringify(p))),
   pbounce: ({ p }) => out(mf.preview_bounce(JSON.stringify(p))),
+  einit: ({ p }) => out(mf.ember_init(JSON.stringify(p))),
   movers: ({ p, id }) => {
     const cb = (x, msg) => { say('progress', { id, x, msg }); return true; };
     return out(mf.find_movers(JSON.stringify(p), cb));

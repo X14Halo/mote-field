@@ -327,7 +327,7 @@ let standinWidth = 1280;
 let frame = 1001;
 const dust = new Map();             // frame -> {key, w, h, held, unheld, motes, secs}
 const plates = new Map();           // frame -> {w, h, rgb} | null
-let view = 'comp', layer = 'rgba', gain = 0;
+let view = 'comp', layer = 'rgba', gain = 0, curTab = '';
 let busy = false, cancelRange = false, rangeRunning = false;
 let liveTimer = 0, platePending = new Set(), failed = '';
 const ui = {};                      // key -> {set(v)}
@@ -426,7 +426,7 @@ function buildPanel() {
   const pages = {};
   tabs.forEach((t, i) => {
     const b = document.createElement('button'); b.textContent = t; if (!i) b.className = 'on';
-    b.onclick = () => { [...tabsEl.children].forEach(x => x.classList.toggle('on', x === b)); for (const k in pages) pages[k].hidden = k !== t; try { localStorage.setItem('mf_tab', t); } catch (e) {} };
+    b.onclick = () => { [...tabsEl.children].forEach(x => x.classList.toggle('on', x === b)); for (const k in pages) pages[k].hidden = k !== t; curTab = t; v3dirty(); try { localStorage.setItem('mf_tab', t); } catch (e) {} };
     tabsEl.appendChild(b);
     const pg = document.createElement('div'); pg.hidden = !!i; pages[t] = pg; pane.appendChild(pg);
   });
@@ -548,6 +548,13 @@ function buildPanel() {
       if (sl) requestAnimationFrame(sl.place);
       continue;
     }
+    if (key === 'ember_pos') {        // browser / live viewer: place the emitter by clicking the set
+      const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Place'; b.id = 'placeEmitter';
+      b.title = 'Click where the fire is in the viewer (2D): the emitter goes on the surface you click';
+      b.onclick = () => { vw.placing = vw.placing === 'emitter' ? null : 'emitter'; b.classList.toggle('on', !!vw.placing);
+        setStatus(vw.placing ? 'Click where the fire is in the viewer (Esc to stop).' : ''); };
+      setTimeout(() => ctl.appendChild(b), 0);
+    }
     if (k.kind === 'xyz' || k.kind === 'color') {
       const w = document.createElement('div'); w.className = 'xyz';
       const labs = k.kind === 'color' ? ['r', 'g', 'b'] : ['x', 'y', 'z'];
@@ -565,6 +572,7 @@ function buildPanel() {
       continue;
     }
   }
+  curTab = tabs[0];
   try { const t = localStorage.getItem('mf_tab'); if (t && pages[t]) [...tabsEl.children].find(b => b.textContent === t).click(); } catch (e) {}
 }
 
@@ -1082,6 +1090,7 @@ async function play() {
 $('tPlay').onclick = () => playing ? stop() : play();
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input,select,textarea')) return;
+  if (e.key === 'Escape' && vw.placing) { vw.placing = null; const b = $('placeEmitter'); if (b) b.classList.remove('on'); setStatus(''); return; }
   if (e.key === 'ArrowLeft') { stop(); setFrame(frame - 1, true); e.preventDefault(); }
   else if (e.key === 'ArrowRight') { stop(); setFrame(frame + 1, true); e.preventDefault(); }
   else if (e.key === ' ') { playing ? stop() : play(); e.preventDefault(); }
@@ -1138,6 +1147,14 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
   st.addEventListener('pointerdown', (e) => {
     if (e.target !== cv && e.target !== cv3 && e.target !== st) return;
     if (!$('boot').hidden) return;
+    if (vw.placing === 'emitter' && e.button === 0 && !e.altKey) {       // put the ember emitter on the surface under the click
+      e.preventDefault(); e.stopPropagation();
+      const P = pickSurface(e);
+      if (P) { setKnob('ember_pos', P.map(v => +v.toFixed(1))); setKnob('embers', true); changed(true); setStatus('Emitter placed at ' + P.map(v => v.toFixed(0)).join(', ') + '.'); }
+      else setStatus('Nothing there to put the emitter on: click a surface.', true);
+      vw.placing = null; const b = $('placeEmitter'); if (b) b.classList.remove('on');
+      return;
+    }
     e.preventDefault();
     st.setPointerCapture(e.pointerId);
     const btn = e.button;                     // 0 left, 1 middle, 2 right
@@ -1598,6 +1615,9 @@ function lightMode(p) {
   return 2;
 }
 function lightKey(p) { return lightMode(p) === 2 ? JSON.stringify([shot.utility, p.units, p.light_az, p.light_el, p.first, p.last]) : 'm' + lightMode(p); }
+// what the embers' starting state depends on (motefield.EMBER_KEYS); the look knobs only change how they're drawn
+const EMBER_KEYS = ['units', 'first', 'fps', 'seed', 'speed', 'substeps', 'preroll', 'embers', 'ember_pos', 'ember_radius', 'ember_height',
+  'ember_rate', 'ember_life', 'ember_rise', 'ember_spread', 'ember_turb', 'ember_flutter', 'ember_wind', 'ember_wind_dir', 'ember_pops', 'ember_pop_size'];
 function simStepKey(p) {
   const push = p.push && moversReady(p);         // pushers join the simulation once the movers are found
   return JSON.stringify([pvs.initKey, pvs.lightKey, push ? [movers.key, [...moverIds(p)].sort().join(' '), p.push_amount, p.push_radius] : 0, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
@@ -1649,6 +1669,11 @@ async function ensurePreview() {
       if (pvs.initKey !== ik) {
         const r = await call('pinit', { p });
         pv.setInit(r); pvs.n = r.n; pvs.initKey = ik;
+        v3dirty(); continue;
+      }
+      const ek = p.embers ? JSON.stringify(EMBER_KEYS.map(k => p[k])) : '';
+      if (ek && pvs.emberKey !== ek) {
+        pv.setEmbers(await call('einit', { p })); pvs.emberKey = ek;
         v3dirty(); continue;
       }
       const bk = JSON.stringify([shot.utility, p.units, p.shadows, p.interior, p.light_az, p.light_el, p.light_int, p.light_k, p.light_rgb, p.first, p.last, shot.standinJson]);
@@ -1747,6 +1772,14 @@ function drawMovers(project) {     // project(P scene units) -> [x, y, z] device
   const w = Math.max(1, Math.round(oc.clientWidth * dpr)), h = Math.max(1, Math.round(oc.clientHeight * dpr));
   if (oc.width !== w || oc.height !== h) { oc.width = w; oc.height = h; }
   const g = oc.getContext('2d'); g.clearRect(0, 0, w, h);
+  if (project && V.embers && curTab === 'Embers') {        // the ember emitter: its base ring, top ring and sides
+    const c = V.ember_pos.map(Number), rr = Number(V.ember_radius), hh = Number(V.ember_height);
+    const ring = (y) => { const pts = []; for (let i = 0; i <= 32; i++) { const a = i / 32 * Math.PI * 2; pts.push(project([c[0] + Math.cos(a) * rr, c[1] + y, c[2] + Math.sin(a) * rr])); } return pts; };
+    g.strokeStyle = '#ff9a4a'; g.lineWidth = 1.5 * dpr; g.setLineDash([]);
+    for (const y of [0, hh]) { const pts = ring(y); g.beginPath(); let on = false; for (const q of pts) { if (!q) { on = false; continue; } if (on) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); on = true; } g.stroke(); }
+    for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) { const q0 = project([c[0] + Math.cos(a) * rr, c[1], c[2] + Math.sin(a) * rr]), q1 = project([c[0] + Math.cos(a) * rr, c[1] + hh, c[2] + Math.sin(a) * rr]);
+      if (q0 && q1) { g.beginPath(); g.moveTo(q0[0], q0[1]); g.lineTo(q1[0], q1[1]); g.stroke(); } }
+  }
   const parts = project ? moverParts() : null; if (!parts || !parts.length) return;
   const top = {};
   const items = parts.map(q => { const s = project(q.c); return s ? Object.assign({ s, rp: project.rpx(q.c, q.r) }, q) : null; }).filter(Boolean).sort((a, b) => b.s[2] - a.s[2]);
@@ -1762,6 +1795,25 @@ function drawMovers(project) {     // project(P scene units) -> [x, y, z] device
   }
   g.setLineDash([]); g.font = (11 * dpr) + 'px ui-monospace, monospace'; g.textAlign = 'center';
   for (const [id, t] of Object.entries(top)) { g.fillStyle = t[3] ? t[2] : '#8a8f96'; g.fillText(id, t[0], t[1] - 4 * dpr); }
+}
+function pickSurface(e) {          // the world point (scene units) under the mouse in the 2D viewer, from the shown depth
+  const k = vw.pick; if (!k || !k.dist || !vw.rect || dim !== '2d') return null;
+  const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), R = vw.rect;
+  const u = ((e.clientX - r.left) * dpr - R.x0) / (R.x1 - R.x0), v = ((e.clientY - r.top) * dpr - R.yTop) / (R.yBot - R.yTop);
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+  const gl = v3.gl, d = k.dist, out = new Float32Array(4);
+  const px = Math.min(d.w - 1, Math.floor(u * d.w)), py = Math.min(d.h - 1, Math.floor(v * d.h));
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pv.fb);
+  for (let i = 0; i < 4; i++) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, i ? null : d, 0);
+  gl.readBuffer(gl.COLOR_ATTACHMENT0);
+  // stand-in and picked depths are stored top row first or bottom row first: try the row as shown, then flipped
+  gl.readPixels(px, d.h - 1 - py, 1, 1, gl.RGBA, gl.FLOAT, out);
+  let dist = out[0];
+  if (!(dist > 0)) { gl.readPixels(px, py, 1, 1, gl.RGBA, gl.FLOAT, out); dist = out[0]; }
+  if (!(dist > 0)) return null;
+  const c = k.cam, th = Math.tan(c.hfov / 2), tv = th * k.H0 / k.W0, x = (u * 2 - 1) * th, y = (1 - v * 2) * tv;
+  const dir = [0, 1, 2].map(i => -c.back[i] + x * c.right[i] + y * c.up[i]), n = Math.hypot(...dir);
+  return [0, 1, 2].map(i => c.pos[i] + dir[i] / n * dist);
 }
 function camProjector(cam, W0, H0, rect) {      // a shot / free camera onto the 2D viewer
   const th = Math.tan(cam.hfov / 2), tv = th * H0 / W0, sx = (rect.x1 - rect.x0) / W0, sy = (rect.yBot - rect.yTop) / H0;
@@ -1972,6 +2024,7 @@ function paintPreview2d() {
                 set: vw.set, skyMul: vw.blackSky ? 0 : 1, gain: Math.pow(2, gain), glow: vw.glow, look: vw.look,
                 rect: [x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2] });
     drawMovers(camProjector(cam, W0, H0, vw.rect));      // cam: the free camera when it's on (camOverride)
+    vw.pick = { cam: Object.assign({}, cam), W0, H0, dist: distTex };
   } catch (e) { console.error(e); pvs.err = e.message; black(); drawMovers(null); }
   pv.camOverride = null;
   const now = performance.now();
