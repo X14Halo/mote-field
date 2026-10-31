@@ -187,14 +187,18 @@ void main(){
 
 // 7. plate x set brightness + dust, into an HDR image at plate resolution
 const LK_COMP = GLSL_COMMON + `
-uniform sampler2D uPlate, uDust; uniform int uHasPlate, uShowPlate, uShowDust, uDustFlip; uniform float uSet; uniform vec2 uWH;
+uniform sampler2D uPlate, uDust, uDustFree; uniform int uHasPlate, uShowPlate, uShowDust, uDustFlip, uHeldView; uniform float uSet; uniform vec2 uWH;
 out vec4 o;
 void main(){
   vec2 uv = gl_FragCoord.xy / uWH;            // texture rows run top-down for plates
   vec3 c = vec3(0.0);
   if (uShowPlate == 1 && uHasPlate == 1) c += texture(uPlate, vec2(uv.x, uv.y)).rgb * uSet;
   if (uShowDust == 1) { ivec2 ds = textureSize(uDust, 0); ivec2 q = ivec2(vec2(uv.x, uDustFlip == 1 ? 1.0 - uv.y : uv.y) * vec2(ds));
-    c += texelFetch(uDust, clamp(q, ivec2(0), ds - 1), 0).rgb; }   // float32 buffers can't always be filtered
+    vec3 held = texelFetch(uDust, clamp(q, ivec2(0), ds - 1), 0).rgb;   // float32 buffers can't always be filtered
+    c += held;
+    if (uHeldView == 1) {                     // what the holdouts take away, in red
+      vec3 fr = texelFetch(uDustFree, clamp(q, ivec2(0), ds - 1), 0).rgb;
+      c += vec3(1.0, 0.1, 0.06) * max(dot(fr - held, vec3(0.3333)), 0.0) * 3.0; } }
   o = vec4(c, 1.0);
 }`;
 const LK_DOWN = GLSL_COMMON + `
@@ -272,12 +276,15 @@ class MFLook {
   // the stand-in, lit, for one frame (cached)
   standin(frame, W, H, L, haze, su, opt) {
     opt = opt || {};
+    // the walker (stand-in character) is where it is on opt.walker (the current frame), even with the camera held or free
+    const wf = this.pv.boxes && this.pv.boxes.walker ? (opt.walker !== undefined ? opt.walker : frame) : null;
+    const ck = wf === null ? frame : frame + '@' + wf;
     const key = [W, H, haze, opt.key || ''].join('|');
-    const hit = this.cache.get(frame);
-    if (hit && hit.key === key) { this.cache.delete(frame); this.cache.set(frame, hit); return hit; }
-    if (hit) { this.pv._free(hit.plate, hit.dist, hit.dof); this.cache.delete(frame); }
+    const hit = this.cache.get(ck);
+    if (hit && hit.key === key) { this.cache.delete(ck); this.cache.set(ck, hit); return hit; }
+    if (hit) { this.pv._free(hit.plate, hit.dist, hit.dof); this.cache.delete(ck); }
     const pv = this.pv, gl = pv.gl, s = this._scratch(W, H), c = pv.camAt(frame);
-    pv.walkerTo(frame);
+    if (wf !== null) pv.walkerTo(wf);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST); gl.bindVertexArray(pv.vao);
     const plate = this._half(W, H), dist = pv._tex(W, H, gl.R32F, gl.RED, gl.FLOAT, null);
     let p = this.pG; gl.useProgram(p); this._camU(p, c, W, H); this._lightU(p, L);
@@ -299,7 +306,7 @@ class MFLook {
     gl.uniform2f(p.u.uFull, W, H); gl.uniform1f(p.u.uGIAmt, 1.0);
     pv._target([plate], W, H); gl.drawArrays(gl.TRIANGLES, 0, 3);
     const e = { plate, dist, key, bytes: W * H * 20 };
-    this.cache.set(frame, e);
+    this.cache.set(ck, e);
     let total = 0; for (const v of this.cache.values()) total += v.bytes;
     for (const [f, v] of this.cache) { if (total <= this.budget || v === e) break; pv._free(v.plate, v.dist, v.dof); this.cache.delete(f); total -= v.bytes; }
     return e;
@@ -336,6 +343,7 @@ class MFLook {
     pv._bind(p, 0, 'uPlate', plate || pv.dummy); pv._bind(p, 1, 'uDust', (o.dust && o.dust.tex) || pv.dummy);
     gl.uniform1i(p.u.uHasPlate, plate ? 1 : 0); gl.uniform1i(p.u.uShowPlate, o.view !== 'dust' ? 1 : 0);
     gl.uniform1i(p.u.uShowDust, o.view !== 'plate' && o.dust && o.dust.tex ? 1 : 0); gl.uniform1i(p.u.uDustFlip, o.dust && o.dust.flip ? 1 : 0);
+    pv._bind(p, 2, 'uDustFree', (o.dust && o.dust.free) || pv.dummy); gl.uniform1i(p.u.uHeldView, o.dust && o.dust.free ? 1 : 0);
     gl.uniform1f(p.u.uSet, o.set); gl.uniform2f(p.u.uWH, W, H);
     pv._target([s.hdr], W, H); gl.drawArrays(gl.TRIANGLES, 0, 3);
     // glow

@@ -1,5 +1,5 @@
 """
-MoteField for Nuke (prototype v0.3): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.4): camera-aware dust motes for comp.
 
 WHAT IT IS
     A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.3'
+__version__ = '0.4'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -528,7 +528,7 @@ def standin_boxes(frame=None, view='wide'):
     walker is in it too."""
     B = []
     if frame is not None and STANDIN_VIEWS.get(view, {}).get('walker'):
-        B.append(standin_walker(frame)[0])
+        B.extend(b for b, v in standin_walker_parts(frame))
 
     def box(mn, mx, c, name):
         B.append((tuple(float(v) for v in mn), tuple(float(v) for v in mx), tuple(c), name))
@@ -594,7 +594,9 @@ STANDIN_VIEWS = {
 }
 
 
-STANDIN_WALKER = dict(start=(-330.0, 0.0, -105.0), end=(20.0, 0.0, -160.0), size=(46.0, 175.0, 30.0), color=(0.13, 0.10, 0.09))
+STANDIN_WALKER = dict(start=(-330.0, 0.0, -105.0), end=(20.0, 0.0, -160.0), size=(46.0, 175.0, 30.0), color=(0.13, 0.10, 0.09),
+                      # an arm on the camera side, swinging back and forth along the walk: a limb that moves differently from the body
+                      arm=dict(size=(12.0, 62.0, 12.0), top=148.0, swing=32.0, period=16.0))
 
 
 def standin_walker(frame):
@@ -607,6 +609,20 @@ def standin_walker(frame):
     mn = c - np.array([sz[0] / 2, 0.0, sz[2] / 2])
     mx = c + np.array([sz[0] / 2, sz[1], sz[2] / 2])
     return (tuple(mn), tuple(mx), Wk['color'], 'walker'), (b - a) / n
+
+
+def standin_walker_parts(frame):
+    """The walker's body and its swinging arm: [(box, velocity per frame), ...]."""
+    body, vel = standin_walker(frame)
+    A = STANDIN_WALKER['arm']
+    mn, mx = np.array(body[0]), np.array(body[1])
+    sw = lambda f: A['swing'] * math.sin(2 * math.pi * (f - STANDIN['first']) / A['period'])
+    cx = (mn[0] + mx[0]) / 2 + sw(frame)
+    z0 = mx[2] + 1.0                                    # just in front of the body (toward the camera)
+    amn = (cx - A['size'][0] / 2, A['top'] - A['size'][1], z0)
+    amx = (cx + A['size'][0] / 2, A['top'], z0 + A['size'][2])
+    avel = vel + np.array([sw(frame) - sw(frame - 1), 0.0, 0.0])
+    return [(body, vel), ((amn, amx, STANDIN_WALKER['color'], 'walker_arm'), avel)]
 
 
 def standin_camera(frame, view='wide'):
@@ -707,10 +723,10 @@ def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5
     # backward motion vectors (pixels, Nuke convention: +y up): where each surface point was on the previous frame
     Pprev = P.copy()
     if STANDIN_VIEWS.get(view, {}).get('walker'):
-        wbox, wvel = standin_walker(frame)
-        tw, _, _ = _trace_boxes(cam.pos[None, :], D, [wbox])
-        onw = hit & np.isfinite(tw) & (tw <= t + 1e-3)
-        Pprev[onw] -= wvel
+        for wbox, wvel in standin_walker_parts(frame):
+            tw, _, _ = _trace_boxes(cam.pos[None, :], D, [wbox])
+            onw = hit & np.isfinite(tw) & (tw <= t + 1e-3)
+            Pprev[onw] -= wvel
     cprev = standin_camera(frame - 1, view)
     xc, yc, _ = cam.project(P, W, H)
     xp, yp, _ = cprev.project(Pprev, W, H)
@@ -778,7 +794,7 @@ DEFAULTS = dict(
     speed=1.0, drift=1.2, drift_dir=200.0, lift=0.0, eddies=3.0, eddy_size=1.4, micro=0.8, thermal=1.5, settle=0.5,
     preroll=48, substeps=2,
     # characters pushing the dust (from the utility pass's backward motion vectors)
-    push=False, push_amount=1.0, push_radius=1.0, push_min=0.25, mv_scale=1.0,
+    push=False, movers='', show_movers=True, push_amount=1.0, push_radius=1.0, push_min=0.25, mv_scale=1.0,
     # key light: a directional light
     light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, light_rgb=(1.0, 1.0, 1.0), bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
     # lens (0 = use the camera from the utility pass headers)
@@ -796,7 +812,7 @@ DEFAULTS = dict(
 SIM_KEYS = ('units', 'first', 'fps', 'seed', 'box_center', 'box_size', 'box_rot', 'density', 'max_motes', 'size_min', 'size_max',
             'size_bias', 'flakes', 'fibers', 'fluff', 'speed', 'drift', 'drift_dir', 'lift', 'eddies', 'eddy_size', 'micro',
             'thermal', 'settle', 'preroll', 'substeps', 'light_az', 'light_el', 'shadows', 'interior', 'standin_json', 'utility',
-            'push', 'push_amount', 'push_radius', 'push_min', 'mv_scale')
+            'push', 'movers', 'push_amount', 'push_radius', 'push_min', 'mv_scale')
 
 
 def settings(**kw):
@@ -1269,9 +1285,12 @@ def bounce_lights(p, shot, light, count=24):
 # =====================================================================================================
 WAKE_DRAG = 0.35          # how much of a mover's speed its wake drags the air along at
 WAKE_TURB = 0.6           # how hard its wake stirs the air (x its speed)
-_PUSH_CACHE = {}
-PUSH_MAX = 4          # per frame
-PUSH_WAKE = 5         # frames of wake behind each pusher
+PUSH_WAKE = 5             # frames of wake behind each pusher
+MOVER_LIST = 6            # movers offered after "Find moving things" (the biggest; the rest are counted, not listed)
+MOVER_GROUPS = 8          # moving things looked at per frame (the biggest)
+MOVER_PARTS = 6           # spheres per mover per frame: body, limbs, a cape...
+PUSH_ENTRIES = 144        # pushers the simulation takes per step (this frame's and the wake), the same on the GPU
+_MOVER_CACHE = {}
 
 
 def standin_pushers(frame):
@@ -1281,21 +1300,42 @@ def standin_pushers(frame):
     return np.array([c]), np.array([0.45]), np.array([vel * 0.01 * STANDIN.get('fps', 24.0)])
 
 
-def utility_pushers(p, shot, frame, max_n=PUSH_MAX):
-    """Moving surfaces seen by the camera on this frame, from the utility pass: world position now, and where that point was
-    on the previous frame (the backward motion vectors point to it in the previous frame's position pass). Points moving faster
-    than push_min are clustered into a few spheres: centre (m), radius (m), velocity (m/s)."""
-    empty = (np.zeros((0, 3)), np.zeros(0), np.zeros((0, 3)))
+def _read_mv(shot, frame):
+    """(motion vector layer names, the layer) for a frame, or None; the last few are kept."""
+    cache = shot.__dict__.setdefault('_mv_cache', {})
+    if frame in cache:
+        return cache[frame]
+    res = None
+    try:
+        e = shot._open(frame)
+        try:
+            found = survey_layers(e)
+            if 'MV' in found:
+                mi, mn = found['MV']
+                res = (mn, e.read(mi, mn))
+        finally:
+            e.close()
+    except Exception:
+        res = None
+    cache[frame] = res
+    while len(cache) > 3:
+        cache.pop(next(iter(cache)))
+    return res
+
+
+def _moving_samples(p, shot, frame):
+    """Surface points seen moving on this frame, from the utility pass: (positions m (n,3), velocities m/s (n,3), camera
+    position m), or None. Each pixel's backward motion vector points to where it was in the previous frame's position pass.
+    A point counts as moving only when that disagrees with the camera's own move (a still point reprojected into the
+    previous camera); depth edges, just-revealed surfaces and slow motion are dropped."""
     try:
         e = shot._open(frame)
     except Exception:
-        return empty
+        return None
     try:
         found = survey_layers(e)
         if 'MV' not in found or 'P' not in found:
-            return empty
-        mi, mn = found['MV']
-        mv = e.read(mi, mn)
+            return None
         nrm = None
         if 'N' in found:
             ni, nn = found['N']
@@ -1307,9 +1347,11 @@ def utility_pushers(p, shot, frame, max_n=PUSH_MAX):
         D, P = shot.surface(frame)
         Dp, Pp = shot.surface(frame - 1)
     except Exception:
-        return empty
-    if P is None or Pp is None:
-        return empty
+        return None
+    got = _read_mv(shot, frame)
+    if P is None or Pp is None or got is None:
+        return None
+    mn, mv = got
     H, W = P.shape[:2]
     st = max(1, int(round(W / 320.0)))                  # about 320 samples across, whatever the resolution
     ys, xs = np.mgrid[0:H:st, 0:W:st]
@@ -1317,8 +1359,24 @@ def utility_pushers(p, shot, frame, max_n=PUSH_MAX):
     px = xs + 0.5 + mv[mn[0]][ys, xs] * sc
     py = ys + 0.5 - mv[mn[1]][ys, xs] * sc            # Nuke convention: +y is up the image
     xi, yi = np.clip(px.astype(np.intp), 0, W - 1), np.clip(py.astype(np.intp), 0, H - 1)
-    a, b = P[ys, xs].reshape(-1, 3).astype(np.float64), Pp[yi, xi].reshape(-1, 3).astype(np.float64)
-    ok = (np.abs(a).sum(1) > 0) & (np.abs(b).sum(1) > 0)
+    a = P[ys, xs].reshape(-1, 3).astype(np.float64)
+    # the previous position, interpolated between the 4 pixels around where the motion vector lands (nearest-pixel lookups
+    # put surfaces seen at a grazing angle tens of centimetres off in depth)
+    fx, fy = np.clip(px - 0.5, 0, W - 1.001), np.clip(py - 0.5, 0, H - 1.001)
+    x0, y0 = fx.astype(np.intp), fy.astype(np.intp)
+    tx, ty = (fx - x0)[..., None], (fy - y0)[..., None]
+    q00, q10, q01, q11 = Pp[y0, x0], Pp[y0, x0 + 1], Pp[y0 + 1, x0], Pp[y0 + 1, x0 + 1]
+    b = ((q00 * (1 - tx) + q10 * tx) * (1 - ty) + (q01 * (1 - tx) + q11 * tx) * ty).reshape(-1, 3).astype(np.float64)
+    allhit = np.all([np.abs(q).sum(-1) > 0 for q in (q00, q10, q01, q11)], axis=0).reshape(-1)
+    ok = (np.abs(a).sum(1) > 0) & allhit
+    # motion is smooth from frame to frame: where the motion vector lands, the previous frame's own motion vector should be
+    # about the same. Surfaces uncovered this frame fail this: there they land on whatever was in front, moving its own way
+    prev = _read_mv(shot, frame - 1)
+    if prev is not None and prev[1][prev[0][0]].shape == (H, W):
+        m0 = np.stack([mv[mn[0]][ys, xs], mv[mn[1]][ys, xs]], -1).reshape(-1, 2) * sc
+        m1 = np.stack([prev[1][prev[0][0]][yi, xi], prev[1][prev[0][1]][yi, xi]], -1).reshape(-1, 2) * sc
+        tol = 0.5 * W / 320.0 + 0.3 * np.maximum(np.linalg.norm(m0, axis=1), np.linalg.norm(m1, axis=1))
+        ok &= np.linalg.norm(m0 - m1, axis=1) < tol
 
     def edge(Dm, yy, xx):          # depth jumps around a pixel: motion there is unreliable (it may land on another surface)
         lo, hi = np.full(yy.shape, np.inf), np.zeros(yy.shape)
@@ -1330,15 +1388,13 @@ def utility_pushers(p, shot, frame, max_n=PUSH_MAX):
     ok &= ~edge(Dp, yi, xi).reshape(-1) & ~edge(D, ys, xs).reshape(-1)
     # the camera's own move: where this point would have been on the previous frame if it stood still. Only pixels whose
     # motion vector disagrees with that are on something that moves (a 1.5 px tolerance for filtering / rounding)
-    camp0 = shot.camera(frame - 1)
-    qx, qy, qz = camp0.project(a, W, H)
+    cam, camp = shot.camera(frame), shot.camera(frame - 1)
+    qx, qy, qz = camp.project(a, W, H)
     ok &= (np.hypot(qx - px.reshape(-1), qy - py.reshape(-1)) > 1.5) | (qz <= 0)
     su, fps = shot.su, float(p['fps'])
     v = (a - b) * su * fps                              # m/s
     spd = np.linalg.norm(v, axis=1)
-    # what a one-pixel error in the motion vectors would look like at that distance: far or grazing surfaces need more
-    # apparent motion before they count, so static set pieces don't read as moving
-    cam, camp = shot.camera(frame), shot.camera(frame - 1)
+    # what a pixel of motion-vector error would look like at that distance: far or grazing surfaces need more apparent motion
     view = a - cam.pos
     dist = np.linalg.norm(view, axis=1)
     foot = dist * su * 2 * math.tan(cam.hfov / 2) / W
@@ -1351,65 +1407,251 @@ def utility_pushers(p, shot, frame, max_n=PUSH_MAX):
     da, db = np.linalg.norm(a - camp.pos, axis=1), np.linalg.norm(b - camp.pos, axis=1)
     ok &= (da - db) < 0.08 * da
     if not ok.any():
-        return empty
-    am, vm = a[ok] * su, v[ok]
-    cell = np.floor(am / 0.5).astype(np.intp)
-    keys, inv, cnt = np.unique(cell, axis=0, return_inverse=True, return_counts=True)
+        return None
+    am, vm, eye = a[ok] * su, v[ok], cam.pos * su
+    # surfaces uncovered by something just in front of them (closer than the test above can tell) take on a velocity that
+    # differs from their neighbours along the line of sight only: drop samples like that
+    _, inv, cnt = np.unique(np.floor(am / 0.3).astype(np.intp), axis=0, return_inverse=True, return_counts=True)
     inv = inv.reshape(-1)
-    C, R, V = [], [], []
-    # merge neighbouring cells around the biggest ones into up to max_n blobs
-    order = np.argsort(-cnt)
-    used = np.zeros(len(keys), bool)
-    for k in order:
-        if used[k] or len(C) >= max_n or cnt[k] < 4:
+    med = np.zeros((len(cnt), 3))
+    for i in np.nonzero(cnt >= 4)[0]:
+        med[i] = np.median(vm[inv == i], 0)
+    dv = vm - med[inv]
+    ray = am - eye
+    ray /= np.maximum(np.linalg.norm(ray, axis=1, keepdims=True), 1e-9)
+    along = np.abs((dv * ray).sum(1))
+    keep = ~((cnt[inv] >= 4) & (along > 0.8) & (along > 0.8 * np.linalg.norm(dv, axis=1)))
+    if not keep.any():
+        return None
+    return am[keep], vm[keep], eye
+
+
+def _kmeans(X, k, iters=8):
+    """Deterministic k-means (farthest-point seeds): labels."""
+    C = [X[np.argmin(((X - X.mean(0)) ** 2).sum(1))]]
+    for _ in range(1, k):
+        d = np.min([((X - c) ** 2).sum(1) for c in C], axis=0)
+        C.append(X[np.argmax(d)])
+    C = np.array(C)
+    for _ in range(iters):
+        lab = np.argmin(((X[:, None, :] - C[None]) ** 2).sum(2), 1)
+        for j in range(k):
+            m = lab == j
+            if m.any():
+                C[j] = X[m].mean(0)
+    return np.argmin(((X[:, None, :] - C[None]) ** 2).sum(2), 1)
+
+
+def frame_movers(p, shot, frame):
+    """The things moving on this frame, biggest first: [{c, v, r, n, score, parts: [(centre m, radius m, velocity m/s)]}].
+    Moving points are grouped into connected blobs (touching 30 cm cells), and each blob is split into a few parts by
+    position and velocity together, so an arm swinging or a cape flapping gets its own sphere with its own speed."""
+    got = _moving_samples(p, shot, frame)
+    if got is None:
+        return []
+    am, vm, eye = got
+    keys, inv, cnt = np.unique(np.floor(am / 0.3).astype(np.intp), axis=0, return_inverse=True, return_counts=True)
+    inv = inv.reshape(-1)
+    index = {tuple(int(x) for x in keys[i]): i for i in range(len(keys)) if cnt[i] >= 2}
+    comp = -np.ones(len(keys), np.intp)
+    ng = 0
+    for i in index.values():
+        if comp[i] >= 0:
             continue
-        near = np.all(np.abs(keys - keys[k]) <= 1, axis=1) & ~used
-        used |= near
-        m = near[inv]
-        pts, vel = am[m], vm[m]
-        c = pts.mean(0)
-        C.append(c)
-        R.append(max(0.25, float(np.percentile(np.linalg.norm(pts - c, axis=1), 90)) + 0.15))
-        V.append(vel.mean(0))
-    keep = [i for i in range(len(C)) if np.linalg.norm(V[i]) > float(p.get('push_min', 0.25))]
-    C, R, V = [C[i] for i in keep], [R[i] for i in keep], [V[i] for i in keep]
-    if not C:
-        return empty
-    return np.array(C), np.array(R), np.array(V)
+        comp[i] = ng
+        stack = [i]
+        while stack:
+            k0 = keys[stack.pop()]
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        q = index.get((int(k0[0]) + dx, int(k0[1]) + dy, int(k0[2]) + dz))
+                        if q is not None and comp[q] < 0:
+                            comp[q] = ng
+                            stack.append(q)
+        ng += 1
+    lab = comp[inv]
+    groups = []
+    for g in range(ng):
+        m = lab == g
+        if m.sum() < 10:
+            continue
+        groups.append((float(m.sum()) * float(np.linalg.norm(vm[m], axis=1).mean()), am[m], vm[m]))
+    groups.sort(key=lambda t: -t[0])
+    out = []
+    for score, pts, vel in groups[:MOVER_GROUPS]:
+        X = np.concatenate([pts, vel * 0.15], 1)       # position and velocity together (0.15 s: 1 m/s apart = 15 cm apart)
+        # stray samples (motion vectors at an outline landing on something else) sit alone in that space: drop them, or
+        # they'd take a part of their own
+        _, qi, qc = np.unique(np.floor(X / 0.15).astype(np.intp), axis=0, return_inverse=True, return_counts=True)
+        dense = qc[qi.reshape(-1)] >= 3
+        if dense.sum() >= 10:
+            pts, vel, X = pts[dense], vel[dense], X[dense]
+        ext = float((np.percentile(pts, 95, 0) - np.percentile(pts, 5, 0)).max())
+        spread = float(np.percentile(np.linalg.norm(vel - np.median(vel, 0), axis=1), 90))
+        k = int(np.clip(math.ceil(ext / 0.4) + (1 if spread > 0.8 else 0), 1, MOVER_PARTS))     # one more when limbs move on their own
+        k = max(1, min(k, len(pts) // 6))
+        lab2 = _kmeans(X, k)
+        parts = []
+        for j in range(k):
+            mm = lab2 == j
+            if mm.sum() < max(6, 0.03 * len(pts)):
+                continue
+            c, v = pts[mm].mean(0), vel[mm].mean(0)
+            dv, ray = v - np.median(vel, 0), (c - eye) / max(float(np.linalg.norm(c - eye)), 1e-6)
+            if mm.sum() < 0.25 * len(pts) and abs(dv @ ray) > 0.8 and abs(dv @ ray) > 0.8 * np.linalg.norm(dv):
+                continue                                # a small part moving only toward / away from the lens: an uncovered edge
+            r = max(0.15, 1.3 * float(np.sqrt(((pts[mm] - c) ** 2).sum(1).mean())) + 0.05)
+            d = c - eye
+            c = c + d / max(float(np.linalg.norm(d)), 1e-6) * 0.5 * r      # only the camera side is seen: the middle is behind it
+            parts.append((c, r, v))
+        if parts:
+            c0 = pts.mean(0)
+            out.append(dict(c=c0, v=vel.mean(0), n=int(len(pts)), score=score, parts=parts,
+                            r=max(0.25, float(np.percentile(np.linalg.norm(pts - c0, axis=1), 90)) + 0.15)))
+    return out
 
 
-def make_pushers(p, shot):
-    """frame -> (centres m, radii m, velocities m/s), or None when pushers are off."""
+def utility_pushers(p, shot, frame):
+    """The moving things on a frame as one sphere each: centres (m), radii (m), velocities (m/s)."""
+    gs = frame_movers(p, shot, frame)
+    if not gs:
+        return np.zeros((0, 3)), np.zeros(0), np.zeros((0, 3))
+    return np.array([g['c'] for g in gs]), np.array([g['r'] for g in gs]), np.array([g['v'] for g in gs])
+
+
+def _movers_key(p):
+    return json.dumps([p.get(k) for k in ('utility', 'units', 'fps', 'mv_scale', 'push_min', 'first', 'last')])
+
+
+def find_movers(p, shot, progress=None):
+    """Everything that moves through the shot, followed from frame to frame, the biggest first. Only the MOVER_LIST biggest
+    are offered (a crowd doesn't flood the list); the ones worth using are switched on. Returns
+    {movers: [{id, first, last, frames, speed, size, parts, on}], frames: {'1001': [[id, cx, cy, cz, r, vx, vy, vz], ...]},
+    ignored: n}, or None if cancelled. Cached in memory, and in the cache folder when there is one (so farm jobs share it)."""
+    key = _movers_key(p)
+    if key in _MOVER_CACHE:
+        return _MOVER_CACHE[key]
+    disk = None
+    if p.get('cache') and os.path.isdir(p['cache']):
+        disk = os.path.join(p['cache'], 'movers_%s.json' % hashlib.md5(key.encode()).hexdigest()[:10])
+        if os.path.exists(disk):
+            try:
+                with open(disk) as fh:
+                    _MOVER_CACHE[key] = json.load(fh)
+                return _MOVER_CACHE[key]
+            except Exception:
+                pass
+    first, last, fps = int(p['first']), int(p['last']), float(p['fps'])
+    tracks = []
+    for f in range(first, last + 1):
+        if progress and progress((f - first) / float(max(last - first + 1, 1)), 'Finding what moves: frame %d' % f) is False:
+            return None
+        gs = frame_movers(p, shot, f)
+        live = [t for t in tracks if f - t['last'] <= 3]
+        pairs = []
+        for gi, g in enumerate(gs):
+            for ti, t in enumerate(live):
+                d = float(np.linalg.norm(g['c'] - (t['c'] + t['v'] / fps * (f - t['last']))))
+                if d < max(0.5, 0.75 * (g['r'] + t['r'])):
+                    pairs.append((d, gi, ti))
+        pairs.sort()
+        ug, ut = set(), set()
+        for d, gi, ti in pairs:
+            if gi in ug or ti in ut:
+                continue
+            ug.add(gi)
+            ut.add(ti)
+            t, g = live[ti], gs[gi]
+            t['frames'][f] = g
+            t['last'], t['c'], t['v'], t['r'] = f, g['c'], g['v'], g['r']
+            t['score'] += g['score']
+        for gi, g in enumerate(gs):
+            if gi not in ug:
+                tracks.append(dict(frames={f: g}, last=f, c=g['c'], v=g['v'], r=g['r'], score=g['score']))
+    tracks = [t for t in tracks if len(t['frames']) >= 3]
+    tracks.sort(key=lambda t: -t['score'])
+    keep = tracks[:MOVER_LIST]
+    top = keep[0]['score'] if keep else 0.0
+    movers, frames = [], {}
+    for i, t in enumerate(keep):
+        fs = sorted(t['frames'])
+        gs = [t['frames'][f] for f in fs]
+        movers.append(dict(id=i + 1, first=fs[0], last=fs[-1], frames=len(fs),
+                           speed=round(max(float(np.linalg.norm(g['v'])) for g in gs), 2),
+                           size=round(float(np.median([2 * g['r'] for g in gs])), 2),
+                           parts=max(len(g['parts']) for g in gs),
+                           on=bool(i < 4 and t['score'] >= 0.15 * top)))
+        for f, g in zip(fs, gs):
+            for c, r, v in g['parts']:
+                frames.setdefault(str(f), []).append([i + 1] + [round(float(x), 4) for x in (c[0], c[1], c[2], r, v[0], v[1], v[2])])
+    res = dict(movers=movers, frames=frames, ignored=len(tracks) - len(keep), first=first, last=last)
+    _MOVER_CACHE[key] = res
+    if len(_MOVER_CACHE) > 4:
+        _MOVER_CACHE.pop(next(iter(_MOVER_CACHE)))
+    if disk:
+        try:
+            with open(disk, 'w') as fh:
+                json.dump(res, fh)
+        except Exception:
+            pass
+    return res
+
+
+def describe_movers(found):
+    if not found or not found['movers']:
+        return 'Nothing moving found (is there a backward motion layer in the utility pass?).'
+    lines = ['%s %d   frames %d-%d, up to %.1f m/s, about %.1f m, %d part%s' % ('*' if m['on'] else ' ', m['id'], m['first'], m['last'],
+             m['speed'], m['size'], m['parts'], '' if m['parts'] == 1 else 's') for m in found['movers']]
+    if found.get('ignored'):
+        lines.append('  (%d smaller moving thing%s not listed)' % (found['ignored'], '' if found['ignored'] == 1 else 's'))
+    return '\n'.join(lines)
+
+
+def mover_ids(p, found):
+    """The movers in use: the Use movers knob, blank = the suggested ones."""
+    if not found:
+        return set()
+    s = str(p.get('movers') or '').strip().lower()
+    if s in ('', 'auto'):
+        return set(m['id'] for m in found['movers'] if m['on'])
+    if s == 'all':
+        return set(m['id'] for m in found['movers'])
+    return set(int(x) for x in s.replace(',', ' ').split() if x.isdigit())
+
+
+def make_pushers(p, shot, progress=None):
+    """frame -> the pushers on that frame (rows of cx, cy, cz, r, vx, vy, vz in m, m/s) or None; None when pushers are off."""
     # always from the utility pass (position + backward motion vectors), the stand-in walker included, so the stand-in
     # tests exactly what a real shot does
     if not p.get('push') or shot is None:
         return None
-    key = json.dumps([p.get(k) for k in ('utility', 'units', 'fps', 'mv_scale', 'push_min', 'first', 'last')])
-    cache = _PUSH_CACHE.setdefault(key, {})
-    if len(_PUSH_CACHE) > 3:
-        _PUSH_CACHE.pop(next(iter(_PUSH_CACHE)))
-    first, last = int(p['first']), int(p['last'])
-
-    def get(f):
-        if f < first or f > last:
-            return (np.zeros((0, 3)), np.zeros(0), np.zeros((0, 3)))
-        if f not in cache:
-            cache[f] = utility_pushers(p, shot, f)
-        return cache[f]
-    return get
+    found = find_movers(p, shot, progress)
+    ids = mover_ids(p, found)
+    tab = {}
+    for f, rows in (found or {}).get('frames', {}).items():
+        sel = [q[1:] for q in rows if q[0] in ids]
+        if sel:
+            tab[int(f)] = np.array(sel, np.float64)
+    return tab.get
 
 
 def pushers_for_step(p, get, frame):
-    """The pushers acting while the dust moves into `frame`: this frame's, plus a fading wake from the frames before."""
-    C, R, V, Wt = [], [], [], []
+    """The pushers acting while the dust moves into `frame`: this frame's, plus a fading wake from the frames before
+    (bigger, weaker). At most PUSH_ENTRIES, this frame's first."""
+    rows = []
     for k in range(PUSH_WAKE + 1):
-        c, r, v = get(frame - k)
+        a = get(frame - k)
+        if a is None:
+            continue
         w = 0.6 ** k
-        for i in range(len(c)):
-            C.append(c[i]); R.append(r[i] * (1 + 0.25 * k)); V.append(v[i]); Wt.append(w)
-    if not C:
+        for q in a:
+            if len(rows) < PUSH_ENTRIES:
+                rows.append((q[0], q[1], q[2], q[3] * (1 + 0.25 * k), q[4], q[5], q[6], w))
+    if not rows:
         return None
-    return np.array(C), np.array(R), np.array(V), np.array(Wt)
+    A = np.array(rows)
+    return A[:, :3], A[:, 3], A[:, 4:7], A[:, 7]
 
 
 def sim_at(p, frame, light, progress=None, pushers=None):
@@ -2079,13 +2321,18 @@ _KNOBS = [
     ('Motion', 'preroll', 'int', 'Pre-roll frames', None),
     ('Motion', 'substeps', 'int', 'Steps per frame', None),
     ('Motion', None, 'divider', 'Character pushers', None),
-    ('Motion', 'push', 'bool', 'Moving things push the dust', 'Finds what moves in the utility pass (backward motion vectors + position) and lets it drag and shove the dust, with a wake that lingers.'),
+    ('Motion', 'push', 'bool', 'Moving things push the dust', 'Things that move in the shot push the dust aside as they pass and leave a swirling wake. They are found in the utility pass (backward motion vectors + position) by Find moving things.'),
+    ('Motion', 'btn_movers', 'button', 'Find moving things', 'movers'),
+    ('Motion', 'movers', 'str', 'Use movers', 'Which of the moving things found push the dust: blank = the suggested ones, "all", "none", or their numbers, e.g. "1 3".'),
+    ('Motion', 'show_movers', 'bool', 'Show mover stand-ins (viewer)', 'Draws the spheres that stand in for each moving thing in the viewer. They are never held out or lit, and never in the render.'),
     ('Motion', 'push_amount', 'float', 'Push strength', (0, 4)),
     ('Motion', 'push_radius', 'float', 'Push reach', (0.3, 3)),
     ('Motion', 'push_min', 'float', 'Ignore motion slower than (m/s)', (0, 2)),
     ('Motion', 'mv_scale', 'float', 'Motion vector scale', (-2, 2)),
     ('Motion', None, 'text', 'Needs a backward motion layer in the utility pass (Nuke convention: pixels, +y up, pointing to where the pixel was on the previous frame), '
-                             'like the one used for VectorBlur. Use -1 for motion vector scale if yours point forward. Moving things are found as up to 4 blobs a frame.', None),
+                             'like the one used for VectorBlur. Use -1 for motion vector scale if yours point forward. <b>Find moving things</b> follows what moves '
+                             'through the shot (camera motion removed) and lists the %d biggest; each is a few spheres a frame (body, limbs, a cape), '
+                             'each with its own speed.' % MOVER_LIST, None),
     ('Light', 'light_az', 'float', 'Azimuth', (-180, 180)),
     ('Light', 'light_el', 'float', 'Elevation', (0, 90)),
     ('Light', 'light_int', 'float', 'Intensity', (0, 20)),
@@ -2129,7 +2376,8 @@ _KNOBS = [
     ('Holdouts', 'fg_far', 'float', 'Full holdout beyond', (0, 2000)),
     ('Holdouts', None, 'text', 'Surfaces nearer than the first distance never block dust, rising to a full holdout at the second (scene units). '
                               'Use it when a foreground character\'s edges cause trouble, then hold the dust out with the character\'s matte in comp. '
-                              'The <b>noholdout</b> layer always has the dust with no holdouts at all.', None),
+                              'The <b>noholdout</b> layer always has the dust with no holdouts at all. In the live viewer, the <b>held out (red)</b> layer '
+                              'shows the dust the holdouts take away in red: only dust behind something in the utility pass is held out.', None),
 ]
 
 
@@ -2155,6 +2403,8 @@ def create():
             k = nuke.Text_Knob('d%d' % len(g.knobs()), label)
         elif kind == 'file':
             k = nuke.File_Knob(key, label)
+        elif kind == 'str':
+            k = nuke.String_Knob(key, label)
         elif kind == 'enum':
             k = nuke.Enumeration_Knob(key, label, extra)
         elif kind == 'int':
@@ -2176,7 +2426,7 @@ def create():
                 k.clearFlag(nuke.STARTLINE)
         else:
             continue
-        if kind in ('file', 'enum', 'float', 'int', 'xyz', 'bool') and isinstance(extra, str) and kind != 'enum':
+        if kind in ('file', 'str', 'enum', 'float', 'int', 'xyz', 'bool') and isinstance(extra, str) and kind != 'enum':
             k.setTooltip(extra)
         g.addKnob(k)
     hid = nuke.String_Knob('standin_json', 'stand-in geometry')
@@ -2365,6 +2615,26 @@ def _nk_button(g, what):
         return
     if what == 'standin':
         return _nk_standin(g)
+    if what == 'movers':
+        p = _nk_settings(g)
+        if not p['utility']:
+            nuke.message('Choose a utility pass first (or press Create stand-in shot).')
+            return
+
+        def work(progress):
+            found = find_movers(p, Shot(p['utility'], p['units']), progress)
+            if found is None:
+                return False
+
+            def apply():
+                g['push'].setValue(True)
+                g['movers'].setValue('')
+                nuke.message('MoteField: moving things in %s\n\n%s\n\n* = in use (the suggested ones). To choose, type numbers in Use movers, e.g. "1 3".'
+                             % (os.path.basename(p['utility']), describe_movers(found)))
+            nuke.executeInMainThread(apply)
+            return True
+        _nk_thread(g, 'MoteField: finding what moves', work)
+        return
     p = _nk_settings(g)
     if what in ('frame', 'range', 'fit', 'preview3d') and not p['utility']:
         nuke.message('Choose a utility pass first (or press Create stand-in shot).')

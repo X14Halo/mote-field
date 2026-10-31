@@ -152,8 +152,8 @@ def _job(cmd, a):
         return mfweb.preview_light(p())
     if cmd == 'pbounce':
         return mfweb.preview_bounce(p())
-    if cmd == 'ppush':
-        return mfweb.preview_pushers(p(), a['f0'], a['f1'])
+    if cmd == 'movers':
+        return mfweb.find_movers(p())
     if cmd == 'fimages':
         return mfweb.frame_images(p(), a['frame'], a.get('pattern') or '')
     if cmd == 'bokeh':

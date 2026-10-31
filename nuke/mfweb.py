@@ -98,7 +98,7 @@ def setup_standin(width=1280, view='wide'):
     if mf.STANDIN_VIEWS[view].get('walker'):      # the walking box: the GPU stand-in moves it along the same line
         Wk = mf.STANDIN_WALKER
         walker = dict(start=list(Wk['start']), end=list(Wk['end']), size=list(Wk['size']), color=list(Wk['color']),
-                      first=S['first'], last=S['last'])
+                      first=S['first'], last=S['last'], arm=dict(Wk['arm']))
     return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr', boxes=boxes, walker=walker,
                            plate_light=dict(az=S['sun_az'], el=S['sun_el'], intensity=6.0, kelvin=list(mf.kelvin_rgb(5000.0))),
                            room=[[-400.0, 0.0, -600.0], [400.0, 350.0, 350.0]],      # inside of the stand-in room, for the cutaway
@@ -188,7 +188,8 @@ def render(pjson, frame, progress=None):
     cb = None
     if progress:
         cb = lambda x, msg: progress(0.1 + 0.6 * x, msg)
-    sim = mf.sim_at(p, frame, light, cb, mf.make_pushers(p, shot))
+    pushers = mf.make_pushers(*_movers_source(p)) if p.get('push') else None
+    sim = mf.sim_at(p, frame, light, cb, pushers)
     if progress:
         progress(0.75, 'Rendering frame %d' % frame)
     held, unheld = mf.render_frame(p, shot, frame, sim)
@@ -443,15 +444,12 @@ def set_bokeh_image(w, h, data):
     return path
 
 
-def preview_pushers(pjson, f0, f1):
-    """Character pushers for frames f0..f1 (motefield.utility_pushers), for the GPU preview's simulation:
-    {frame: [[cx, cy, cz, radius, vx, vy, vz], ...]} in metres and m/s."""
-    p = _params(pjson)
-    p['push'] = True
+def _movers_source(p):
+    """Where the moving things are looked for: the shot itself, or for the stand-in a 320-pixel-wide copy of it (the search
+    samples about 320 pixels across anyway, and every stand-in frame has to be ray traced first; a real shot's are just read)."""
+    p = dict(p, push=True)
     shot = _shot(p)
     if shot.meta is not None:
-        # the stand-in: find them in a 320-pixel-wide copy of the shot (the search samples about 320 pixels across anyway),
-        # since every stand-in frame has to be ray traced first. A real shot's frames are just read.
         m = shot.meta
         folder = '%s/standin_%s_push320' % (ROOT, str(m.get('view', 'wide')).replace('-', ''))
         os.makedirs(folder, exist_ok=True)
@@ -461,13 +459,14 @@ def preview_pushers(pjson, f0, f1):
                 json.dump(dict(m, width=320, height=int(round(320.0 * m['height'] / m['width']))), fh)
         p['utility'] = folder + '/standin_utility.####.exr'
         shot = _shot(p)
-    get = mf.make_pushers(p, shot)
-    out = {}
-    for f in range(int(f0), int(f1) + 1):
-        C, R, V = get(f)
-        out[str(f)] = [[float(C[i][0]), float(C[i][1]), float(C[i][2]), float(R[i]), float(V[i][0]), float(V[i][1]), float(V[i][2])]
-                       for i in range(len(C))]
-    return out
+    p['cache'] = ''
+    return p, shot
+
+
+def find_movers(pjson, progress=None):
+    """motefield.find_movers for the viewer: the moving things in the shot, with their spheres on every frame."""
+    p, shot = _movers_source(_params(pjson))
+    return mf.find_movers(p, shot, progress)
 
 
 def preview_bounce(pjson):

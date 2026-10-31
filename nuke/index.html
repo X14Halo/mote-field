@@ -55,6 +55,12 @@ select.nk{background:var(--field);border:1px solid var(--fieldb);border-radius:2
 .stage{cursor:default}
 .stage canvas#cv{transform-origin:50% 50%;will-change:transform}
 .stage canvas#cv3{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;box-shadow:none;background:#2a2d31}
+.stage canvas#ovl{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;box-shadow:none;background:none;pointer-events:none}
+.movers{margin:2px 0 8px 0}
+.movers .mover{display:flex;align-items:center;gap:7px;padding:3px 6px;font-size:12px;cursor:pointer;border-radius:3px}
+.movers .mover:hover{background:rgba(255,255,255,.05)}
+.movers .mover i{width:10px;height:10px;border-radius:50%;flex:none}
+.movers .mover .dim{opacity:.55}
 .keys{position:absolute;right:10px;bottom:8px;font-size:11px;color:#8a8a8a;text-shadow:0 1px 2px #000;pointer-events:none;text-align:right}
 .keys b{color:#c8c8c8;font-weight:500}
 .vbar .v3 label input{accent-color:var(--orange)}
@@ -175,7 +181,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
         <button data-v="comp" class="on">Comp</button><button data-v="dust">Dust</button><button data-v="plate">Plate</button>
       </div>
       <select class="nk" id="layerSel" title="Layer (the noholdout layer has the dust with no holdouts)">
-        <option value="rgba">rgba</option><option value="noholdout">noholdout</option>
+        <option value="rgba">rgba</option><option value="noholdout">noholdout</option><option value="heldout">held out (red)</option>
       </select>
       <div class="sep"></div>
       <label title="Viewer gain in stops (doesn't change the render)">f/stop
@@ -204,6 +210,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
     <div class="stage" id="stage">
       <canvas id="cv" width="960" height="402"></canvas>
       <canvas id="cv3" hidden></canvas>
+      <canvas id="ovl"></canvas>
       <div class="hud" id="hud"></div>
       <div class="keys" id="keys"></div>
       <div class="busy" id="busy" hidden><span id="busyMsg">Rendering…</span><div class="bar"><i id="busyBar"></i></div><button id="cancelBtn" hidden>Cancel</button></div>
@@ -399,6 +406,7 @@ function numInput(get, set, int) {
 }
 
 function changed(commit) {
+  if (typeof movers !== 'undefined') { applyMovers(); if (commit) renderMoverList(); }
   const hf = Math.round(Number(V.hold_frame) || 0);
   if (typeof vw !== 'undefined' && hf !== (vw.hold ? vw.holdFrame : 0)) { vw.hold = hf > 0; vw.holdFrame = hf; const hc = $('holdCam'); if (hc) hc.checked = vw.hold; }
   $('rngLab').textContent = V.first + '–' + V.last;
@@ -502,6 +510,14 @@ function buildPanel() {
       }
       continue;
     }
+    if (k.kind === 'str') {
+      const t = document.createElement('input'); t.className = 'txt'; t.placeholder = key === 'movers' ? 'blank = the suggested ones' : '';
+      t.onchange = () => { V[key] = t.value.trim(); changed(true); };
+      ctl.appendChild(t);
+      ui[key] = { set: (v) => { t.value = v || ''; } };
+      if (key === 'movers') { const l = document.createElement('div'); l.id = 'moverList'; l.className = 'movers'; pg.appendChild(l); }
+      continue;
+    }
     if (k.kind === 'enum') {
       const s = document.createElement('select'); s.className = 'nk';
       for (const o of k.extra) { const e = document.createElement('option'); e.value = o; e.textContent = o; s.appendChild(e); }
@@ -593,6 +609,7 @@ function showUtility() {
 // =====================================================================================================
 async function onButton(what) {
   if (what === 'standin') return makeStandin();
+  if (what === 'movers') { if (!shot.utility) return setStatus('Choose a utility pass first (or press Create stand-in shot).', true); movers.key = ''; return findMovers(false); }
   if (what === 'lights') return $('fileLights').click();
   if (what === 'export') {           // the settings the farm renders from (python motefield.py render --settings ...)
     const p = params(); p.cache = p.cache || ''; const blob = new Blob([JSON.stringify(p, null, 1)], { type: 'application/json' });
@@ -643,7 +660,7 @@ const CLOSEUP_DUST = { density: 360, flakes: 28, fibers: 5, fluff: 1.5, glint: 0
 function onStandinView() {
   const close = V.standin_view === 'close-up';
   for (const k in CLOSEUP_DUST) setKnob(k, close ? CLOSEUP_DUST[k] : SCHEMA.defaults[k]);
-  if (V.standin_view === 'walker') setKnob('push', true);         // the walker shot is there to try the pushers
+  if (V.standin_view === 'walker') setKnob('push', true);         // the walker shot is there to try the pushers (finds its movers)
   makeStandin();
 }
 async function makeStandin() {
@@ -652,9 +669,9 @@ async function makeStandin() {
   try {
     const st = await call('standin', { width: standinWidth, view: V.standin_view || 'wide' });
     shot.utility = st.utility; shot.plate = st.plate; shot.standin = true; shot.standinJson = st.set.standin_json;
-    pvs.boxes = st.boxes; pvs.walker = st.walker || null; pvs.pushKey = ''; pvs.pushReady = ''; pvs.plateLight = Object.assign({}, st.plate_light, { room: st.room }); pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = '';
+    pvs.boxes = st.boxes; pvs.walker = st.walker || null; resetMovers(); pvs.plateLight = Object.assign({}, st.plate_light, { room: st.room }); pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = '';
     if (look) look.clear();
-    if (pv && pv.ok) { pv.setBoxes(st.boxes, pvs.walker); pv.setPushers(null); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
+    if (pv && pv.ok) { pv.setBoxes(st.boxes, pvs.walker); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
     shot.label = 'stand-in shot, ' + (V.standin_view || 'wide') + ' (' + st.width + ' × ' + st.height + ', browser memory)';
     for (const [k, v] of Object.entries(st.set)) if (k !== 'standin_json') setKnob(k, v);
     dust.clear(); plates.clear(); v3.sceneKey = ''; v3.framed = false;
@@ -693,7 +710,7 @@ function applyShotFiles(kind, r, where) {
   {
     if (kind === 'utility') {
       shot.utility = r.pattern; shot.standin = false; shot.standinJson = '';
-      pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = ''; pvs.pushKey = ''; pvs.pushReady = ''; if (pv && pv.ok) { pv.clearFrameImages(); pv.setPushers(null); } if (look) look.clear();
+      pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = ''; resetMovers(); if (pv && pv.ok) pv.clearFrameImages(); if (look) look.clear();
       shot.label = (NATIVE ? r.pattern : r.pattern.split('/').pop()) + '  (' + r.count + ' frames, ' + where + ')';
       if (shot.plate && shot.plate.includes('/standin_')) shot.plate = '';
       setKnob('first', r.first); setKnob('last', r.last);
@@ -859,7 +876,7 @@ async function gpuRenderRange() {
       setBusy(true, 'GPU frame ' + f + ' (' + (f - a + 1) + ' of ' + n + ')', (f - a) / n, true);
       const cf = vw.hold ? vw.holdFrame : f;
       let dist = null;
-      if (shot.standin && pv.boxes && pvs.plateLight) { pv.standinPlate(cf, W0, H0, pvs.plateLight); dist = pv.pl.dist; }   // depth only, for holdouts
+      if (shot.standin && pv.boxes && pvs.plateLight) { pv.standinPlate(cf, W0, H0, pvs.plateLight, f); dist = pv.pl.dist; }   // depth only, for holdouts
       else { if (!pv.frameTex.has(cf)) pv.setFrameImages(cf, await call('fimages', { p: params(), frame: cf, pattern: shot.plate })); dist = pv.frameTex.get(cf).dist; }
       pv.simTo(f, p, simStepKey(p));
       const r = pv.renderDust(f, p, W0, H0, dist, vw.hold ? cf : 0);
@@ -953,7 +970,7 @@ function drawHud() {
       t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (pvs.res && dim === '2d' ? ' · ' + pvs.res[0] + '×' + pvs.res[1] : '') + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
       if (!shot.standin && pv.frameTex.size < V.last - V.first + 1) t += '\n<span class="no">reading frames for holdouts: ' + pv.frameTex.size + ' / ' + (V.last - V.first + 1) + '</span>';
       if (pvs.lightNote) t += '\n<span class="no">' + pvs.lightNote + '</span>';
-      if (pvs.pushNote) t += '\n<span class="no">' + pvs.pushNote + '</span>';
+      if (movers.busy) t += '\n<span class="no">' + movers.note + '</span>';
     }
     $('hud').innerHTML = t;
     return;
@@ -1105,7 +1122,7 @@ function setDim(d) {
   document.querySelector('.vbar .v2').style.display = d === '2d' ? 'contents' : 'none';
   document.querySelector('.vbar .v3').style.display = d === '3d' ? 'flex' : 'none';
   keysHint();
-  updateCanvases();
+  updateCanvases(); drawMovers(null);
   if (d === '3d') { initGL(); loadScene(); }
   v3dirty();
   drawHud();
@@ -1172,7 +1189,7 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
   st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
   st.addEventListener('dblclick', (e) => {      // free camera: focus on what you double-click
     if (dim !== '2d' || !vw.free || !look) return;
-    const ent = look.cache.get('free'), d = ent ? ent.dist : setFB && setFB.dist; if (!d || !vw.rect) return;
+    const ent = vw.freeEnt, d = ent ? ent.dist : setFB && setFB.dist; if (!d || !vw.rect) return;
     const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), R = vw.rect;
     const u = ((e.clientX - r.left) * dpr - R.x0) / (R.x1 - R.x0), v = ((e.clientY - r.top) * dpr - R.yTop) / (R.yBot - R.yTop);
     if (u < 0 || u > 1 || v < 0 || v > 1) return;
@@ -1454,6 +1471,11 @@ function render3d() {
   gl.drawArrays(gl.POINTS, 0, hs.length);
   gl.disable(gl.BLEND);
   gl.disable(gl.SCISSOR_TEST);
+  // the movers' stand-in spheres, as in the 2D viewer
+  const dpr3 = v3.vp.dpr, eye = eyePos(), rgt = basis().r;
+  const pj = (P) => { const q = toScreen(P); return q ? [q[0] * dpr3, q[1] * dpr3, Math.hypot(P[0] - eye[0], P[1] - eye[1], P[2] - eye[2])] : null; };
+  pj.rpx = (P, r) => { const a = toScreen(P), b = toScreen(P.map((v, i) => v + rgt[i] * r)); return a && b ? Math.hypot(b[0] - a[0], b[1] - a[1]) * dpr3 : 0; };
+  drawMovers(pj);
 }
 // ---- box handles: drag a face to resize the box from that side, drag the centre to move it (Shift: up / down) ----
 function boxHandles() {
@@ -1577,8 +1599,8 @@ function lightMode(p) {
 }
 function lightKey(p) { return lightMode(p) === 2 ? JSON.stringify([shot.utility, p.units, p.light_az, p.light_el, p.first, p.last]) : 'm' + lightMode(p); }
 function simStepKey(p) {
-  const push = p.push && pvs.pushReady && pvs.pushReady === pushKey(p);     // pushers join the simulation once they're all read
-  return JSON.stringify([pvs.initKey, pvs.lightKey, push ? [pvs.pushReady, p.push_amount, p.push_radius] : 0, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
+  const push = p.push && moversReady(p);         // pushers join the simulation once the movers are found
+  return JSON.stringify([pvs.initKey, pvs.lightKey, push ? [movers.key, [...moverIds(p)].sort().join(' '), p.push_amount, p.push_radius] : 0, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
     'light_az', 'light_el', 'shadows', 'interior'].map(k => p[k])]);
 }
 function kelvinRGB(K) {          // motefield.kelvin_rgb
@@ -1648,29 +1670,106 @@ async function ensurePreview() {
   finally {
     pvs.busy = false; drawHud(); v3dirty();
     if (pvs.again) { pvs.again = false; ensurePreview(); }
-    else loadPushers();
+    else if (V.push && shot.utility && !movers.busy && movers.key !== pushKey(params())) findMovers(true);
   }
 }
-// character pushers (motefield.utility_pushers): read from the utility pass a few frames at a time, in the background
+// ---- moving things (motefield.find_movers): found once per shot, chosen from a short list, drawn as stand-ins ----------
+const MOVER_COLS = ['#f2c94c', '#56ccf2', '#ff7a6b', '#6fcf97', '#c58cf2', '#f2994a'];
+const movers = { found: null, key: '', busy: false, note: '' };
 function pushKey(p) { return JSON.stringify([shot.utility, p.units, p.fps, p.mv_scale, p.push_min, p.first, p.last]); }
-async function loadPushers() {
+function moverIds(p) {             // motefield.mover_ids
+  const f = movers.found; if (!f) return new Set();
+  const s = String(p.movers || '').trim().toLowerCase();
+  if (s === '' || s === 'auto') return new Set(f.movers.filter(m => m.on).map(m => m.id));
+  if (s === 'all') return new Set(f.movers.map(m => m.id));
+  return new Set((s.match(/\d+/g) || []).map(Number));
+}
+function moversReady(p) { return !!(movers.found && movers.key === pushKey(p)); }
+function applyMovers() {           // the chosen movers' spheres -> the GPU simulation
+  if (!pv || !pv.ok) return;
   const p = params();
-  if (!p.push || !shot.utility) { pvs.pushNote = ''; return; }      // (the GPU only uses them while push is on)
-  const key = pushKey(p);
-  if (pvs.pushKey === key) return;
-  pvs.pushKey = key; pvs.pushReady = '';
-  const a = Math.round(p.first), b = Math.round(p.last), all = {};
+  if (!moversReady(p)) { pv.setPushers(null); return; }
+  const ids = moverIds(p), key = [...ids].sort().join(' ');
+  if (movers.applied === key + movers.key) return;
+  const tab = {};
+  for (const [f, rows] of Object.entries(movers.found.frames)) { const sel = rows.filter(q => ids.has(q[0])).map(q => q.slice(1)); if (sel.length) tab[+f] = sel; }
+  pv.setPushers(tab); movers.applied = key + movers.key;
+}
+function resetMovers() { movers.found = null; movers.key = ''; movers.applied = ''; if (pv && pv.ok) pv.setPushers(null); renderMoverList(); }
+async function findMovers(auto) {
+  if (!shot.utility || movers.busy) return;
+  const p = params(), key = pushKey(p);
+  movers.busy = true; movers.key = key; movers.found = null; movers.applied = ''; movers.note = 'finding what moves…'; renderMoverList(); drawHud();
   try {
-    for (let f = a; f <= b && pvs.pushKey === key; f += 4) {
-      pvs.pushNote = 'finding what moves (backward motion vectors): frame ' + f + ' of ' + b; drawHud();
-      Object.assign(all, await call('ppush', { p, f0: f, f1: Math.min(f + 3, b) }));
-    }
-    if (pvs.pushKey !== key) return;
-    pv.setPushers(all); pvs.pushReady = key; pvs.pushData = all;
-    const n = Object.values(all).reduce((s, L) => s + (L.length ? 1 : 0), 0);
-    pvs.pushNote = ''; setStatus('Character pushers: something moving on ' + n + ' of ' + (b - a + 1) + ' frames.' + (n ? '' : ' (No backward motion layer, or nothing moves faster than the threshold.)'));
-  } catch (e) { pvs.pushNote = ''; pvs.pushKey = ''; setStatus('Pushers: ' + e.message, true); }
-  drawHud(); scheduleLive(0);
+    const r = await call('movers', { p }, (x, msg) => { movers.note = msg + ' (' + Math.round(x * 100) + '%)'; drawHud(); renderMoverList(); });
+    if (movers.key !== key) return;
+    movers.found = r || { movers: [], frames: {}, ignored: 0 };
+    if (!auto || !String(V.movers || '').trim()) setKnob('movers', '');
+    setKnob('push', true);
+    const n = movers.found.movers.length;
+    setStatus(n ? 'Found ' + n + ' moving thing' + (n > 1 ? 's' : '') + (movers.found.ignored ? ' (and ' + movers.found.ignored + ' smaller, not listed)' : '') + '; the suggested ones are ticked.'
+                : 'Nothing moving found: is there a backward motion layer in the utility pass?', !n);
+  } catch (e) { movers.key = ''; setStatus('Find moving things: ' + e.message, true); }
+  finally { movers.busy = false; movers.note = ''; applyMovers(); renderMoverList(); changed(true); }
+}
+function renderMoverList() {
+  const el = $('moverList'); if (!el) return;
+  el.innerHTML = '';
+  const p = params();
+  if (movers.busy) { el.innerHTML = '<div class="note">' + movers.note + '</div>'; return; }
+  if (!moversReady(p)) { el.innerHTML = '<div class="note">' + (movers.found ? 'The shot or the motion settings changed: press <b>Find moving things</b> again.' : 'Press <b>Find moving things</b> to look for characters and other moving things in the utility pass.') + '</div>'; return; }
+  const f = movers.found, ids = moverIds(p);
+  if (!f.movers.length) { el.innerHTML = '<div class="note">Nothing moving found. The utility pass needs a backward motion layer.</div>'; return; }
+  for (const m of f.movers) {
+    const r = document.createElement('label'); r.className = 'mover';
+    const c = document.createElement('input'); c.type = 'checkbox'; c.checked = ids.has(m.id);
+    c.onchange = () => {
+      const now = moverIds(params()); if (c.checked) now.add(m.id); else now.delete(m.id);
+      setKnob('movers', now.size ? [...now].sort((a, b) => a - b).join(' ') : 'none'); applyMovers(); changed(true); renderMoverList();
+    };
+    const sw = document.createElement('i'); sw.style.background = MOVER_COLS[(m.id - 1) % MOVER_COLS.length];
+    const t = document.createElement('span');
+    t.innerHTML = '<b>' + m.id + '</b> frames ' + m.first + '–' + m.last + ' · up to ' + m.speed.toFixed(1) + ' m/s · ' + m.size.toFixed(1) + ' m · ' + m.parts + ' part' + (m.parts > 1 ? 's' : '') + (m.on ? '' : ' <span class="dim">(small)</span>');
+    r.append(c, sw, t); el.appendChild(r);
+  }
+  if (f.ignored) { const d = document.createElement('div'); d.className = 'note'; d.textContent = f.ignored + ' smaller moving thing' + (f.ignored > 1 ? 's' : '') + ' not listed.'; el.appendChild(d); }
+}
+// the movers' spheres on the current frame (even with the camera held), over the viewer. Never in the render.
+function moverParts() {
+  const p = params();
+  if (!V.show_movers || !V.push || !moversReady(p) || !pv || !pv.init) return null;
+  const rows = movers.found.frames[String(frame)] || [];
+  const ids = moverIds(p);
+  return rows.map(q => ({ id: q[0], on: ids.has(q[0]), c: [q[1], q[2], q[3]].map(v => v / pv.init.su), r: q[4] / pv.init.su, v: [q[5], q[6], q[7]].map(v => v / pv.init.su) }));
+}
+function drawMovers(project) {     // project(P scene units) -> [x, y, z] device px or null; also project.rpx(P, r) -> radius px
+  const oc = $('ovl'), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(oc.clientWidth * dpr)), h = Math.max(1, Math.round(oc.clientHeight * dpr));
+  if (oc.width !== w || oc.height !== h) { oc.width = w; oc.height = h; }
+  const g = oc.getContext('2d'); g.clearRect(0, 0, w, h);
+  const parts = project ? moverParts() : null; if (!parts || !parts.length) return;
+  const top = {};
+  const items = parts.map(q => { const s = project(q.c); return s ? Object.assign({ s, rp: project.rpx(q.c, q.r) }, q) : null; }).filter(Boolean).sort((a, b) => b.s[2] - a.s[2]);
+  for (const q of items) {
+    const col = MOVER_COLS[(q.id - 1) % MOVER_COLS.length];
+    g.beginPath(); g.arc(q.s[0], q.s[1], Math.max(q.rp, 2), 0, Math.PI * 2);
+    g.lineWidth = 1.5 * dpr; g.setLineDash(q.on ? [] : [4 * dpr, 4 * dpr]);
+    if (q.on) { g.fillStyle = col + '2e'; g.fill(); }
+    g.strokeStyle = q.on ? col : '#8a8f96'; g.stroke();
+    const e = project(q.c.map((v, i) => v + q.v[i] * 0.2));          // where it will be in 0.2 s
+    if (e && q.on) { g.setLineDash([]); g.beginPath(); g.moveTo(q.s[0], q.s[1]); g.lineTo(e[0], e[1]); g.stroke(); }
+    if (!top[q.id] || q.s[1] - q.rp < top[q.id][1]) top[q.id] = [q.s[0], q.s[1] - q.rp, col, q.on];
+  }
+  g.setLineDash([]); g.font = (11 * dpr) + 'px ui-monospace, monospace'; g.textAlign = 'center';
+  for (const [id, t] of Object.entries(top)) { g.fillStyle = t[3] ? t[2] : '#8a8f96'; g.fillText(id, t[0], t[1] - 4 * dpr); }
+}
+function camProjector(cam, W0, H0, rect) {      // a shot / free camera onto the 2D viewer
+  const th = Math.tan(cam.hfov / 2), tv = th * H0 / W0, sx = (rect.x1 - rect.x0) / W0, sy = (rect.yBot - rect.yTop) / H0;
+  const f = (P) => { const d = [P[0] - cam.pos[0], P[1] - cam.pos[1], P[2] - cam.pos[2]], dot = (a) => d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+    const z = -dot(cam.back); if (z <= 1e-3) return null;
+    return [rect.x0 + (dot(cam.right) / z / th * 0.5 + 0.5) * W0 * sx, rect.yTop + (0.5 - dot(cam.up) / z / tv * 0.5) * H0 * sy, z]; };
+  f.rpx = (P, r) => { const s = f(P); return s ? r / s[2] / (2 * th) * W0 * sx : 0; };
+  return f;
 }
 // picked utility passes: each frame's distance image (holdouts) and plate, read once in the background
 // what the per-frame images depend on: the shot, the plate, and (when the set is shaded from the utility pass) the light
@@ -1828,7 +1927,7 @@ function paintPreview2d() {
   const black = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, cw, ch); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); };
   const fin = dust.get(frame);
   const size = pvs.size || (fin ? [fin.w, fin.h] : null);
-  if (!size || !pv.cams || !shot.utility) { black(); drawHud(); return; }
+  if (!size || !pv.cams || !shot.utility) { black(); drawMovers(null); drawHud(); return; }
   try {
     const [SW, SH] = size, p = pparams(), cf = camFrame();
     // render at the size it is shown on screen (sharper on high-DPI displays, and when zoomed in), in steps so the lit set
@@ -1844,7 +1943,8 @@ function paintPreview2d() {
       if (shot.standin && pv.boxes && pvs.plateLight) {
         pv.camOverride = fc;
         ent = look.standin('free', W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01,
-                           { key: [...fc.pos, ...fc.back, ...fc.up, fc.hfov].map(v => v.toFixed(4)).join(',') + (fast ? 'f' : ''), spp: fast ? 6 : 24, cut: true });
+                           { key: [...fc.pos, ...fc.back, ...fc.up, fc.hfov].map(v => v.toFixed(4)).join(',') + (fast ? 'f' : ''), spp: fast ? 6 : 24, cut: true, walker: frame });
+        vw.freeEnt = ent;
         plateTex = ent.plate; distTex = ent.dist; defocus = true;
       } else {
         const r = rasterSet(fc, W0, H0, p);
@@ -1852,14 +1952,14 @@ function paintPreview2d() {
         pv.camOverride = fc;
       }
     } else if (shot.standin && pv.boxes && pvs.plateLight) {
-      ent = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01);
+      ent = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01, { walker: frame });
       plateTex = ent.plate; distTex = ent.dist; defocus = true;      // a render comes with its own defocus; the stand-in gets the lens here
     } else { const fi = pv.frameTex.get(cf); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; defocus = !!fi.synthetic; ent = fi.synthetic ? fi : null; } }
     let dustSrc = null;
     if (quality === 'preview' && previewReady()) {
       pv.simTo(frame, p, simStepKey(p));
       pv.renderDust(frame, p, W0, H0, distTex, vw.hold ? cf : 0);
-      dustSrc = { tex: layer === 'noholdout' ? pv.acc.free : pv.acc.held, flip: 1 };
+      dustSrc = { tex: layer === 'noholdout' ? pv.acc.free : pv.acc.held, flip: 1, free: layer === 'heldout' ? pv.acc.free : null };
     } else if (quality === 'final' && fin) dustSrc = { tex: uploadFinal(fin), flip: 0 };
     const cam = pv.camAt(cf), L = pv.init ? pv.lens(p, cam, W0) : { focal: 35, film: 36, fstop: 4, focusM: 5, su: 0.01, front: 1, back: 1, dof: false, maxR: 0 };
     // largest plate blur: the circle of confusion of the nearest and farthest things, capped like the dust's
@@ -1871,7 +1971,8 @@ function paintPreview2d() {
     look.show({ W: W0, H: H0, cw, ch, cacheEntry: ent, fast, plate: plateTex, dist: distTex, defocusPlate: defocus && p.dof, lens: L, dust: dustSrc, view,
                 set: vw.set, skyMul: vw.blackSky ? 0 : 1, gain: Math.pow(2, gain), glow: vw.glow, look: vw.look,
                 rect: [x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2] });
-  } catch (e) { console.error(e); pvs.err = e.message; black(); }
+    drawMovers(camProjector(cam, W0, H0, vw.rect));      // cam: the free camera when it's on (camOverride)
+  } catch (e) { console.error(e); pvs.err = e.message; black(); drawMovers(null); }
   pv.camOverride = null;
   const now = performance.now();
   if (playing && pvs.lastPaint) pvs.fps = pvs.fps * 0.85 + 0.15 * (1000 / Math.max(now - pvs.lastPaint, 1));
@@ -1905,7 +2006,7 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
   } catch (e) { bootFail(e.message); console.error(e.detail || e); }
 })();
 window.__mfdbg = { boxHandles, toScreen, get v3() { return v3; } };
-window.__mfweb = { get pv() { return pv; }, get pvs() { return pvs; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
+window.__mfweb = { get pv() { return pv; }, get pvs() { return pvs; }, get movers() { return movers; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
 </script>
 </body>
 </html>

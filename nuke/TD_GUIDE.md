@@ -79,14 +79,18 @@ The GPU preview and the Python render agree within about 1% of total light, with
 - **Air.** A divergence-free flow made of 40 large eddy modes and 20 micro modes (random Fourier modes), plus a drift wind, thermal lift where the sun hits, and settling. Motes follow the air with a type-dependent lag and wrap around inside the box.
 - **Timing.** The simulation starts *pre-roll* frames before the first frame, with *Steps per frame* sub-steps.
 - **Edge fade.** Density fades out toward each face of the box. There's an overall fade amount, scaled per face.
-- **Character pushers** (optional, `push`). Things that move in the shot stir the dust. `utility_pushers` finds them from the utility pass alone:
-  1. Each pixel's backward motion vector (Nuke convention: pixels, +y up, pointing to where that pixel was on the previous frame) is followed into the previous frame's position pass, giving where that surface point was: world velocity = (P now − P before) × fps.
-  2. The point is only counted as moving if its motion vector disagrees with what the **camera's own move** would give for a still point (reproject P into the previous frame's camera; more than 1.5 px apart). This is what stops walls and floors reading as moving on a camera move.
-  3. Pixels at depth edges, surfaces just revealed from behind something (disocclusion), and speeds below *Ignore motion slower than* are dropped.
-  4. The rest are clustered into up to 4 spheres per frame (centre, radius, velocity).
+- **Character pushers** (optional, `push`). Things that move in the shot stir the dust. They come from the utility pass alone, in three steps.
+  1. **Moving samples** (`_moving_samples`). Each pixel's backward motion vector (Nuke convention: pixels, +y up, pointing to where that pixel was on the previous frame) is followed into the previous frame's position pass (bilinear), giving where that surface point was: velocity = (P now − P before) × fps. A sample is kept only if:
+     - its motion vector disagrees with the **camera's own move** (P reprojected into the previous camera, more than 1.5 px apart), so walls and floors don't read as moving on a camera move;
+     - it isn't on a depth edge, and wasn't just uncovered: the previous frame's own motion vector where it lands must be about the same (motion is smooth; an uncovered surface lands on whatever was in front), and it may not differ from its neighbours along the line of sight only;
+     - it's faster than *Ignore motion slower than* and than what a pixel of error would give at that distance.
+  2. **Movers per frame** (`frame_movers`). Moving samples are grouped into connected blobs (touching 30 cm cells). Each blob is split by k-means on position *and* velocity into up to 6 parts (about one per 40 cm, plus one when its speeds vary a lot), so a swinging arm or a flapping cape gets its own sphere with its own speed. Each part is pushed back from the camera by half its radius, since only its camera side is seen.
+  3. **Movers through the shot** (`find_movers`, the **Find moving things** button). Blobs are followed from frame to frame (predicted position, nearest match). The 6 biggest by size × speed × duration are listed; the others are counted, not listed, so a crowd doesn't flood the list. The ones at least 15% of the biggest are switched on. *Use movers* holds the choice (blank = the suggested ones, `all`, `none` or numbers like `1 3`). The result is cached, also as `movers_<hash>.json` in the cache folder, so farm jobs share it. Run time is mostly EXR reading: about 0.85 s a frame at 1280.
 
-  In the simulation, the air flows around each sphere as it moves (potential flow: pushed aside in front, sliding past at the sides, closing in behind), so motes end up roughly where they were, as in real air. The last 5 frames leave a wake that drags a little air along and stirs it with the micro-turbulence field. *Push strength* scales all of it, *Push reach* the sphere sizes. If your motion vectors point forward, set *Motion vector scale* to −1.
-  - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a `backward` layer made like the studio util pass): the walker was found on every frame (47 of 47), with no false movers, at 0.6% speed error (1280 px) and 6.7% (from a 320 px copy, which the browser uses for the stand-in).
+  In the simulation each part is a sphere the air flows around as it moves (potential flow: pushed aside in front, sliding past at the sides, closing in behind), so motes end up roughly where they were, as in real air. The last 5 frames leave a wake that drags a little air along and stirs it with the micro-turbulence field. At most 144 spheres act per step (this frame's first, then the wake), the same on the GPU. *Push strength* scales all of it, *Push reach* the sphere sizes. If your motion vectors point forward, set *Motion vector scale* to −1.
+
+  **Mover stand-ins** (viewer only, *Show mover stand-ins*): each part is drawn as a circle in its mover's colour, with an arrow for where it will be in 0.2 s, in the shot camera, the free camera and 3D. They're drawn on the current frame even with the camera held. They're never held out, never lit, never rendered.
+  - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a swinging arm on the camera side and a `backward` layer made like the studio util pass). One mover is found, on every frame, with no false movers and no parts off the walker. Body and arm velocities come out exact (1.79 and up to 4.73 m/s; the arm gets its own part whenever it moves differently from the body).
 
 ### Light
 - **Key light.** A directional light. `light_dir(az, el)` points toward the light; colour = temperature × RGB × intensity (`sun_rgb`).
@@ -202,6 +206,9 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Motion | `preroll` | Pre-roll frames | 48 |
 | Motion | `substeps` | Steps per frame | 2 |
 | Motion | `push` | Moving things push the dust | False |
+| Motion | `btn_movers` | Find moving things | (button) |
+| Motion | `movers` | Use movers |  |
+| Motion | `show_movers` | Show mover stand-ins (viewer) | True |
 | Motion | `push_amount` | Push strength | 1.0 |
 | Motion | `push_radius` | Push reach | 1.0 |
 | Motion | `push_min` | Ignore motion slower than (m/s) | 0.25 |
@@ -276,6 +283,7 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **Determinism:** a frame rendered on its own equals the same frame from a sequential run.
 - **Browser Python vs desktop Python:** identical output, bit for bit.
 - **GPU preview vs Python render:** total light within 0.1-1% with every option tested, block correlation 0.97-1.0. The tests covered DOF, blades, cat-eye, anamorphic, custom bokeh, shutter shapes, utility-pass shadows, bounce light and soft shadows.
-- **Character pushers:** detection on the stand-in walker shot as in section 4 (every frame, no false movers). Given the same pushers, the GPU and Python simulations put every mote in the same place (median difference 0.001 cm after 77 frames).
+- **Character pushers:** detection on the stand-in walker shot as in section 4. Given the same movers, the GPU and Python simulations put every mote in the same place (median difference 0.001 cm after 77 frames).
+- **Holdouts:** the **held out (red)** layer in the viewer shows what they remove. In the wide stand-in only about 2% of the dust is behind anything, so switching holdouts off changes little there; the walker shot shows them clearly.
 - **Live viewer:** tested in headless Chromium against the native server, including loading a utility pass from a disk path and the GPU render-to-cache.
 - **Not tested here:** anything inside a real Nuke session (see section 8), and real GPU frame rates. The headless tests ran on a software renderer.

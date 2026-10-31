@@ -95,7 +95,7 @@ uniform sampler2D uPos, uVel, uVis, uSt;
 uniform mat3 uR; uniform vec3 uCenter, uSize, uWind;
 uniform float uT, uDt, uAmp0, uAmp1, uThermal, uSettle;
 uniform vec4 uM0[80]; uniform int uN0; uniform vec4 uM1[40]; uniform int uN1;
-uniform vec4 uPC[24], uPV[24]; uniform int uNP; uniform float uPAmt, uPRs;     // pushers: centre + radius (m), velocity + weight
+uniform sampler2D uPush; uniform int uNP; uniform float uPAmt, uPRs;     // pushers: row 0 centre + radius (m), row 1 velocity + weight
 layout(location=0) out vec4 oPos; layout(location=1) out vec4 oVel;
 void main(){
   ivec2 ip = ivec2(gl_FragCoord.xy);
@@ -119,10 +119,11 @@ void main(){
   }
   tgt.y += uThermal * 0.01 * vis - uSettle * 0.01 * st.y;
   float churn = 0.0;
-  for (int i = 0; i < 24; i++) { if (i >= uNP) break;          // DustSim.step: flow around the mover now, a fading wake behind
-    vec3 d = Pw - uPC[i].xyz, U = uPV[i].xyz; float dist = length(d) + 1e-6, a = uPC[i].w * uPRs;
-    if (uPV[i].w >= 0.999) { vec3 n = d / dist; float k3 = 0.5 * pow(a / max(dist, a), 3.0) * uPAmt; tgt += k3 * (3.0 * dot(n, U) * n - U); }
-    else { float q = dist / a, g = exp(-q * q) * uPV[i].w * uPAmt; tgt += U * (g * 0.35); churn += g * length(U); } }   // WAKE_DRAG
+  for (int i = 0; i < 144; i++) { if (i >= uNP) break;         // DustSim.step: flow around the mover now, a fading wake behind
+    vec4 pc = texelFetch(uPush, ivec2(i, 0), 0), pv = texelFetch(uPush, ivec2(i, 1), 0);
+    vec3 d = Pw - pc.xyz, U = pv.xyz; float dist = length(d) + 1e-6, a = pc.w * uPRs;
+    if (pv.w >= 0.999) { vec3 n = d / dist; float k3 = 0.5 * pow(a / max(dist, a), 3.0) * uPAmt; tgt += k3 * (3.0 * dot(n, U) * n - U); }
+    else { float q = dist / a, g = exp(-q * q) * pv.w * uPAmt; tgt += U * (g * 0.35); churn += g * length(U); } }   // WAKE_DRAG
   if (churn > 0.0) {                                            // the wake stirs the air: the micro field at strength 1, x WAKE_TURB
     vec3 f = vec3(0.0);
     for (int m = 0; m < 20; m++) { if (m >= uN1) break; vec4 a = uM1[m*2], b = uM1[m*2+1];
@@ -531,24 +532,29 @@ class MFPreview {
   setBoxes(boxes, walker) {         // [[mnx, mny, mnz, mxx, mxy, mxz, r, g, b], ...]; walker: motefield.STANDIN_WALKER + frame range
     // the walker is one more box at the end, moved every frame. It is in the plate and its depth, but (as in motefield.py,
     // whose light map is built from the still room) not in the shadows the dust is lit with: nb counts the still boxes
-    const nb = boxes.length, na = nb + (walker ? 1 : 0), a = new Float32Array(na * 3 * 4);
+    const nb = boxes.length, na = nb + (walker ? 2 : 0), a = new Float32Array(na * 3 * 4);
     boxes.forEach((b, k) => { a.set([b[0], b[1], b[2], 0], k * 4); a.set([b[3], b[4], b[5], 0], (na + k) * 4); a.set([b[6], b[7], b[8], 0], (2 * na + k) * 4); });
     if (this.boxes) this._free(this.boxes.tex);
     this.boxes = { nb, na, walker: walker || null, wf: null, tex: this._rgba32(na, 3, a) };
     if (walker) this.walkerTo(walker.first);
   }
-  walkerBox(frame) {        // motefield.standin_walker
-    const W = this.boxes && this.boxes.walker; if (!W) return null;
+  walkerBoxes(frame) {      // motefield.standin_walker_parts: the body and its swinging arm
+    const W = this.boxes && this.boxes.walker; if (!W || typeof frame !== 'number') return null;
     const u = (frame - W.first) / Math.max(W.last - W.first, 1), c = W.start.map((v, i) => v + (W.end[i] - v) * u), sz = W.size;
-    return { mn: [c[0] - sz[0] / 2, c[1], c[2] - sz[2] / 2], mx: [c[0] + sz[0] / 2, c[1] + sz[1], c[2] + sz[2] / 2], color: W.color };
+    const body = { mn: [c[0] - sz[0] / 2, c[1], c[2] - sz[2] / 2], mx: [c[0] + sz[0] / 2, c[1] + sz[1], c[2] + sz[2] / 2], color: W.color };
+    const A = W.arm; if (!A) return [body];
+    const cx = c[0] + A.swing * Math.sin(2 * Math.PI * (frame - W.first) / A.period), z0 = body.mx[2] + 1;
+    return [body, { mn: [cx - A.size[0] / 2, A.top - A.size[1], z0], mx: [cx + A.size[0] / 2, A.top, z0 + A.size[2]], color: W.color }];
   }
   walkerTo(frame) {
     const B = this.boxes; if (!B || !B.walker || B.wf === frame) return;
-    const w = this.walkerBox(frame), gl = this.gl, k = B.nb;
-    gl.bindTexture(gl.TEXTURE_2D, B.tex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 0, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.mn, 0]));
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 1, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.mx, 0]));
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 2, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.color, 0]));
+    const ws = this.walkerBoxes(frame); if (!ws) return;
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE15); gl.bindTexture(gl.TEXTURE_2D, B.tex);     // a spare unit, so no other binding changes
+    ws.forEach((w, i) => { const k = B.nb + i;
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 0, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.mn, 0]));
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 1, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.mx, 0]));
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 2, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.color, 0])); });
     B.wf = frame;
   }
   setLightMap(d) {
@@ -658,7 +664,13 @@ class MFPreview {
     gl.uniform4fv(prog.u.uM1, I.modes1); gl.uniform1i(prog.u.uN1, I.M1);
     const P = this._push;
     gl.uniform1i(prog.u.uNP, P ? P.n : 0);
-    if (P && P.n) { gl.uniform4fv(prog.u.uPC, P.c); gl.uniform4fv(prog.u.uPV, P.v); gl.uniform1f(prog.u.uPAmt, p.push_amount); gl.uniform1f(prog.u.uPRs, Math.max(p.push_radius, 0.05)); }
+    if (P && P.n) {
+      if (!this.pushTex) this.pushTex = this._rgba32(144, 2, null);
+      gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.pushTex);      // its own unit: don't disturb the others
+      if (this.pushTexFor !== P) { gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 144, 2, gl.RGBA, gl.FLOAT, P.data); this.pushTexFor = P; }
+      this._bind(prog, 4, 'uPush', this.pushTex);
+      gl.uniform1f(prog.u.uPAmt, p.push_amount); gl.uniform1f(prog.u.uPRs, Math.max(p.push_radius, 0.05));
+    } else this._bind(prog, 4, 'uPush', this.dummy);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     S.cur = nx;
   }
@@ -674,16 +686,16 @@ class MFPreview {
     S.cur = 0;
   }
   // sim_at(): state at `frame`, simulated from first - preroll
-  // character pushers: {frame: [[cx, cy, cz, r, vx, vy, vz], ...]} (metres, m/s), from motefield.utility_pushers
+  // character pushers: {frame: [[cx, cy, cz, r, vx, vy, vz], ...]} (metres, m/s), the chosen movers from motefield.find_movers
   setPushers(d) { this.pushers = d || null; }
-  _pushersFor(F, p) {
-    const c = new Float32Array(96), v = new Float32Array(96); let n = 0;
-    for (let k = 0; k <= 5; k++) {             // PUSH_WAKE: this frame's, plus a fading wake from the 5 before
+  _pushersFor(F, p) {          // motefield.pushers_for_step: this frame's, plus a fading wake from the 5 before; at most 144
+    const data = new Float32Array(144 * 2 * 4); let n = 0;
+    for (let k = 0; k <= 5; k++) {
       const L = this.pushers[F - k]; if (!L) continue;
       const w = Math.pow(0.6, k);
-      for (const q of L) { if (n >= 24) break; c.set([q[0], q[1], q[2], q[3] * (1 + 0.25 * k)], n * 4); v.set([q[4], q[5], q[6], w], n * 4); n++; }
+      for (const q of L) { if (n >= 144) break; data.set([q[0], q[1], q[2], q[3] * (1 + 0.25 * k)], n * 4); data.set([q[4], q[5], q[6], w], (144 + n) * 4); n++; }
     }
-    return { n, c, v };
+    return { n, data };
   }
   simTo(frame, p, simKey) {
     if (!this.init) return false;
@@ -758,10 +770,11 @@ class MFPreview {
     this.pl = { w: W0, h: H0, plate: this._tex(W0, H0, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, null), dist: this._tex(W0, H0, gl.R32F, gl.RED, gl.FLOAT, null), frame: null };
   }
   // the stand-in's plate and distance image for this frame (GPU version of render_standin_frame)
-  standinPlate(frame, W0, H0, plateLight) {
+  standinPlate(frame, W0, H0, plateLight, walkerFrame) {      // walkerFrame: where the walker is (the current frame when the camera is held)
     this._ensurePlate(W0, H0);
-    if (this.pl.frame === frame && this.pl.key === W0 + 'x' + H0) return;
-    this.walkerTo(frame);
+    const wf = walkerFrame === undefined ? frame : walkerFrame;
+    if (this.pl.frame === frame && this.pl.key === W0 + 'x' + H0 + '|' + wf) return;
+    this.walkerTo(wf);
     const gl = this.gl, prog = this.pPlate, c = this.camAt(frame);
     gl.useProgram(prog); gl.bindVertexArray(this.vao);
     gl.disable(gl.BLEND);
@@ -776,7 +789,7 @@ class MFPreview {
     gl.uniform3fv(prog.u.uSky, [0.66 * I * 0.45, 0.76 * I * 0.45, 0.95 * I * 0.45]);
     gl.uniform1f(prog.u.uInt, I);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    this.pl.frame = frame; this.pl.key = W0 + 'x' + H0;
+    this.pl.frame = frame; this.pl.key = W0 + 'x' + H0 + '|' + wf;
   }
   // render_frame(): the dust for `frame` into the accumulation buffers. distTex: the shot's distance image
   lens(p, cam, W) {        // motefield.render_frame + lens_settings
