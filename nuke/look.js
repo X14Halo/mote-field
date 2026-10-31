@@ -267,7 +267,7 @@ class MFLook {
     const gl = this.pv.gl, az = L.az * Math.PI / 180, el = L.el * Math.PI / 180, I = L.intensity;
     gl.uniform3fv(prog.u.uLs, [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)]);
     gl.uniform3fv(prog.u.uSunP, L.kelvin.map(v => v * I)); gl.uniform3fv(prog.u.uSky, [0.66 * I * 0.45, 0.76 * I * 0.45, 0.95 * I * 0.45]); gl.uniform1f(prog.u.uInt, I);
-    this.pv._bind(prog, 7, 'uBoxes', this.pv.boxes.tex); gl.uniform1i(prog.u.uNB, this.pv.boxes.nb);
+    this.pv._bind(prog, 7, 'uBoxes', this.pv.boxes.tex); gl.uniform1i(prog.u.uNB, this.pv.boxes.na);
   }
   // the stand-in, lit, for one frame (cached)
   standin(frame, W, H, L, haze, su, opt) {
@@ -277,6 +277,7 @@ class MFLook {
     if (hit && hit.key === key) { this.cache.delete(frame); this.cache.set(frame, hit); return hit; }
     if (hit) { this.pv._free(hit.plate, hit.dist, hit.dof); this.cache.delete(frame); }
     const pv = this.pv, gl = pv.gl, s = this._scratch(W, H), c = pv.camAt(frame);
+    pv.walkerTo(frame);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST); gl.bindVertexArray(pv.vao);
     const plate = this._half(W, H), dist = pv._tex(W, H, gl.R32F, gl.RED, gl.FLOAT, null);
     let p = this.pG; gl.useProgram(p); this._camU(p, c, W, H); this._lightU(p, L);

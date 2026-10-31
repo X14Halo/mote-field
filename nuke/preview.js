@@ -95,6 +95,7 @@ uniform sampler2D uPos, uVel, uVis, uSt;
 uniform mat3 uR; uniform vec3 uCenter, uSize, uWind;
 uniform float uT, uDt, uAmp0, uAmp1, uThermal, uSettle;
 uniform vec4 uM0[80]; uniform int uN0; uniform vec4 uM1[40]; uniform int uN1;
+uniform vec4 uPC[24], uPV[24]; uniform int uNP; uniform float uPAmt, uPRs;     // pushers: centre + radius (m), velocity + weight
 layout(location=0) out vec4 oPos; layout(location=1) out vec4 oVel;
 void main(){
   ivec2 ip = ivec2(gl_FragCoord.xy);
@@ -117,6 +118,17 @@ void main(){
     tgt += uAmp1 * 0.6 * f * (st.x >= 2.0 ? 1.6 : 1.0);
   }
   tgt.y += uThermal * 0.01 * vis - uSettle * 0.01 * st.y;
+  float churn = 0.0;
+  for (int i = 0; i < 24; i++) { if (i >= uNP) break;          // DustSim.step: flow around the mover now, a fading wake behind
+    vec3 d = Pw - uPC[i].xyz, U = uPV[i].xyz; float dist = length(d) + 1e-6, a = uPC[i].w * uPRs;
+    if (uPV[i].w >= 0.999) { vec3 n = d / dist; float k3 = 0.5 * pow(a / max(dist, a), 3.0) * uPAmt; tgt += k3 * (3.0 * dot(n, U) * n - U); }
+    else { float q = dist / a, g = exp(-q * q) * uPV[i].w * uPAmt; tgt += U * (g * 0.35); churn += g * length(U); } }   // WAKE_DRAG
+  if (churn > 0.0) {                                            // the wake stirs the air: the micro field at strength 1, x WAKE_TURB
+    vec3 f = vec3(0.0);
+    for (int m = 0; m < 20; m++) { if (m >= uN1) break; vec4 a = uM1[m*2], b = uM1[m*2+1];
+      f += sin(dot(q, a.xyz) + a.w + b.w * (uT * 0.5)) * b.xyz; }
+    tgt += 0.6 * f * churn * 0.6;
+  }
   float k = 1.0 - exp(-uDt / st.z);
   V += (tgt - V) * k;
   local += (transpose(uR) * V) * uDt;
@@ -516,11 +528,28 @@ class MFPreview {
       o.set([a[s], a[s + 1], a[s + 2], a[s + 6], a[s + 3], a[s + 4], a[s + 5], a[s + 7]], m * 8); }
     return o;
   }
-  setBoxes(boxes) {         // [[mnx, mny, mnz, mxx, mxy, mxz, r, g, b], ...]
-    const nb = boxes.length, a = new Float32Array(nb * 3 * 4);
-    boxes.forEach((b, k) => { a.set([b[0], b[1], b[2], 0], k * 4); a.set([b[3], b[4], b[5], 0], (nb + k) * 4); a.set([b[6], b[7], b[8], 0], (2 * nb + k) * 4); });
+  setBoxes(boxes, walker) {         // [[mnx, mny, mnz, mxx, mxy, mxz, r, g, b], ...]; walker: motefield.STANDIN_WALKER + frame range
+    // the walker is one more box at the end, moved every frame. It is in the plate and its depth, but (as in motefield.py,
+    // whose light map is built from the still room) not in the shadows the dust is lit with: nb counts the still boxes
+    const nb = boxes.length, na = nb + (walker ? 1 : 0), a = new Float32Array(na * 3 * 4);
+    boxes.forEach((b, k) => { a.set([b[0], b[1], b[2], 0], k * 4); a.set([b[3], b[4], b[5], 0], (na + k) * 4); a.set([b[6], b[7], b[8], 0], (2 * na + k) * 4); });
     if (this.boxes) this._free(this.boxes.tex);
-    this.boxes = { nb, tex: this._rgba32(nb, 3, a) };
+    this.boxes = { nb, na, walker: walker || null, wf: null, tex: this._rgba32(na, 3, a) };
+    if (walker) this.walkerTo(walker.first);
+  }
+  walkerBox(frame) {        // motefield.standin_walker
+    const W = this.boxes && this.boxes.walker; if (!W) return null;
+    const u = (frame - W.first) / Math.max(W.last - W.first, 1), c = W.start.map((v, i) => v + (W.end[i] - v) * u), sz = W.size;
+    return { mn: [c[0] - sz[0] / 2, c[1], c[2] - sz[2] / 2], mx: [c[0] + sz[0] / 2, c[1] + sz[1], c[2] + sz[2] / 2], color: W.color };
+  }
+  walkerTo(frame) {
+    const B = this.boxes; if (!B || !B.walker || B.wf === frame) return;
+    const w = this.walkerBox(frame), gl = this.gl, k = B.nb;
+    gl.bindTexture(gl.TEXTURE_2D, B.tex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 0, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.mn, 0]));
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 1, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.mx, 0]));
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, k, 2, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array([...w.color, 0]));
+    B.wf = frame;
   }
   setLightMap(d) {
     const gl = this.gl;
@@ -627,6 +656,9 @@ class MFPreview {
     gl.uniform1f(prog.u.uThermal, p.thermal); gl.uniform1f(prog.u.uSettle, p.settle);
     gl.uniform4fv(prog.u.uM0, I.modes0); gl.uniform1i(prog.u.uN0, I.M0);
     gl.uniform4fv(prog.u.uM1, I.modes1); gl.uniform1i(prog.u.uN1, I.M1);
+    const P = this._push;
+    gl.uniform1i(prog.u.uNP, P ? P.n : 0);
+    if (P && P.n) { gl.uniform4fv(prog.u.uPC, P.c); gl.uniform4fv(prog.u.uPV, P.v); gl.uniform1f(prog.u.uPAmt, p.push_amount); gl.uniform1f(prog.u.uPRs, Math.max(p.push_radius, 0.05)); }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     S.cur = nx;
   }
@@ -642,6 +674,17 @@ class MFPreview {
     S.cur = 0;
   }
   // sim_at(): state at `frame`, simulated from first - preroll
+  // character pushers: {frame: [[cx, cy, cz, r, vx, vy, vz], ...]} (metres, m/s), from motefield.utility_pushers
+  setPushers(d) { this.pushers = d || null; }
+  _pushersFor(F, p) {
+    const c = new Float32Array(96), v = new Float32Array(96); let n = 0;
+    for (let k = 0; k <= 5; k++) {             // PUSH_WAKE: this frame's, plus a fading wake from the 5 before
+      const L = this.pushers[F - k]; if (!L) continue;
+      const w = Math.pow(0.6, k);
+      for (const q of L) { if (n >= 24) break; c.set([q[0], q[1], q[2], q[3] * (1 + 0.25 * k)], n * 4); v.set([q[4], q[5], q[6], w], n * 4); n++; }
+    }
+    return { n, c, v };
+  }
   simTo(frame, p, simKey) {
     if (!this.init) return false;
     const S = this.sim, fps = p.fps, sub = Math.max(1, Math.round(p.substeps)), f0 = Math.round(p.first) - Math.round(p.preroll);
@@ -653,6 +696,7 @@ class MFPreview {
     const dt = p.speed / fps / sub;
     let n = 0;
     while (S.frame < frame) {
+      this._push = p.push && this.pushers ? this._pushersFor(S.frame + 1, p) : null;     // motefield.pushers_for_step
       this._visPass(p);
       for (let k = 0; k < sub; k++) { this._stepPass(p, S.t, dt); S.t += dt; }
       S.frame++; n++;
@@ -717,11 +761,12 @@ class MFPreview {
   standinPlate(frame, W0, H0, plateLight) {
     this._ensurePlate(W0, H0);
     if (this.pl.frame === frame && this.pl.key === W0 + 'x' + H0) return;
+    this.walkerTo(frame);
     const gl = this.gl, prog = this.pPlate, c = this.camAt(frame);
     gl.useProgram(prog); gl.bindVertexArray(this.vao);
     gl.disable(gl.BLEND);
     this._target([this.pl.plate, this.pl.dist], W0, H0);
-    this._bind(prog, 0, 'uBoxes', this.boxes.tex); gl.uniform1i(prog.u.uNB, this.boxes.nb);
+    this._bind(prog, 0, 'uBoxes', this.boxes.tex); gl.uniform1i(prog.u.uNB, this.boxes.na);
     gl.uniform3fv(prog.u.uC, [...c.pos, ...c.right, ...c.up, ...c.back]);
     const th = Math.tan(c.hfov / 2);
     gl.uniform1f(prog.u.uTh, th); gl.uniform1f(prog.u.uTv, th * H0 / W0); gl.uniform2f(prog.u.uWH, W0, H0);

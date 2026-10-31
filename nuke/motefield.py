@@ -1,5 +1,5 @@
 """
-MoteField for Nuke (prototype v0.2): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.3): camera-aware dust motes for comp.
 
 WHAT IT IS
     A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.2'
+__version__ = '0.3'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -271,6 +271,8 @@ _ROLE = {
     'P': ['pos', 'p', 'pworld', 'position', 'worldposition', 'worldpos', 'pw', 'wp', 'ppass', 'world', 'positionworld', 'worldp'],
     'N': ['normal', 'n', 'nworld', 'normals', 'worldnormal', 'nw', 'normalworld', 'nn', 'worldnormals'],
     'Z': ['depth', 'z', 'zdepth', 'depthnofilter', 'distance'],
+    'MV': ['backward', 'backwardmotion', 'motionback', 'motionbackward', 'mvback', 'backmotion', 'motionvectors', 'motionvector',
+           'motion', 'mv', 'vel', 'velocity'],
     'C': ['surfacecolor', 'albedo', 'diffusealbedo', 'basecolor', 'diffusecolor', 'surfacealbedo'],
 }
 
@@ -311,6 +313,16 @@ def survey_layers(exr):
             a = [x for x in allc if x[1] == 'Z']
         if a:
             found['Z'] = (a[0][0], [a[0][1]])
+            break
+    for key in _ROLE['MV']:          # 2 channels: x, y in pixels
+        g = [a for a in allc if a[2] == key]
+        names = [None, None]
+        for a in g:
+            i = _comp_index(a[3])
+            if 0 <= i < 2 and names[i] is None:
+                names[i] = a
+        if all(names) and names[0][0] == names[1][0]:
+            found['MV'] = (names[0][0], [names[0][1], names[1][1]])
             break
     return found
 
@@ -511,9 +523,12 @@ STANDIN = dict(first=1001, last=1048, width=1280, height=536, focal=24.0, film=2
                sun_az=25.0, sun_el=33.0)
 
 
-def standin_boxes():
-    """The stand-in room in centimetres: list of (min, max, albedo, name)."""
+def standin_boxes(frame=None, view='wide'):
+    """The stand-in room in centimetres: list of (min, max, albedo, name). With a frame and the 'walker' view, the
+    walker is in it too."""
     B = []
+    if frame is not None and STANDIN_VIEWS.get(view, {}).get('walker'):
+        B.append(standin_walker(frame)[0])
 
     def box(mn, mx, c, name):
         B.append((tuple(float(v) for v in mn), tuple(float(v) for v in mx), tuple(c), name))
@@ -569,11 +584,29 @@ def standin_boxes():
 STANDIN_VIEWS = {
     'wide': dict(E0=(310.0, 165.0, 320.0), E1=(190.0, 150.0, 290.0), T0=(-160.0, 105.0, -290.0), T1=(-235.0, 118.0, -300.0),
                  focal=24.0, fstop=4.0, focus=430.0),
+    # the wide move with someone walking through the sunbeam (for the dust pushers: it has motion vectors)
+    'walker': dict(E0=(310.0, 165.0, 320.0), E1=(190.0, 150.0, 290.0), T0=(-160.0, 105.0, -290.0), T1=(-235.0, 118.0, -300.0),
+                   focal=24.0, fstop=4.0, focus=430.0, walker=True),
     # standing in the sunbeam, looking back up it toward the window: the motes right at the lens are lit (big, soft bokeh)
     # and the beam through the middle of the room sits at the focus distance (sharp sparkles)
     'close-up': dict(E0=(-170.0, 120.0, -150.0), E1=(-182.0, 118.0, -162.0), T0=(-380.0, 160.0, -430.0), T1=(-386.0, 157.0, -440.0),
                      focal=50.0, fstop=2.8, focus=190.0),
 }
+
+
+STANDIN_WALKER = dict(start=(-330.0, 0.0, -105.0), end=(20.0, 0.0, -160.0), size=(46.0, 175.0, 30.0), color=(0.13, 0.10, 0.09))
+
+
+def standin_walker(frame):
+    """The stand-in's walker at a frame (straight line, constant speed): its box and its velocity (scene units / frame)."""
+    S, Wk = STANDIN, STANDIN_WALKER
+    n = float(max(S['last'] - S['first'], 1))
+    u = (frame - S['first']) / n
+    a, b, sz = np.array(Wk['start']), np.array(Wk['end']), np.array(Wk['size'])
+    c = a + (b - a) * u
+    mn = c - np.array([sz[0] / 2, 0.0, sz[2] / 2])
+    mx = c + np.array([sz[0] / 2, sz[1], sz[2] / 2])
+    return (tuple(mn), tuple(mx), Wk['color'], 'walker'), (b - a) / n
 
 
 def standin_camera(frame, view='wide'):
@@ -666,11 +699,23 @@ def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5
     sx, sy = np.meshgrid(xs, ys)
     D = -cam.back[None, :] + sx.reshape(-1, 1) * cam.right[None, :] + sy.reshape(-1, 1) * cam.up[None, :]
     D /= np.linalg.norm(D, axis=1, keepdims=True)
-    boxes = standin_boxes()
+    boxes = standin_boxes(frame, view)
     t, n, alb = _trace_boxes(cam.pos[None, :], D, boxes)
     hit = np.isfinite(t)
     P = np.zeros((W * H, 3))
     P[hit] = cam.pos + D[hit] * t[hit, None]
+    # backward motion vectors (pixels, Nuke convention: +y up): where each surface point was on the previous frame
+    Pprev = P.copy()
+    if STANDIN_VIEWS.get(view, {}).get('walker'):
+        wbox, wvel = standin_walker(frame)
+        tw, _, _ = _trace_boxes(cam.pos[None, :], D, [wbox])
+        onw = hit & np.isfinite(tw) & (tw <= t + 1e-3)
+        Pprev[onw] -= wvel
+    cprev = standin_camera(frame - 1, view)
+    xc, yc, _ = cam.project(P, W, H)
+    xp, yp, _ = cprev.project(Pprev, W, H)
+    mvx = np.where(hit, xp - xc, 0.0)
+    mvy = np.where(hit, -(yp - yc), 0.0)
     L = light_dir(S['sun_az'], S['sun_el'])
     sun = kelvin_rgb(kelvin) * intensity
     lit = np.zeros(W * H)
@@ -686,7 +731,8 @@ def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5
     f32 = lambda a: a.reshape(H, W).astype(np.float32)
     util = {'pos.R': f32(P[:, 0]), 'pos.G': f32(P[:, 1]), 'pos.B': f32(P[:, 2]),
             'normal.R': f32(n[:, 0]), 'normal.G': f32(n[:, 1]), 'normal.B': f32(n[:, 2]),
-            'depth.Z': f32(depth), 'surfaceColor.R': f32(alb[:, 0]), 'surfaceColor.G': f32(alb[:, 1]), 'surfaceColor.B': f32(alb[:, 2])}
+            'depth.Z': f32(depth), 'surfaceColor.R': f32(alb[:, 0]), 'surfaceColor.G': f32(alb[:, 1]), 'surfaceColor.B': f32(alb[:, 2]),
+            'backward.R': f32(mvx), 'backward.G': f32(mvy)}
     plate = {'R': f32(rgb[:, 0]), 'G': f32(rgb[:, 1]), 'B': f32(rgb[:, 2]), 'A': f32(np.ones(W * H))}
     attrs = {'camToWorld': ('m44f', cam.to_world_m44()), 'focalLength': ('float', cam.focal),
              'horizontalAperture': ('float', cam.film), 'fStop': ('float', cam.fstop),
@@ -731,6 +777,8 @@ DEFAULTS = dict(
     # air (cm/s, metres for eddy size)
     speed=1.0, drift=1.2, drift_dir=200.0, lift=0.0, eddies=3.0, eddy_size=1.4, micro=0.8, thermal=1.5, settle=0.5,
     preroll=48, substeps=2,
+    # characters pushing the dust (from the utility pass's backward motion vectors)
+    push=False, push_amount=1.0, push_radius=1.0, push_min=0.25, mv_scale=1.0,
     # key light: a directional light
     light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, light_rgb=(1.0, 1.0, 1.0), bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
     # lens (0 = use the camera from the utility pass headers)
@@ -747,7 +795,8 @@ DEFAULTS = dict(
 # keys that change the simulation (everything else only changes how frames are rendered)
 SIM_KEYS = ('units', 'first', 'fps', 'seed', 'box_center', 'box_size', 'box_rot', 'density', 'max_motes', 'size_min', 'size_max',
             'size_bias', 'flakes', 'fibers', 'fluff', 'speed', 'drift', 'drift_dir', 'lift', 'eddies', 'eddy_size', 'micro',
-            'thermal', 'settle', 'preroll', 'substeps', 'light_az', 'light_el', 'shadows', 'interior', 'standin_json', 'utility')
+            'thermal', 'settle', 'preroll', 'substeps', 'light_az', 'light_el', 'shadows', 'interior', 'standin_json', 'utility',
+            'push', 'push_amount', 'push_radius', 'push_min', 'mv_scale')
 
 
 def settings(**kw):
@@ -1048,11 +1097,35 @@ class DustSim(object):
         up = np.zeros_like(Pw)
         up[:, 1] = p['thermal'] * 0.01 * self._vis - p['settle'] * 0.01 * self.settle_f
         tgt = tgt + up
+        if getattr(self, 'push', None) is not None:
+            # pushers. Right now: the air flows around the moving thing (potential flow around a sphere of radius a moving
+            # at U: u = a^3 / (2 r^3) (3 (U.n) n - U)), so motes are pushed aside in front, slip past at the sides and close in
+            # behind, ending up roughly where they were, as in real air. The frames before leave a fading wake that drags
+            # a little air along behind it.
+            amt, rs = p.get('push_amount', 1.0), max(p.get('push_radius', 1.0), 0.05)
+            churn = np.zeros(n)
+            for c, r, v, w in zip(*self.push):
+                d = Pw - c
+                dist = np.sqrt((d * d).sum(1)) + 1e-6
+                a = r * rs
+                if w >= 0.999:
+                    nrm = d / dist[:, None]
+                    k3 = 0.5 * (a / np.maximum(dist, a)) ** 3 * amt
+                    tgt = tgt + k3[:, None] * (3.0 * (nrm @ v)[:, None] * nrm - v[None, :])
+                else:
+                    q = dist / a
+                    g = np.exp(-q * q) * w * amt
+                    tgt = tgt + v[None, :] * (g * WAKE_DRAG)[:, None]
+                    churn += g * float(np.linalg.norm(v))
+            if churn.any():          # the wake is turbulent: it stirs the air (the micro-turbulence field, made stronger)
+                tgt = tgt + self._flow(Pw, self.t, self.modes[1], 1.0) * (churn * WAKE_TURB)[:, None]
         k = 1 - np.exp(-dt / self.tau)
         self.V += (tgt - self.V) * k[:, None]
         self.local += (self.V @ self.R) * dt
         self.local = np.mod(self.local + self.size / 2, self.size) - self.size / 2
         self.t += dt
+
+    push = None
 
     def state(self):
         return self.local.copy(), self.V.copy(), self.t
@@ -1191,7 +1264,155 @@ def bounce_lights(p, shot, light, count=24):
     return res
 
 
-def sim_at(p, frame, light, progress=None):
+# =====================================================================================================
+#  Pushers: things moving through the shot (characters, props) that stir the dust
+# =====================================================================================================
+WAKE_DRAG = 0.35          # how much of a mover's speed its wake drags the air along at
+WAKE_TURB = 0.6           # how hard its wake stirs the air (x its speed)
+_PUSH_CACHE = {}
+PUSH_MAX = 4          # per frame
+PUSH_WAKE = 5         # frames of wake behind each pusher
+
+
+def standin_pushers(frame):
+    """The stand-in walker as a pusher (exact): centre (m), radius (m), velocity (m/s at 24 fps)."""
+    box, vel = standin_walker(frame)
+    c = (np.array(box[0]) + np.array(box[1])) / 2 * 0.01
+    return np.array([c]), np.array([0.45]), np.array([vel * 0.01 * STANDIN.get('fps', 24.0)])
+
+
+def utility_pushers(p, shot, frame, max_n=PUSH_MAX):
+    """Moving surfaces seen by the camera on this frame, from the utility pass: world position now, and where that point was
+    on the previous frame (the backward motion vectors point to it in the previous frame's position pass). Points moving faster
+    than push_min are clustered into a few spheres: centre (m), radius (m), velocity (m/s)."""
+    empty = (np.zeros((0, 3)), np.zeros(0), np.zeros((0, 3)))
+    try:
+        e = shot._open(frame)
+    except Exception:
+        return empty
+    try:
+        found = survey_layers(e)
+        if 'MV' not in found or 'P' not in found:
+            return empty
+        mi, mn = found['MV']
+        mv = e.read(mi, mn)
+        nrm = None
+        if 'N' in found:
+            ni, nn = found['N']
+            dn = e.read(ni, nn)
+            nrm = np.stack([dn[n] for n in nn], -1)
+    finally:
+        e.close()
+    try:
+        D, P = shot.surface(frame)
+        Dp, Pp = shot.surface(frame - 1)
+    except Exception:
+        return empty
+    if P is None or Pp is None:
+        return empty
+    H, W = P.shape[:2]
+    st = max(1, int(round(W / 320.0)))                  # about 320 samples across, whatever the resolution
+    ys, xs = np.mgrid[0:H:st, 0:W:st]
+    sc = float(p.get('mv_scale', 1.0))
+    px = xs + 0.5 + mv[mn[0]][ys, xs] * sc
+    py = ys + 0.5 - mv[mn[1]][ys, xs] * sc            # Nuke convention: +y is up the image
+    xi, yi = np.clip(px.astype(np.intp), 0, W - 1), np.clip(py.astype(np.intp), 0, H - 1)
+    a, b = P[ys, xs].reshape(-1, 3).astype(np.float64), Pp[yi, xi].reshape(-1, 3).astype(np.float64)
+    ok = (np.abs(a).sum(1) > 0) & (np.abs(b).sum(1) > 0)
+
+    def edge(Dm, yy, xx):          # depth jumps around a pixel: motion there is unreliable (it may land on another surface)
+        lo, hi = np.full(yy.shape, np.inf), np.zeros(yy.shape)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                d = Dm[np.clip(yy + dy, 0, H - 1), np.clip(xx + dx, 0, W - 1)]
+                lo, hi = np.minimum(lo, np.where(d > 0, d, np.inf)), np.maximum(hi, d)
+        return (hi - lo) > 0.03 * np.maximum(lo, 1e-6)
+    ok &= ~edge(Dp, yi, xi).reshape(-1) & ~edge(D, ys, xs).reshape(-1)
+    # the camera's own move: where this point would have been on the previous frame if it stood still. Only pixels whose
+    # motion vector disagrees with that are on something that moves (a 1.5 px tolerance for filtering / rounding)
+    camp0 = shot.camera(frame - 1)
+    qx, qy, qz = camp0.project(a, W, H)
+    ok &= (np.hypot(qx - px.reshape(-1), qy - py.reshape(-1)) > 1.5) | (qz <= 0)
+    su, fps = shot.su, float(p['fps'])
+    v = (a - b) * su * fps                              # m/s
+    spd = np.linalg.norm(v, axis=1)
+    # what a one-pixel error in the motion vectors would look like at that distance: far or grazing surfaces need more
+    # apparent motion before they count, so static set pieces don't read as moving
+    cam, camp = shot.camera(frame), shot.camera(frame - 1)
+    view = a - cam.pos
+    dist = np.linalg.norm(view, axis=1)
+    foot = dist * su * 2 * math.tan(cam.hfov / 2) / W
+    if nrm is not None:            # surfaces seen edge-on: a pixel covers much more of them
+        n_ = nrm[ys, xs].reshape(-1, 3).astype(np.float64)
+        cosv = np.abs((n_ * view).sum(1)) / np.maximum(np.linalg.norm(n_, axis=1) * dist, 1e-9)
+        foot = foot / np.maximum(cosv, 0.15)
+    ok &= (spd > np.maximum(float(p.get('push_min', 0.25)), 1.5 * foot * fps)) & (spd < 12.0)
+    # revealed this frame (it was behind something on the previous one): the motion vector lands on the thing in front
+    da, db = np.linalg.norm(a - camp.pos, axis=1), np.linalg.norm(b - camp.pos, axis=1)
+    ok &= (da - db) < 0.08 * da
+    if not ok.any():
+        return empty
+    am, vm = a[ok] * su, v[ok]
+    cell = np.floor(am / 0.5).astype(np.intp)
+    keys, inv, cnt = np.unique(cell, axis=0, return_inverse=True, return_counts=True)
+    inv = inv.reshape(-1)
+    C, R, V = [], [], []
+    # merge neighbouring cells around the biggest ones into up to max_n blobs
+    order = np.argsort(-cnt)
+    used = np.zeros(len(keys), bool)
+    for k in order:
+        if used[k] or len(C) >= max_n or cnt[k] < 4:
+            continue
+        near = np.all(np.abs(keys - keys[k]) <= 1, axis=1) & ~used
+        used |= near
+        m = near[inv]
+        pts, vel = am[m], vm[m]
+        c = pts.mean(0)
+        C.append(c)
+        R.append(max(0.25, float(np.percentile(np.linalg.norm(pts - c, axis=1), 90)) + 0.15))
+        V.append(vel.mean(0))
+    keep = [i for i in range(len(C)) if np.linalg.norm(V[i]) > float(p.get('push_min', 0.25))]
+    C, R, V = [C[i] for i in keep], [R[i] for i in keep], [V[i] for i in keep]
+    if not C:
+        return empty
+    return np.array(C), np.array(R), np.array(V)
+
+
+def make_pushers(p, shot):
+    """frame -> (centres m, radii m, velocities m/s), or None when pushers are off."""
+    # always from the utility pass (position + backward motion vectors), the stand-in walker included, so the stand-in
+    # tests exactly what a real shot does
+    if not p.get('push') or shot is None:
+        return None
+    key = json.dumps([p.get(k) for k in ('utility', 'units', 'fps', 'mv_scale', 'push_min', 'first', 'last')])
+    cache = _PUSH_CACHE.setdefault(key, {})
+    if len(_PUSH_CACHE) > 3:
+        _PUSH_CACHE.pop(next(iter(_PUSH_CACHE)))
+    first, last = int(p['first']), int(p['last'])
+
+    def get(f):
+        if f < first or f > last:
+            return (np.zeros((0, 3)), np.zeros(0), np.zeros((0, 3)))
+        if f not in cache:
+            cache[f] = utility_pushers(p, shot, f)
+        return cache[f]
+    return get
+
+
+def pushers_for_step(p, get, frame):
+    """The pushers acting while the dust moves into `frame`: this frame's, plus a fading wake from the frames before."""
+    C, R, V, Wt = [], [], [], []
+    for k in range(PUSH_WAKE + 1):
+        c, r, v = get(frame - k)
+        w = 0.6 ** k
+        for i in range(len(c)):
+            C.append(c[i]); R.append(r[i] * (1 + 0.25 * k)); V.append(v[i]); Wt.append(w)
+    if not C:
+        return None
+    return np.array(C), np.array(R), np.array(V), np.array(Wt)
+
+
+def sim_at(p, frame, light, progress=None, pushers=None):
     """Dust state at a frame, simulated from (first - preroll). Recent states are kept so scrubbing is quick."""
     key = _sim_key(p)
     cache = _SIM_CACHE.setdefault(key, {})
@@ -1214,6 +1435,7 @@ def sim_at(p, frame, light, progress=None):
     f_begin = f
     while f < frame:
         sim.refresh_light()
+        sim.push = pushers_for_step(p, pushers, f + 1) if pushers is not None else None
         for _ in range(sub):
             sim.step(dt)
         f += 1
@@ -1754,13 +1976,14 @@ def render_frames(p, frames, progress=None, name='dust'):
     os.makedirs(p['cache'], exist_ok=True)
     shot = Shot(p['utility'], p['units'])
     light = make_light(p, shot)
+    pushers = make_pushers(p, shot)
     out = []
     frames = sorted(frames)
     for i, f in enumerate(frames):
         cb = None
         if progress:
             cb = lambda x, msg, i=i: progress((i + x * 0.6) / float(len(frames)), msg)
-        sim = sim_at(p, f, light, cb)
+        sim = sim_at(p, f, light, cb, pushers)
         if sim is None:
             break
         if progress and progress((i + 0.6) / float(len(frames)), 'Rendering frame %d' % f) is False:
@@ -1805,7 +2028,7 @@ _KNOBS = [
     ('MoteField', 'first', 'int', 'First frame', None),
     ('MoteField', 'last', 'int', 'Last frame', None),
     ('MoteField', 'fps', 'float', 'Frame rate', (1, 120)),
-    ('MoteField', 'standin_view', 'enum', 'Stand-in camera', ['wide', 'close-up']),
+    ('MoteField', 'standin_view', 'enum', 'Stand-in camera', ['wide', 'close-up', 'walker']),
     ('MoteField', 'btn_standin', 'button', 'Create stand-in shot', 'standin'),
     ('MoteField', 'btn_fit', 'button', 'Fit box to shot', 'fit'),
     ('MoteField', 'btn_3d', 'button', '3D preview', 'preview3d'),
@@ -1855,6 +2078,14 @@ _KNOBS = [
     ('Motion', 'settle', 'float', 'Settling (cm/s)', (0, 4)),
     ('Motion', 'preroll', 'int', 'Pre-roll frames', None),
     ('Motion', 'substeps', 'int', 'Steps per frame', None),
+    ('Motion', None, 'divider', 'Character pushers', None),
+    ('Motion', 'push', 'bool', 'Moving things push the dust', 'Finds what moves in the utility pass (backward motion vectors + position) and lets it drag and shove the dust, with a wake that lingers.'),
+    ('Motion', 'push_amount', 'float', 'Push strength', (0, 4)),
+    ('Motion', 'push_radius', 'float', 'Push reach', (0.3, 3)),
+    ('Motion', 'push_min', 'float', 'Ignore motion slower than (m/s)', (0, 2)),
+    ('Motion', 'mv_scale', 'float', 'Motion vector scale', (-2, 2)),
+    ('Motion', None, 'text', 'Needs a backward motion layer in the utility pass (Nuke convention: pixels, +y up, pointing to where the pixel was on the previous frame), '
+                             'like the one used for VectorBlur. Use -1 for motion vector scale if yours point forward. Moving things are found as up to 4 blobs a frame.', None),
     ('Light', 'light_az', 'float', 'Azimuth', (-180, 180)),
     ('Light', 'light_el', 'float', 'Elevation', (0, 90)),
     ('Light', 'light_int', 'float', 'Intensity', (0, 20)),
@@ -1862,7 +2093,7 @@ _KNOBS = [
     ('Light', 'light_rgb', 'color', 'Light colour', None),
     ('Light', 'btn_nklight', 'button', 'Key light from selected Nuke light', 'nklight'),
     ('Light', 'btn_lights', 'button', 'Import lights (.json / USD)', 'lights'),
-    ('Light', 'bounce', 'float', 'Bounce fill', (0, 4)),
+    ('Light', 'bounce', 'float', 'Bounce light on dust', (0, 20)),
     ('Light', 'shadows', 'enum', 'Shadows from', ['stand-in geometry', 'utility pass', 'none']),
     ('Light', 'shadow_soft', 'float', 'Shadow edge softness (cm)', (0, 20)),
     ('Light', 'interior', 'bool', 'Interior: light only through openings', 'Utility pass shadows only: the pass only shows what the camera saw, so light comes in only where the camera saw sky (a window).'),

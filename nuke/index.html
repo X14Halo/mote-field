@@ -643,6 +643,7 @@ const CLOSEUP_DUST = { density: 360, flakes: 28, fibers: 5, fluff: 1.5, glint: 0
 function onStandinView() {
   const close = V.standin_view === 'close-up';
   for (const k in CLOSEUP_DUST) setKnob(k, close ? CLOSEUP_DUST[k] : SCHEMA.defaults[k]);
+  if (V.standin_view === 'walker') setKnob('push', true);         // the walker shot is there to try the pushers
   makeStandin();
 }
 async function makeStandin() {
@@ -651,9 +652,9 @@ async function makeStandin() {
   try {
     const st = await call('standin', { width: standinWidth, view: V.standin_view || 'wide' });
     shot.utility = st.utility; shot.plate = st.plate; shot.standin = true; shot.standinJson = st.set.standin_json;
-    pvs.boxes = st.boxes; pvs.plateLight = Object.assign({}, st.plate_light, { room: st.room }); pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = '';
+    pvs.boxes = st.boxes; pvs.walker = st.walker || null; pvs.pushKey = ''; pvs.pushReady = ''; pvs.plateLight = Object.assign({}, st.plate_light, { room: st.room }); pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = '';
     if (look) look.clear();
-    if (pv && pv.ok) { pv.setBoxes(st.boxes); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
+    if (pv && pv.ok) { pv.setBoxes(st.boxes, pvs.walker); pv.setPushers(null); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
     shot.label = 'stand-in shot, ' + (V.standin_view || 'wide') + ' (' + st.width + ' × ' + st.height + ', browser memory)';
     for (const [k, v] of Object.entries(st.set)) if (k !== 'standin_json') setKnob(k, v);
     dust.clear(); plates.clear(); v3.sceneKey = ''; v3.framed = false;
@@ -692,7 +693,7 @@ function applyShotFiles(kind, r, where) {
   {
     if (kind === 'utility') {
       shot.utility = r.pattern; shot.standin = false; shot.standinJson = '';
-      pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = ''; if (pv && pv.ok) pv.clearFrameImages(); if (look) look.clear();
+      pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = ''; pvs.pushKey = ''; pvs.pushReady = ''; if (pv && pv.ok) { pv.clearFrameImages(); pv.setPushers(null); } if (look) look.clear();
       shot.label = (NATIVE ? r.pattern : r.pattern.split('/').pop()) + '  (' + r.count + ' frames, ' + where + ')';
       if (shot.plate && shot.plate.includes('/standin_')) shot.plate = '';
       setKnob('first', r.first); setKnob('last', r.last);
@@ -952,6 +953,7 @@ function drawHud() {
       t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (pvs.res && dim === '2d' ? ' · ' + pvs.res[0] + '×' + pvs.res[1] : '') + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
       if (!shot.standin && pv.frameTex.size < V.last - V.first + 1) t += '\n<span class="no">reading frames for holdouts: ' + pv.frameTex.size + ' / ' + (V.last - V.first + 1) + '</span>';
       if (pvs.lightNote) t += '\n<span class="no">' + pvs.lightNote + '</span>';
+      if (pvs.pushNote) t += '\n<span class="no">' + pvs.pushNote + '</span>';
     }
     $('hud').innerHTML = t;
     return;
@@ -1575,7 +1577,8 @@ function lightMode(p) {
 }
 function lightKey(p) { return lightMode(p) === 2 ? JSON.stringify([shot.utility, p.units, p.light_az, p.light_el, p.first, p.last]) : 'm' + lightMode(p); }
 function simStepKey(p) {
-  return JSON.stringify([pvs.initKey, pvs.lightKey, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
+  const push = p.push && pvs.pushReady && pvs.pushReady === pushKey(p);     // pushers join the simulation once they're all read
+  return JSON.stringify([pvs.initKey, pvs.lightKey, push ? [pvs.pushReady, p.push_amount, p.push_radius] : 0, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
     'light_az', 'light_el', 'shadows', 'interior'].map(k => p[k])]);
 }
 function kelvinRGB(K) {          // motefield.kelvin_rgb
@@ -1634,7 +1637,7 @@ async function ensurePreview() {
       const lk = lightKey(p);
       if (pvs.lightKey !== lk) {
         if (lightMode(p) === 2) { pvs.lightNote = 'building the light map…'; drawHud(); pv.setLightMap(await call('plight', { p })); }
-        if (lightMode(p) === 1 && pvs.boxes && !pv.boxes) pv.setBoxes(pvs.boxes);
+        if (lightMode(p) === 1 && pvs.boxes && !pv.boxes) pv.setBoxes(pvs.boxes, pvs.walker);
         pvs.lightKey = lk; pvs.lightNote = '';
         v3dirty(); continue;
       }
@@ -1645,7 +1648,29 @@ async function ensurePreview() {
   finally {
     pvs.busy = false; drawHud(); v3dirty();
     if (pvs.again) { pvs.again = false; ensurePreview(); }
+    else loadPushers();
   }
+}
+// character pushers (motefield.utility_pushers): read from the utility pass a few frames at a time, in the background
+function pushKey(p) { return JSON.stringify([shot.utility, p.units, p.fps, p.mv_scale, p.push_min, p.first, p.last]); }
+async function loadPushers() {
+  const p = params();
+  if (!p.push || !shot.utility) { pvs.pushNote = ''; return; }      // (the GPU only uses them while push is on)
+  const key = pushKey(p);
+  if (pvs.pushKey === key) return;
+  pvs.pushKey = key; pvs.pushReady = '';
+  const a = Math.round(p.first), b = Math.round(p.last), all = {};
+  try {
+    for (let f = a; f <= b && pvs.pushKey === key; f += 4) {
+      pvs.pushNote = 'finding what moves (backward motion vectors): frame ' + f + ' of ' + b; drawHud();
+      Object.assign(all, await call('ppush', { p, f0: f, f1: Math.min(f + 3, b) }));
+    }
+    if (pvs.pushKey !== key) return;
+    pv.setPushers(all); pvs.pushReady = key; pvs.pushData = all;
+    const n = Object.values(all).reduce((s, L) => s + (L.length ? 1 : 0), 0);
+    pvs.pushNote = ''; setStatus('Character pushers: something moving on ' + n + ' of ' + (b - a + 1) + ' frames.' + (n ? '' : ' (No backward motion layer, or nothing moves faster than the threshold.)'));
+  } catch (e) { pvs.pushNote = ''; pvs.pushKey = ''; setStatus('Pushers: ' + e.message, true); }
+  drawHud(); scheduleLive(0);
 }
 // picked utility passes: each frame's distance image (holdouts) and plate, read once in the background
 // what the per-frame images depend on: the shot, the plate, and (when the set is shaded from the utility pass) the light

@@ -13,7 +13,7 @@ The .json is plain and small, so it is easy to write from anything else too:
         {"name": "key", "type": "distant", "direction": [x, y, z],   # unit vector pointing TOWARD the light, world space
          "position": [x, y, z], "color": [r, g, b], "intensity": 6.0, "exposure": 0.0,
          "temperature": 5000.0 or null, "angle": 0.53}]}
-Types: distant, sphere (point), rect, disk, cylinder, dome, other. MoteField v0.2 uses one distant key light;
+Types: distant, sphere (point), rect, disk, cylinder, dome, other. MoteField uses one distant key light for now;
 the others are exported too, for when point / area lights are added (see TD_GUIDE.md).
 """
 import json, math, os

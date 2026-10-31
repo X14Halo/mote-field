@@ -50,7 +50,8 @@ In Nuke, **Live viewer (GPU)** runs this same viewer against native Python (`nuk
 - **One live viewer**: the GPU preview matches the Python render (within about 1%), so the browser has no separate Final view; **Save this frame** still renders the exact EXR in Python, and final frames come from the Nuke node on the farm. The viewer renders at screen resolution.
 - **Free camera** (C): fly around the set with the full look and the shot's lens; the wheel racks focus, double-click focuses on a point, F returns to the shot camera; a cutaway hides the near walls from outside the room
 - **Stand-in camera**: a wide move or a close-up at f/2.8 by the window (with the mockup's close-up dust)
-- **Mote lighting** (both tools): bounce light from the sunlit patches of the set, soft shadow edges (Light > Shadow edge softness), motes fade out right at the lens
+- **Mote lighting** (both tools): bounce light from the sunlit patches of the set (Light > Bounce light on dust, 0–20), soft shadow edges (Light > Shadow edge softness), motes fade out right at the lens
+- **Character pushers** (both tools, Motion > Moving things push the dust): what moves in the shot is found from the utility pass's backward motion vectors and position (camera motion removed), and the dust flows around it, with a turbulent wake. Try it on the **walker** stand-in camera
 - **No plate?** A picked utility pass is shaded from its own surface colour and the key light, with the lens defocus, so there is a set to judge the dust against
 - **Hold camera**: the camera, plate and holdouts stay on one frame while the dust keeps moving
 - **3D view**: the set as solid surfaces from the utility pass; drag the coloured dots on the dust box to resize it from that side and the gold dot to move it (Shift: up / down)

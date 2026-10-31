@@ -79,6 +79,14 @@ The GPU preview and the Python render agree within about 1% of total light, with
 - **Air.** A divergence-free flow made of 40 large eddy modes and 20 micro modes (random Fourier modes), plus a drift wind, thermal lift where the sun hits, and settling. Motes follow the air with a type-dependent lag and wrap around inside the box.
 - **Timing.** The simulation starts *pre-roll* frames before the first frame, with *Steps per frame* sub-steps.
 - **Edge fade.** Density fades out toward each face of the box. There's an overall fade amount, scaled per face.
+- **Character pushers** (optional, `push`). Things that move in the shot stir the dust. `utility_pushers` finds them from the utility pass alone:
+  1. Each pixel's backward motion vector (Nuke convention: pixels, +y up, pointing to where that pixel was on the previous frame) is followed into the previous frame's position pass, giving where that surface point was: world velocity = (P now − P before) × fps.
+  2. The point is only counted as moving if its motion vector disagrees with what the **camera's own move** would give for a still point (reproject P into the previous frame's camera; more than 1.5 px apart). This is what stops walls and floors reading as moving on a camera move.
+  3. Pixels at depth edges, surfaces just revealed from behind something (disocclusion), and speeds below *Ignore motion slower than* are dropped.
+  4. The rest are clustered into up to 4 spheres per frame (centre, radius, velocity).
+
+  In the simulation, the air flows around each sphere as it moves (potential flow: pushed aside in front, sliding past at the sides, closing in behind), so motes end up roughly where they were, as in real air. The last 5 frames leave a wake that drags a little air along and stirs it with the micro-turbulence field. *Push strength* scales all of it, *Push reach* the sphere sizes. If your motion vectors point forward, set *Motion vector scale* to −1.
+  - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a `backward` layer made like the studio util pass): the walker was found on every frame (47 of 47), with no false movers, at 0.6% speed error (1280 px) and 6.7% (from a 320 px copy, which the browser uses for the stand-in).
 
 ### Light
 - **Key light.** A directional light. `light_dir(az, el)` points toward the light; colour = temperature × RGB × intensity (`sun_rgb`).
@@ -87,7 +95,7 @@ The GPU preview and the Python render agree within about 1% of total light, with
   - **utility pass:** a depth map from the light, built from the utility pass of the first, middle and last frames. With *Interior* on, light only gets in where the camera saw sky, such as a window;
   - **none:** everything in the box is lit.
 - **Soft shadow edges.** Visibility is averaged over 6 taps across the sun direction (Shadow edge softness, in cm).
-- **Bounce light on motes** (`bounce_lights`). The sunlit patches of the set are found from the utility pass: position, normal and colour where the light lands, with each patch's size. They're clustered into 24 point lights plus an overall fill. Motes outside the beam pick up warm bounce light as they do in a real room.
+- **Bounce light on motes** (`bounce_lights`). The sunlit patches of the set are found from the utility pass: position, normal and colour where the light lands, with each patch's size. They're clustered into 24 point lights plus an overall fill. Motes outside the beam pick up warm bounce light as they do in a real room. **Bounce light on dust** (0–20) sets how much of it the light gives; it belongs to the light, so with more lights each gets its own.
 - **Scattering:**
   - each mote has a Henyey-Greenstein phase function (forward scatter);
   - flakes tumble and glint;
@@ -114,94 +122,7 @@ The GPU preview and the Python render agree within about 1% of total light, with
 | `mflive.py` | Live viewer server (127.0.0.1 only) and Nuke panel. Serves the viewer and a binary API that calls `mfweb.py` with native Python. Writes GPU-rendered frames to the node's cache. |
 | `mflights.py` | Lights from Houdini (OBJ lights or a Solaris/USD stage) to a small .json, and .json/.usd to the node's key-light knobs. |
 | `mfweb.py` | Glue between the viewer and `motefield.py`: stand-in frames on demand, preview data (starting state, light map, bounce lights), shaded plates. Used by both the browser (Pyodide) and the live viewer (native). |
-| `index.html` | The viewer UI. Its panel is built from `motefield._| Tab | Key | Knob | Default |
-|---|---|---|---|
-| MoteField | `utility` | Utility pass |  |
-| MoteField | `units` | Scene units | centimetres |
-| MoteField | `first` | First frame | 1001 |
-| MoteField | `last` | Last frame | 1048 |
-| MoteField | `fps` | Frame rate | 24.0 |
-| MoteField | `standin_view` | Stand-in camera | wide |
-| MoteField | `btn_standin` | Create stand-in shot | (button) |
-| MoteField | `btn_fit` | Fit box to shot | (button) |
-| MoteField | `btn_3d` | 3D preview | (button) |
-| MoteField | `btn_live` | Live viewer (GPU) | (button) |
-| MoteField | `box_center` | Box centre | (-60.0, 175.0, -130.0) |
-| MoteField | `box_size` | Box size | (760.0, 330.0, 900.0) |
-| MoteField | `box_rot` | Box rotate Y | 0.0 |
-| MoteField | `fade` | Edge fade | 45.0 |
-| MoteField | `fade_neg` | Fade  -X -Y -Z | (1.0, 1.0, 1.0) |
-| MoteField | `fade_pos` | Fade  +X +Y +Z | (1.0, 1.0, 1.0) |
-| MoteField | `cache` | Cache folder |  |
-| MoteField | `proxy` | Resolution | 1.0 |
-| MoteField | `btn_frame` | Render this frame | (button) |
-| MoteField | `btn_range` | Render frame range | (button) |
-| MoteField | `btn_export` | Export settings (farm) | (button) |
-| MoteField | `hold_frame` | Hold camera on frame (0 = off) | 0 |
-| Dust | `density` | Density (per m³) | 180.0 |
-| Dust | `seed` | Seed | 1 |
-| Dust | `size_min` | Finest grit (µm) | 4.0 |
-| Dust | `size_max` | Coarsest grit (µm) | 60.0 |
-| Dust | `size_bias` | Fine-grit bias | 2.4 |
-| Dust | `flakes` | Flakes % | 18.0 |
-| Dust | `fibers` | Lint fibres % | 1.2 |
-| Dust | `fluff` | Fluff % | 0.4 |
-| Dust | `flake_scale` | Flake size | 1.0 |
-| Dust | `fiber_scale` | Fibre length | 1.0 |
-| Dust | `fluff_scale` | Fluff size | 0.6 |
-| Dust | `brightness` | Brightness | 1.0 |
-| Dust | `forward` | Forward scatter | 0.65 |
-| Dust | `shadow_fill` | Shadow-side fill | 0.35 |
-| Dust | `glint` | Flake glints | 0.4 |
-| Dust | `tumble` | Tumble rate | 1.0 |
-| Dust | `tint` | Tint | (1.0, 1.0, 1.0) |
-| Dust | `max_motes` | Max motes | 150000 |
-| Motion | `speed` | Speed | 1.0 |
-| Motion | `drift` | Drift (cm/s) | 1.2 |
-| Motion | `drift_dir` | Drift heading | 200.0 |
-| Motion | `lift` | Vertical drift (cm/s) | 0.0 |
-| Motion | `eddies` | Eddies (cm/s) | 3.0 |
-| Motion | `eddy_size` | Eddy size (m) | 1.4 |
-| Motion | `micro` | Micro-turbulence (cm/s) | 0.8 |
-| Motion | `thermal` | Thermal lift in light (cm/s) | 1.5 |
-| Motion | `settle` | Settling (cm/s) | 0.5 |
-| Motion | `preroll` | Pre-roll frames | 48 |
-| Motion | `substeps` | Steps per frame | 2 |
-| Light | `light_az` | Azimuth | 25.0 |
-| Light | `light_el` | Elevation | 33.0 |
-| Light | `light_int` | Intensity | 6.0 |
-| Light | `light_k` | Colour temperature (K) | 5000.0 |
-| Light | `light_rgb` | Light colour | (1.0, 1.0, 1.0) |
-| Light | `btn_nklight` | Key light from selected Nuke light | (button) |
-| Light | `btn_lights` | Import lights (.json / USD) | (button) |
-| Light | `bounce` | Bounce fill | 1.0 |
-| Light | `shadows` | Shadows from | stand-in geometry |
-| Light | `shadow_soft` | Shadow edge softness (cm) | 3.0 |
-| Light | `interior` | Interior: light only through openings | True |
-| Lens | `focal` | Focal length (mm, 0 = header) | 0.0 |
-| Lens | `film` | Film back width (mm, 0 = header) | 0.0 |
-| Lens | `fstop` | f-stop (0 = header) | 0.0 |
-| Lens | `focus` | Focus distance (scene units, 0 = header) | 0.0 |
-| Lens | `dof` | Defocus | True |
-| Lens | `blades` | Blade count (0 = header, < 3 round) | 0 |
-| Lens | `cateye` | Cat-eye bokeh (+ header) | 0.0 |
-| Lens | `anamorphic` | Anamorphic aspect (+ header) | 0.0 |
-| Lens | `field_curv` | Field curvature (+ header) | 0.0 |
-| Lens | `fstop_full` | f-stop full aperture (0 = header) | 0.0 |
-| Lens | `front_mult` | Front multiplier | 1.0 |
-| Lens | `back_mult` | Back multiplier | 1.0 |
-| Lens | `max_bokeh` | Largest bokeh radius (px) | 110.0 |
-| Lens | `bokeh_image` | Custom bokeh shape |  |
-| Lens | `bokeh_rot` | Bokeh rotation | 0.0 |
-| Lens | `bokeh_falloff` | Bokeh centre / rim brightness | 0.0 |
-| Lens | `shutter` | Shutter angle | 180.0 |
-| Lens | `shutter_mode` | Shutter | backward |
-| Lens | `shutter_shape` | Shutter shape | backwardsShape |
-| Lens | `mb` | Motion blur | True |
-| Holdouts | `holdout` | Depth holdouts | True |
-| Holdouts | `fg_fade` | Fade out foreground holdouts | False |
-| Holdouts | `fg_near` | No holdout nearer than | 0.0 |
-| Holdouts | `fg_far` | Full holdout beyond | 0.0 |
+| `index.html` | The viewer UI. Its panel is built from `motefield._KNOBS`, so it always matches the node. |
 `, so it always matches the node. |
 | `preview.js` | The GPU dust: the same simulation and per-mote maths as `motefield.py`, in WebGL2 shaders. |
 | `look.js` | Viewer-only look: the stand-in lit like a render (bounce light, haze shaft, lens blur), glow and the AgX tone curve. Never in the output. |
@@ -225,95 +146,7 @@ They are one tool: same knobs, same Python (`motefield.py`), same GPU viewer.
 
 ## 7. Knob reference
 
-Generated from `motefield._| Tab | Key | Knob | Default |
-|---|---|---|---|
-| MoteField | `utility` | Utility pass |  |
-| MoteField | `units` | Scene units | centimetres |
-| MoteField | `first` | First frame | 1001 |
-| MoteField | `last` | Last frame | 1048 |
-| MoteField | `fps` | Frame rate | 24.0 |
-| MoteField | `standin_view` | Stand-in camera | wide |
-| MoteField | `btn_standin` | Create stand-in shot | (button) |
-| MoteField | `btn_fit` | Fit box to shot | (button) |
-| MoteField | `btn_3d` | 3D preview | (button) |
-| MoteField | `btn_live` | Live viewer (GPU) | (button) |
-| MoteField | `box_center` | Box centre | (-60.0, 175.0, -130.0) |
-| MoteField | `box_size` | Box size | (760.0, 330.0, 900.0) |
-| MoteField | `box_rot` | Box rotate Y | 0.0 |
-| MoteField | `fade` | Edge fade | 45.0 |
-| MoteField | `fade_neg` | Fade  -X -Y -Z | (1.0, 1.0, 1.0) |
-| MoteField | `fade_pos` | Fade  +X +Y +Z | (1.0, 1.0, 1.0) |
-| MoteField | `cache` | Cache folder |  |
-| MoteField | `proxy` | Resolution | 1.0 |
-| MoteField | `btn_frame` | Render this frame | (button) |
-| MoteField | `btn_range` | Render frame range | (button) |
-| MoteField | `btn_export` | Export settings (farm) | (button) |
-| MoteField | `hold_frame` | Hold camera on frame (0 = off) | 0 |
-| Dust | `density` | Density (per m³) | 180.0 |
-| Dust | `seed` | Seed | 1 |
-| Dust | `size_min` | Finest grit (µm) | 4.0 |
-| Dust | `size_max` | Coarsest grit (µm) | 60.0 |
-| Dust | `size_bias` | Fine-grit bias | 2.4 |
-| Dust | `flakes` | Flakes % | 18.0 |
-| Dust | `fibers` | Lint fibres % | 1.2 |
-| Dust | `fluff` | Fluff % | 0.4 |
-| Dust | `flake_scale` | Flake size | 1.0 |
-| Dust | `fiber_scale` | Fibre length | 1.0 |
-| Dust | `fluff_scale` | Fluff size | 0.6 |
-| Dust | `brightness` | Brightness | 1.0 |
-| Dust | `forward` | Forward scatter | 0.65 |
-| Dust | `shadow_fill` | Shadow-side fill | 0.35 |
-| Dust | `glint` | Flake glints | 0.4 |
-| Dust | `tumble` | Tumble rate | 1.0 |
-| Dust | `tint` | Tint | (1.0, 1.0, 1.0) |
-| Dust | `max_motes` | Max motes | 150000 |
-| Motion | `speed` | Speed | 1.0 |
-| Motion | `drift` | Drift (cm/s) | 1.2 |
-| Motion | `drift_dir` | Drift heading | 200.0 |
-| Motion | `lift` | Vertical drift (cm/s) | 0.0 |
-| Motion | `eddies` | Eddies (cm/s) | 3.0 |
-| Motion | `eddy_size` | Eddy size (m) | 1.4 |
-| Motion | `micro` | Micro-turbulence (cm/s) | 0.8 |
-| Motion | `thermal` | Thermal lift in light (cm/s) | 1.5 |
-| Motion | `settle` | Settling (cm/s) | 0.5 |
-| Motion | `preroll` | Pre-roll frames | 48 |
-| Motion | `substeps` | Steps per frame | 2 |
-| Light | `light_az` | Azimuth | 25.0 |
-| Light | `light_el` | Elevation | 33.0 |
-| Light | `light_int` | Intensity | 6.0 |
-| Light | `light_k` | Colour temperature (K) | 5000.0 |
-| Light | `light_rgb` | Light colour | (1.0, 1.0, 1.0) |
-| Light | `btn_nklight` | Key light from selected Nuke light | (button) |
-| Light | `btn_lights` | Import lights (.json / USD) | (button) |
-| Light | `bounce` | Bounce fill | 1.0 |
-| Light | `shadows` | Shadows from | stand-in geometry |
-| Light | `shadow_soft` | Shadow edge softness (cm) | 3.0 |
-| Light | `interior` | Interior: light only through openings | True |
-| Lens | `focal` | Focal length (mm, 0 = header) | 0.0 |
-| Lens | `film` | Film back width (mm, 0 = header) | 0.0 |
-| Lens | `fstop` | f-stop (0 = header) | 0.0 |
-| Lens | `focus` | Focus distance (scene units, 0 = header) | 0.0 |
-| Lens | `dof` | Defocus | True |
-| Lens | `blades` | Blade count (0 = header, < 3 round) | 0 |
-| Lens | `cateye` | Cat-eye bokeh (+ header) | 0.0 |
-| Lens | `anamorphic` | Anamorphic aspect (+ header) | 0.0 |
-| Lens | `field_curv` | Field curvature (+ header) | 0.0 |
-| Lens | `fstop_full` | f-stop full aperture (0 = header) | 0.0 |
-| Lens | `front_mult` | Front multiplier | 1.0 |
-| Lens | `back_mult` | Back multiplier | 1.0 |
-| Lens | `max_bokeh` | Largest bokeh radius (px) | 110.0 |
-| Lens | `bokeh_image` | Custom bokeh shape |  |
-| Lens | `bokeh_rot` | Bokeh rotation | 0.0 |
-| Lens | `bokeh_falloff` | Bokeh centre / rim brightness | 0.0 |
-| Lens | `shutter` | Shutter angle | 180.0 |
-| Lens | `shutter_mode` | Shutter | backward |
-| Lens | `shutter_shape` | Shutter shape | backwardsShape |
-| Lens | `mb` | Motion blur | True |
-| Holdouts | `holdout` | Depth holdouts | True |
-| Holdouts | `fg_fade` | Fade out foreground holdouts | False |
-| Holdouts | `fg_near` | No holdout nearer than | 0.0 |
-| Holdouts | `fg_far` | Full holdout beyond | 0.0 |
-`. The same list builds the Nuke node and the viewer's panel.
+Generated from `motefield._KNOBS`, so it always matches the node.
 
 | Tab | Key | Knob | Default |
 |---|---|---|---|
@@ -368,6 +201,11 @@ Generated from `motefield._| Tab | Key | Knob | Default |
 | Motion | `settle` | Settling (cm/s) | 0.5 |
 | Motion | `preroll` | Pre-roll frames | 48 |
 | Motion | `substeps` | Steps per frame | 2 |
+| Motion | `push` | Moving things push the dust | False |
+| Motion | `push_amount` | Push strength | 1.0 |
+| Motion | `push_radius` | Push reach | 1.0 |
+| Motion | `push_min` | Ignore motion slower than (m/s) | 0.25 |
+| Motion | `mv_scale` | Motion vector scale | 1.0 |
 | Light | `light_az` | Azimuth | 25.0 |
 | Light | `light_el` | Elevation | 33.0 |
 | Light | `light_int` | Intensity | 6.0 |
@@ -375,7 +213,7 @@ Generated from `motefield._| Tab | Key | Knob | Default |
 | Light | `light_rgb` | Light colour | (1.0, 1.0, 1.0) |
 | Light | `btn_nklight` | Key light from selected Nuke light | (button) |
 | Light | `btn_lights` | Import lights (.json / USD) | (button) |
-| Light | `bounce` | Bounce fill | 1.0 |
+| Light | `bounce` | Bounce light on dust | 1.0 |
 | Light | `shadows` | Shadows from | stand-in geometry |
 | Light | `shadow_soft` | Shadow edge softness (cm) | 3.0 |
 | Light | `interior` | Interior: light only through openings | True |
@@ -403,7 +241,6 @@ Generated from `motefield._| Tab | Key | Knob | Default |
 | Holdouts | `fg_fade` | Fade out foreground holdouts | False |
 | Holdouts | `fg_near` | No holdout nearer than | 0.0 |
 | Holdouts | `fg_far` | Full holdout beyond | 0.0 |
-
 
 ## 8. Porting to the pipeline: checklist
 
@@ -412,99 +249,12 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 **Needed for real shots**
 1. **Utility pass path from the shot** (`Shot`). Replace the path knob with a shot picker (show / seq / shot / layer / version) that resolves the frame pattern. The `utility` key stays the resolved pattern, so nothing else changes.
 2. **Camera header keys** (`camera_from_headers`). Matching is loose today: any key ending in `camToWorld`, `focalLength`, `fStop`, `focusDistance`, `horizontalAperture`, and the lens extras. Check one of the studio's utility EXRs with ViewMetadata and pin the names.
-3. **Layer names** (`_ROLE`). Add the studio's names for position, normals, depth and surface colour.
+3. **Layer names** (`_ROLE`). Add the studio's names for position, normals, depth, surface colour and the backward motion vectors (for the pushers; `backward` is already in the list).
 4. **Units and up axis** (`UNITS`). Centimetres and Y-up are assumed. A Z-up scene needs one swap where the pass is read.
 5. **Key light.** Use the existing Houdini → Nuke light export with **Key light from selected Nuke light** (`light_from_nuke_node`; check the `world_matrix` knob name in Nuke 15). For a live link, set the node's light knobs by expression from the light node.
 6. **Cache / publish location** (`render_frames`, `_nk_defaults`). Write to the studio cache, version it, and register the output.
 7. **Farm submission.** Submit `python motefield.py render --settings <json> --frames <range>` through the studio's farm tool. Frames are independent, so split the range freely. Each job re-simulates from pre-roll, which takes seconds.
-8. **Packaging** (`create`). Make it a gizmo or menu entry. The knobs come from `_| Tab | Key | Knob | Default |
-|---|---|---|---|
-| MoteField | `utility` | Utility pass |  |
-| MoteField | `units` | Scene units | centimetres |
-| MoteField | `first` | First frame | 1001 |
-| MoteField | `last` | Last frame | 1048 |
-| MoteField | `fps` | Frame rate | 24.0 |
-| MoteField | `standin_view` | Stand-in camera | wide |
-| MoteField | `btn_standin` | Create stand-in shot | (button) |
-| MoteField | `btn_fit` | Fit box to shot | (button) |
-| MoteField | `btn_3d` | 3D preview | (button) |
-| MoteField | `btn_live` | Live viewer (GPU) | (button) |
-| MoteField | `box_center` | Box centre | (-60.0, 175.0, -130.0) |
-| MoteField | `box_size` | Box size | (760.0, 330.0, 900.0) |
-| MoteField | `box_rot` | Box rotate Y | 0.0 |
-| MoteField | `fade` | Edge fade | 45.0 |
-| MoteField | `fade_neg` | Fade  -X -Y -Z | (1.0, 1.0, 1.0) |
-| MoteField | `fade_pos` | Fade  +X +Y +Z | (1.0, 1.0, 1.0) |
-| MoteField | `cache` | Cache folder |  |
-| MoteField | `proxy` | Resolution | 1.0 |
-| MoteField | `btn_frame` | Render this frame | (button) |
-| MoteField | `btn_range` | Render frame range | (button) |
-| MoteField | `btn_export` | Export settings (farm) | (button) |
-| MoteField | `hold_frame` | Hold camera on frame (0 = off) | 0 |
-| Dust | `density` | Density (per m³) | 180.0 |
-| Dust | `seed` | Seed | 1 |
-| Dust | `size_min` | Finest grit (µm) | 4.0 |
-| Dust | `size_max` | Coarsest grit (µm) | 60.0 |
-| Dust | `size_bias` | Fine-grit bias | 2.4 |
-| Dust | `flakes` | Flakes % | 18.0 |
-| Dust | `fibers` | Lint fibres % | 1.2 |
-| Dust | `fluff` | Fluff % | 0.4 |
-| Dust | `flake_scale` | Flake size | 1.0 |
-| Dust | `fiber_scale` | Fibre length | 1.0 |
-| Dust | `fluff_scale` | Fluff size | 0.6 |
-| Dust | `brightness` | Brightness | 1.0 |
-| Dust | `forward` | Forward scatter | 0.65 |
-| Dust | `shadow_fill` | Shadow-side fill | 0.35 |
-| Dust | `glint` | Flake glints | 0.4 |
-| Dust | `tumble` | Tumble rate | 1.0 |
-| Dust | `tint` | Tint | (1.0, 1.0, 1.0) |
-| Dust | `max_motes` | Max motes | 150000 |
-| Motion | `speed` | Speed | 1.0 |
-| Motion | `drift` | Drift (cm/s) | 1.2 |
-| Motion | `drift_dir` | Drift heading | 200.0 |
-| Motion | `lift` | Vertical drift (cm/s) | 0.0 |
-| Motion | `eddies` | Eddies (cm/s) | 3.0 |
-| Motion | `eddy_size` | Eddy size (m) | 1.4 |
-| Motion | `micro` | Micro-turbulence (cm/s) | 0.8 |
-| Motion | `thermal` | Thermal lift in light (cm/s) | 1.5 |
-| Motion | `settle` | Settling (cm/s) | 0.5 |
-| Motion | `preroll` | Pre-roll frames | 48 |
-| Motion | `substeps` | Steps per frame | 2 |
-| Light | `light_az` | Azimuth | 25.0 |
-| Light | `light_el` | Elevation | 33.0 |
-| Light | `light_int` | Intensity | 6.0 |
-| Light | `light_k` | Colour temperature (K) | 5000.0 |
-| Light | `light_rgb` | Light colour | (1.0, 1.0, 1.0) |
-| Light | `btn_nklight` | Key light from selected Nuke light | (button) |
-| Light | `btn_lights` | Import lights (.json / USD) | (button) |
-| Light | `bounce` | Bounce fill | 1.0 |
-| Light | `shadows` | Shadows from | stand-in geometry |
-| Light | `shadow_soft` | Shadow edge softness (cm) | 3.0 |
-| Light | `interior` | Interior: light only through openings | True |
-| Lens | `focal` | Focal length (mm, 0 = header) | 0.0 |
-| Lens | `film` | Film back width (mm, 0 = header) | 0.0 |
-| Lens | `fstop` | f-stop (0 = header) | 0.0 |
-| Lens | `focus` | Focus distance (scene units, 0 = header) | 0.0 |
-| Lens | `dof` | Defocus | True |
-| Lens | `blades` | Blade count (0 = header, < 3 round) | 0 |
-| Lens | `cateye` | Cat-eye bokeh (+ header) | 0.0 |
-| Lens | `anamorphic` | Anamorphic aspect (+ header) | 0.0 |
-| Lens | `field_curv` | Field curvature (+ header) | 0.0 |
-| Lens | `fstop_full` | f-stop full aperture (0 = header) | 0.0 |
-| Lens | `front_mult` | Front multiplier | 1.0 |
-| Lens | `back_mult` | Back multiplier | 1.0 |
-| Lens | `max_bokeh` | Largest bokeh radius (px) | 110.0 |
-| Lens | `bokeh_image` | Custom bokeh shape |  |
-| Lens | `bokeh_rot` | Bokeh rotation | 0.0 |
-| Lens | `bokeh_falloff` | Bokeh centre / rim brightness | 0.0 |
-| Lens | `shutter` | Shutter angle | 180.0 |
-| Lens | `shutter_mode` | Shutter | backward |
-| Lens | `shutter_shape` | Shutter shape | backwardsShape |
-| Lens | `mb` | Motion blur | True |
-| Holdouts | `holdout` | Depth holdouts | True |
-| Holdouts | `fg_fade` | Fade out foreground holdouts | False |
-| Holdouts | `fg_near` | No holdout nearer than | 0.0 |
-| Holdouts | `fg_far` | Full holdout beyond | 0.0 |
+8. **Packaging** (`create`). Make it a gizmo or menu entry. The knobs come from `_KNOBS`, so a gizmo wrapper only needs to call `create()`.
 `.
 
 **Check in your environment**
@@ -516,7 +266,6 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **More lights:** point, spot and area lights, practicals. Light visibility and phase per light. `mflights.py` already exports them.
 - **Exact shadows from USD geometry** when there's `pxr` access: ray-cast the shot's geometry instead of the utility-pass light map.
 - **Bounce from the beauty render:** use the rendered plate (or a diffuse lighting AOV) at every visible surface as the fill light. That captures all of the render's GI, not just the key light's first bounce.
-- **Dust stirred by moving characters:** world-space velocity from the utility pass (position + the backward motion vectors), clustered into moving "pushers" that drag and swirl nearby dust.
 - **Embers:** the mockup's fire emitter (buoyant plume, black-body cooling, pops) as a second emitter type.
 - **Mote shapes when sharp:** tilted ellipses for flakes, curved strands for lint (the mockup had these).
 - **In-graph GPU render (optional):** a BlinkScript kernel that splats a per-frame mote list from Python with tile binning, so the Nuke viewer itself is real time without the panel. The GPU render-to-cache button already covers most of that need.
@@ -527,5 +276,6 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **Determinism:** a frame rendered on its own equals the same frame from a sequential run.
 - **Browser Python vs desktop Python:** identical output, bit for bit.
 - **GPU preview vs Python render:** total light within 0.1-1% with every option tested, block correlation 0.97-1.0. The tests covered DOF, blades, cat-eye, anamorphic, custom bokeh, shutter shapes, utility-pass shadows, bounce light and soft shadows.
+- **Character pushers:** detection on the stand-in walker shot as in section 4 (every frame, no false movers). Given the same pushers, the GPU and Python simulations put every mote in the same place (median difference 0.001 cm after 77 frames).
 - **Live viewer:** tested in headless Chromium against the native server, including loading a utility pass from a disk path and the GPU render-to-cache.
 - **Not tested here:** anything inside a real Nuke session (see section 8), and real GPU frame rates. The headless tests ran on a software renderer.

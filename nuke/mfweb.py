@@ -94,7 +94,12 @@ def setup_standin(width=1280, view='wide'):
     with open(os.path.join(folder, 'standin.json'), 'w') as fh:
         json.dump(meta, fh)
     boxes = [list(b[0]) + list(b[1]) + list(b[2]) for b in mf.standin_boxes()]
-    return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr', boxes=boxes,
+    walker = None
+    if mf.STANDIN_VIEWS[view].get('walker'):      # the walking box: the GPU stand-in moves it along the same line
+        Wk = mf.STANDIN_WALKER
+        walker = dict(start=list(Wk['start']), end=list(Wk['end']), size=list(Wk['size']), color=list(Wk['color']),
+                      first=S['first'], last=S['last'])
+    return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr', boxes=boxes, walker=walker,
                            plate_light=dict(az=S['sun_az'], el=S['sun_el'], intensity=6.0, kelvin=list(mf.kelvin_rgb(5000.0))),
                            room=[[-400.0, 0.0, -600.0], [400.0, 350.0, 350.0]],      # inside of the stand-in room, for the cutaway
                            first=S['first'], last=S['last'], width=S['width'], height=S['height'],
@@ -183,7 +188,7 @@ def render(pjson, frame, progress=None):
     cb = None
     if progress:
         cb = lambda x, msg: progress(0.1 + 0.6 * x, msg)
-    sim = mf.sim_at(p, frame, light, cb)
+    sim = mf.sim_at(p, frame, light, cb, mf.make_pushers(p, shot))
     if progress:
         progress(0.75, 'Rendering frame %d' % frame)
     held, unheld = mf.render_frame(p, shot, frame, sim)
@@ -438,6 +443,33 @@ def set_bokeh_image(w, h, data):
     return path
 
 
+def preview_pushers(pjson, f0, f1):
+    """Character pushers for frames f0..f1 (motefield.utility_pushers), for the GPU preview's simulation:
+    {frame: [[cx, cy, cz, radius, vx, vy, vz], ...]} in metres and m/s."""
+    p = _params(pjson)
+    p['push'] = True
+    shot = _shot(p)
+    if shot.meta is not None:
+        # the stand-in: find them in a 320-pixel-wide copy of the shot (the search samples about 320 pixels across anyway),
+        # since every stand-in frame has to be ray traced first. A real shot's frames are just read.
+        m = shot.meta
+        folder = '%s/standin_%s_push320' % (ROOT, str(m.get('view', 'wide')).replace('-', ''))
+        os.makedirs(folder, exist_ok=True)
+        js = os.path.join(folder, 'standin.json')
+        if not os.path.exists(js):
+            with open(js, 'w') as fh:
+                json.dump(dict(m, width=320, height=int(round(320.0 * m['height'] / m['width']))), fh)
+        p['utility'] = folder + '/standin_utility.####.exr'
+        shot = _shot(p)
+    get = mf.make_pushers(p, shot)
+    out = {}
+    for f in range(int(f0), int(f1) + 1):
+        C, R, V = get(f)
+        out[str(f)] = [[float(C[i][0]), float(C[i][1]), float(C[i][2]), float(R[i]), float(V[i][0]), float(V[i][1]), float(V[i][2])]
+                       for i in range(len(C))]
+    return out
+
+
 def preview_bounce(pjson):
     """The bounce lights that fill the motes (motefield.bounce_lights), for the GPU preview."""
     p = _params(pjson)
@@ -446,39 +478,6 @@ def preview_bounce(pjson):
     pos, nrm, flx, amb = mf.bounce_lights(p, shot, light)
     return dict(n=len(pos), pos=np.asarray(pos, np.float32).tobytes(), nrm=np.asarray(nrm, np.float32).tobytes(),
                 flux=np.asarray(flx, np.float32).tobytes(), amb=[float(x) for x in amb])
-
-
-def use_path(kind, path):
-    """Native (Nuke / live server) only: use a sequence on disk, given as a pattern with #### or %04d.
-    Returns the same summary as add_files()."""
-    import glob
-    path = str(path).strip()
-    if not path:
-        raise ValueError('Give a path, like /shots/sq010/sh0010/utility/sh0010_utility.####.exr')
-    m = re.search(r'#+|%0?(\d*)d', path)
-    if m:
-        globp = path[:m.start()] + '*' + path[m.end():]
-        rx = re.compile('^' + re.escape(path[:m.start()]) + r'(\d+)' + re.escape(path[m.end():]) + '$')
-        frames = sorted(int(rx.match(f).group(1)) for f in glob.glob(globp) if rx.match(f))
-    else:
-        frames = [1] if os.path.exists(path) else []
-    if not frames:
-        raise ValueError('No files found for %s' % path)
-    for k in list(_shots):
-        if k.startswith(path):
-            _shots.pop(k)
-    out = dict(pattern=path, first=frames[0], last=frames[-1], count=len(frames))
-    if kind == 'utility':
-        e = mf.ExrFile(mf.frame_path(path, frames[0]))
-        cam = mf.camera_from_headers(e.headers())
-        found = mf.survey_layers(e)
-        out['size'] = [e.parts[0]['width'], e.parts[0]['height']]
-        e.close()
-        out['camera'] = cam is not None
-        out['layers'] = sorted(found)
-        if cam is None:
-            raise ValueError('No camera in the EXR header of %s' % mf.frame_path(path, frames[0]))
-    return json.dumps(out)
 
 
 def use_path(kind, path):
