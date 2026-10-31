@@ -29,6 +29,12 @@ import mfweb                # noqa: E402
 mfweb.ROOT = os.path.join(tempfile.gettempdir(), 'motefield_live')
 _LOCK = threading.Lock()          # the renderer's caches are shared: one request at a time
 _STATE = {'server': None, 'port': None, 'node': None, 'thread': None}
+_PROGRESS = {'x': 0.0, 'msg': '', 'cancel': False}     # long jobs report here; 'progress' / 'cancel' requests don't wait for the lock
+
+
+def _progress(x, msg):
+    _PROGRESS['x'], _PROGRESS['msg'] = float(x), str(msg)
+    return not _PROGRESS['cancel']
 
 
 # ---- binary messages: [uint32 header length][JSON header][blobs]; blobs are referenced as {"__b": [offset, length]}
@@ -155,7 +161,11 @@ def _job(cmd, a):
     if cmd == 'einit':
         return mfweb.ember_init(p())
     if cmd == 'movers':
-        return mfweb.find_movers(p())
+        _PROGRESS.update(x=0.0, msg='', cancel=False)
+        try:
+            return mfweb.find_movers(p(), _progress)
+        finally:
+            _PROGRESS['msg'] = ''
     if cmd == 'fimages':
         return mfweb.frame_images(p(), a['frame'], a.get('pattern') or '')
     if cmd == 'bokeh':
@@ -212,8 +222,14 @@ def _handler_class():
             body = self.rfile.read(n) if n else b''
             try:
                 args = _decode(body) if body else {}
-                with _LOCK:
-                    res = _job(cmd, args)
+                if cmd == 'progress':
+                    res = dict(_PROGRESS)
+                elif cmd == 'cancel':
+                    _PROGRESS['cancel'] = True
+                    res = True
+                else:
+                    with _LOCK:
+                        res = _job(cmd, args)
                 out, code = _encode({'ok': True, 'result': res}), 200
             except Exception as e:
                 traceback.print_exc()

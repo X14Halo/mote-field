@@ -1,5 +1,5 @@
 """
-MoteField for Nuke (prototype v0.5): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.6): camera-aware dust motes for comp.
 
 WHAT IT IS
     A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.5.1'
+__version__ = '0.6'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -557,8 +557,12 @@ def standin_boxes(frame=None, view='wide'):
     if STANDIN_VIEWS.get(view, {}).get('set') == 'campfire':
         return campfire_boxes()
     B = []
-    if frame is not None and STANDIN_VIEWS.get(view, {}).get('walker'):
-        B.extend(b for b, v in standin_walker_parts(frame))
+    if STANDIN_VIEWS.get(view, {}).get('walker'):
+        if frame is not None:
+            B.extend(b for b, v in standin_walker_parts(frame))
+        # a coat stand between the walker and the camera: the walker passes behind it (tests movers through occlusion)
+        B.append(((-128.0, 0.0, -48.0), (-114.0, 182.0, -34.0), (0.20, 0.13, 0.07), 'coatstand'))
+        B.append(((-140.0, 160.0, -60.0), (-102.0, 168.0, -22.0), (0.20, 0.13, 0.07), 'coatstand'))
 
     def box(mn, mx, c, name):
         B.append((tuple(float(v) for v in mn), tuple(float(v) for v in mx), tuple(c), name))
@@ -875,7 +879,7 @@ DEFAULTS = dict(
     # key light: a directional light
     light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, light_rgb=(1.0, 1.0, 1.0), bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
     # lens (0 = use the camera from the utility pass headers)
-    focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, blades=0, max_bokeh=110.0,
+    focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, dof_view=True, mb_view=True, blades=0, max_bokeh=110.0,
     cateye=0.0, anamorphic=0.0, field_curv=0.0, fstop_full=0.0, front_mult=1.0, back_mult=1.0,
     bokeh_image='', bokeh_rot=0.0, bokeh_falloff=0.0,
     # shutter: as on the studio cameras (180 degrees, backward, backwardsShape)
@@ -1523,6 +1527,42 @@ def _kmeans(X, k, iters=8):
     return np.argmin(((X[:, None, :] - C[None]) ** 2).sum(2), 1)
 
 
+def _group_samples(am, vm):
+    """Moving points -> connected blobs (touching 30 cm cells) with at least 10 points: [(size x speed, points, velocities)],
+    biggest first."""
+    if not len(am):
+        return []
+    keys, inv, cnt = np.unique(np.floor(am / 0.3).astype(np.intp), axis=0, return_inverse=True, return_counts=True)
+    inv = inv.reshape(-1)
+    index = {tuple(int(x) for x in keys[i]): i for i in range(len(keys)) if cnt[i] >= 2}
+    comp = -np.ones(len(keys), np.intp)
+    ng = 0
+    for i in index.values():
+        if comp[i] >= 0:
+            continue
+        comp[i] = ng
+        stack = [i]
+        while stack:
+            k0 = keys[stack.pop()]
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        q = index.get((int(k0[0]) + dx, int(k0[1]) + dy, int(k0[2]) + dz))
+                        if q is not None and comp[q] < 0:
+                            comp[q] = ng
+                            stack.append(q)
+        ng += 1
+    lab = comp[inv]
+    groups = []
+    for g in range(ng):
+        m = lab == g
+        if m.sum() < 10:
+            continue
+        groups.append((float(m.sum()) * float(np.linalg.norm(vm[m], axis=1).mean()), am[m], vm[m]))
+    groups.sort(key=lambda t: -t[0])
+    return groups[:MOVER_GROUPS]
+
+
 def frame_movers(p, shot, frame):
     """The things moving on this frame, biggest first: [{c, v, r, n, score, parts: [(centre m, radius m, velocity m/s)]}].
     Moving points are grouped into connected blobs (touching 30 cm cells), and each blob is split into a few parts by
@@ -1602,14 +1642,121 @@ def utility_pushers(p, shot, frame):
 
 
 def _movers_key(p):
-    return json.dumps([p.get(k) for k in ('utility', 'units', 'fps', 'mv_scale', 'push_min', 'first', 'last')])
+    return json.dumps(['v2'] + [p.get(k) for k in ('utility', 'units', 'fps', 'mv_scale', 'push_min', 'first', 'last')])
+
+
+MOVER_GAP = 8             # frames a mover can vanish (behind something) and still be followed
+MOVER_SMOOTH = 2          # frames each side its spheres' positions are smoothed over
+
+
+def _feat(P, V):
+    return np.concatenate([P, V * 0.15], -1)
+
+
+def _new_track(pts, vel, eye, f):
+    parts = _split_parts(pts, vel, eye)
+    if not parts:
+        return None
+    P = np.array([q[0] for q in parts]); V = np.array([q[2] for q in parts]); R = np.array([q[1] for q in parts])
+    return dict(P=P, V=V, R=R, last=f, born=f, obs={}, score=0.0, n=0)
+
+
+def _split_parts(pts, vel, eye, k=None):
+    """A blob of moving points -> parts (centre, radius, velocity): k-means on position and velocity together."""
+    X = _feat(pts, vel)
+    _, qi, qc = np.unique(np.floor(X / 0.15).astype(np.intp), axis=0, return_inverse=True, return_counts=True)
+    dense = qc[qi.reshape(-1)] >= 3
+    if dense.sum() >= 10:
+        pts, vel, X = pts[dense], vel[dense], X[dense]
+    if k is None:
+        ext = float((np.percentile(pts, 95, 0) - np.percentile(pts, 5, 0)).max())
+        spread = float(np.percentile(np.linalg.norm(vel - np.median(vel, 0), axis=1), 90))
+        k = int(np.clip(math.ceil(ext / 0.4) + (1 if spread > 0.8 else 0), 1, MOVER_PARTS))
+    k = max(1, min(k, len(pts) // 6))
+    lab = _kmeans(X, k)
+    out = []
+    for j in range(k):
+        mm = lab == j
+        if mm.sum() < max(6, 0.03 * len(pts)):
+            continue
+        c, v = pts[mm].mean(0), vel[mm].mean(0)
+        dv, ray = v - np.median(vel, 0), (c - eye) / max(float(np.linalg.norm(c - eye)), 1e-6)
+        if mm.sum() < 0.25 * len(pts) and abs(dv @ ray) > 0.8 and abs(dv @ ray) > 0.8 * np.linalg.norm(dv):
+            continue
+        r = max(0.15, 1.3 * float(np.sqrt(((pts[mm] - c) ** 2).sum(1).mean())) + 0.05)
+        out.append((c + ray * 0.5 * r, r, v))
+    return out
+
+
+def _smooth_track(t, fps):
+    """A mover's spheres on every frame from its first to its last sighting: each part's observations smoothed over
+    MOVER_SMOOTH frames each side (weighted by how much of it was seen), gaps (behind something) bridged by interpolation."""
+    f0, f1, K = t['born'], t['last'], len(t['P'])
+    fs = np.arange(f0, f1 + 1)
+    out = {int(f): [] for f in fs}
+    per = [dict() for _ in range(K)]
+    for k in range(K):
+        of = np.array([f for f in sorted(t['obs']) if t['obs'][f][3][k] > 0])
+        if len(of) < 2:
+            continue
+        OP = np.array([t['obs'][f][0][k] for f in of]); OV = np.array([t['obs'][f][1][k] for f in of])
+        OR = np.array([t['obs'][f][2][k] for f in of]); OW = np.array([t['obs'][f][3][k] for f in of], np.float64)
+        lo, hi = of[0], of[-1]
+        for f in fs:
+            if f < lo or f > hi:
+                continue                                   # this part wasn't around yet / any more
+            d = np.abs(of - f)
+            w = OW * np.clip(1 - (d / (MOVER_SMOOTH + 1.0)) ** 3, 0, None) ** 3
+            if w.sum() <= 1e-9:                            # in a gap: interpolate between the sightings either side
+                i = np.searchsorted(of, f)
+                a, b = i - 1, i
+                u = (f - of[a]) / float(of[b] - of[a])
+                c, v, r = OP[a] + (OP[b] - OP[a]) * u, OV[a] + (OV[b] - OV[a]) * u, OR[a] + (OR[b] - OR[a]) * u
+            else:
+                # local linear fit of the position (weighted), mean velocity and radius
+                ws = w / w.sum()
+                dt = (of - f) / fps
+                mt, mp = (ws * dt).sum(), (ws[:, None] * OP).sum(0)
+                var = (ws * (dt - mt) ** 2).sum()
+                slope = ((ws * (dt - mt))[:, None] * (OP - mp)).sum(0) / var if var > 1e-9 else np.zeros(3)
+                c = mp - slope * mt
+                r = (ws * OR).sum()
+                wv = OW * np.clip(1 - (d / 2.0) ** 3, 0, None) ** 3      # velocity: just the neighbours (a swinging limb keeps its swing)
+                v = (wv[:, None] * OV).sum(0) / wv.sum() if wv.sum() > 1e-9 else (ws[:, None] * OV).sum(0)
+            per[k][int(f)] = (c, float(r), v)
+    # every part for the mover's whole life: before it's first seen / after it's last seen it rides along with the others
+    # at the offset it had then, so spheres don't pop in and out
+    have = [k for k in range(K) if per[k]]
+    for f in fs:
+        f = int(f)
+        here = [k for k in have if f in per[k]]
+        if not here:
+            continue
+        cen = np.mean([per[k][f][0] for k in here], 0)
+        vel = np.mean([per[k][f][2] for k in here], 0)
+        for k in have:
+            if f in per[k]:
+                out[f].append(per[k][f])
+                continue
+            e = min(per[k]) if f < min(per[k]) else max(per[k])
+            here_e = [j for j in have if e in per[j] and j != k]
+            if not here_e:
+                continue
+            cen_e = np.mean([per[j][e][0] for j in here_e], 0)
+            out[f].append((cen + (per[k][e][0] - cen_e), per[k][e][1], vel))
+    return out
 
 
 def find_movers(p, shot, progress=None):
     """Everything that moves through the shot, followed from frame to frame, the biggest first. Only the MOVER_LIST biggest
     are offered (a crowd doesn't flood the list); the ones worth using are switched on. Returns
     {movers: [{id, first, last, frames, speed, size, parts, on}], frames: {'1001': [[id, cx, cy, cz, r, vx, vy, vz], ...]},
-    ignored: n}, or None if cancelled. Cached in memory, and in the cache folder when there is one (so farm jobs share it)."""
+    ignored: n}, or None if cancelled. Cached in memory, and in the cache folder when there is one (so farm jobs share it).
+
+    Each mover keeps the same parts from frame to frame: its spheres are predicted forward (by their velocity) and the
+    moving points near them are shared out among them (k-means started from the prediction), so a part stays the same
+    part. A mover that goes behind something is followed on its prediction for up to MOVER_GAP frames; at the end each
+    part's path is smoothed and the gaps bridged."""
     key = _movers_key(p)
     if key in _MOVER_CACHE:
         return _MOVER_CACHE[key]
@@ -1626,46 +1773,109 @@ def find_movers(p, shot, progress=None):
     first, last, fps = int(p['first']), int(p['last']), float(p['fps'])
     tracks = []
     for f in range(first, last + 1):
-        if progress and progress((f - first) / float(max(last - first + 1, 1)), 'Finding what moves: frame %d' % f) is False:
+        if progress and progress((f - first) / float(max(last - first + 1, 1)), 'Finding what moves: frame %d of %d' % (f, last)) is False:
             return None
-        gs = frame_movers(p, shot, f)
-        live = [t for t in tracks if f - t['last'] <= 3]
-        pairs = []
-        for gi, g in enumerate(gs):
+        got = _moving_samples(p, shot, f)
+        if got is None:
+            continue
+        am, vm, eye = got
+        live = [t for t in tracks if f - t['last'] <= MOVER_GAP]
+        free = np.ones(len(am), bool)
+        if live:
+            # share the points out among the predicted parts of the movers being followed
+            preds, owner = [], []
             for ti, t in enumerate(live):
-                d = float(np.linalg.norm(g['c'] - (t['c'] + t['v'] / fps * (f - t['last']))))
-                if d < max(0.5, 0.75 * (g['r'] + t['r'])):
-                    pairs.append((d, gi, ti))
-        pairs.sort()
-        ug, ut = set(), set()
-        for d, gi, ti in pairs:
-            if gi in ug or ti in ut:
-                continue
-            ug.add(gi)
-            ut.add(ti)
-            t, g = live[ti], gs[gi]
-            t['frames'][f] = g
-            t['last'], t['c'], t['v'], t['r'] = f, g['c'], g['v'], g['r']
-            t['score'] += g['score']
-        for gi, g in enumerate(gs):
-            if gi not in ug:
-                tracks.append(dict(frames={f: g}, last=f, c=g['c'], v=g['v'], r=g['r'], score=g['score']))
-    tracks = [t for t in tracks if len(t['frames']) >= 3]
+                dtf = (f - t['last']) / fps
+                for k in range(len(t['P'])):
+                    preds.append((t['P'][k] + t['V'][k] * dtf, t['V'][k], t['R'][k]))
+                    owner.append((ti, k))
+            PP = np.array([q[0] for q in preds]); PV = np.array([q[1] for q in preds]); PR = np.array([q[2] for q in preds])
+            # which mover a point belongs to goes by position (a limb swinging the other way is still that mover);
+            # velocity only decides which of its parts takes it
+            X = _feat(am, vm)
+            dpos = np.sqrt(((am[:, None, :] - PP[None]) ** 2).sum(2))
+            near = np.argmin(dpos, 1)
+            ok = dpos[np.arange(len(am)), near] < np.maximum(0.45, 1.6 * PR[near]) + 0.15
+            free = ~ok
+            for ti, t in enumerate(live):
+                ks = [j for j, o in enumerate(owner) if o[0] == ti]
+                mine = ok & np.isin(near, ks)
+                K = len(t['P'])
+                P0, V0 = PP[ks].copy(), PV[ks].copy()
+                if mine.sum() < 6:
+                    continue
+                pts, vel = am[mine], vm[mine]
+                Xm = X[mine]
+                cen = _feat(P0, V0)
+                for _ in range(4):                          # k-means started from the prediction: parts stay themselves
+                    lab = np.argmin(((Xm[:, None, :] - cen[None]) ** 2).sum(2), 1)
+                    for k in range(K):
+                        if (lab == k).sum() >= 3:
+                            cen[k] = Xm[lab == k].mean(0)
+                lab = np.argmin(((Xm[:, None, :] - cen[None]) ** 2).sum(2), 1)
+                Pn, Vn, Rn, Wn = P0.copy(), V0.copy(), t['R'].copy(), np.zeros(K)
+                for k in range(K):
+                    mm = lab == k
+                    if mm.sum() < 3:
+                        continue
+                    c, v = pts[mm].mean(0), vel[mm].mean(0)
+                    ray = (c - eye) / max(float(np.linalg.norm(c - eye)), 1e-6)
+                    r = max(0.15, 1.3 * float(np.sqrt(((pts[mm] - c) ** 2).sum(1).mean())) + 0.05)
+                    # partly hidden, a part looks smaller and its centre shifts: keep its size, move it only as far as its points say
+                    r = max(r, 0.8 * t['R'][k])
+                    Pn[k], Vn[k], Rn[k], Wn[k] = c + ray * 0.5 * r, v, r, mm.sum()
+                # a limb that starts moving on its own: one more part where the points sit farthest from the others
+                if K < MOVER_PARTS and len(pts) >= 30:
+                    far = np.min(np.sqrt(((Xm[:, None, :] - cen[None]) ** 2).sum(2)), 1)
+                    hot = far > 0.45
+                    if hot.sum() >= max(10, 0.08 * len(pts)):
+                        c, v = pts[hot].mean(0), vel[hot].mean(0)
+                        r = max(0.15, 1.3 * float(np.sqrt(((pts[hot] - c) ** 2).sum(1).mean())) + 0.05)
+                        Pn, Vn, Rn, Wn = np.vstack([Pn, c]), np.vstack([Vn, v]), np.append(Rn, r), np.append(Wn, hot.sum())
+                        for f2 in t['obs']:
+                            o = t['obs'][f2]
+                            t['obs'][f2] = (np.vstack([o[0], c]), np.vstack([o[1], v]), np.append(o[2], r), np.append(o[3], 0))
+                t['P'], t['V'], t['R'] = Pn, Vn, Rn
+                t['obs'][f] = (Pn.copy(), Vn.copy(), Rn.copy(), Wn.copy())
+                t['last'] = f
+                t['n'] += int(Wn.sum())
+                t['score'] += float(Wn.sum()) * float(np.linalg.norm((Vn * Wn[:, None]).sum(0) / max(Wn.sum(), 1)))
+        # points nobody owns: new movers
+        if free.sum() >= 10:
+            for score, pts, vel in _group_samples(am[free], vm[free]):
+                t = _new_track(pts, vel, eye, f)
+                if t is None:
+                    continue
+                W = np.zeros(len(t['P']))
+                X = _feat(pts, vel)
+                lab = np.argmin(((X[:, None, :] - _feat(t['P'], t['V'])[None]) ** 2).sum(2), 1)
+                for k in range(len(W)):
+                    W[k] = (lab == k).sum()
+                t['obs'][f] = (t['P'].copy(), t['V'].copy(), t['R'].copy(), W)
+                t['score'] = score
+                t['n'] = len(pts)
+                tracks.append(t)
+    tracks = [t for t in tracks if len(t['obs']) >= 3]
     tracks.sort(key=lambda t: -t['score'])
     keep = tracks[:MOVER_LIST]
     top = keep[0]['score'] if keep else 0.0
     movers, frames = [], {}
     for i, t in enumerate(keep):
-        fs = sorted(t['frames'])
-        gs = [t['frames'][f] for f in fs]
-        movers.append(dict(id=i + 1, first=fs[0], last=fs[-1], frames=len(fs),
-                           speed=round(max(float(np.linalg.norm(g['v'])) for g in gs), 2),
-                           size=round(float(np.median([2 * g['r'] for g in gs])), 2),
-                           parts=max(len(g['parts']) for g in gs),
-                           on=bool(i < 4 and t['score'] >= 0.15 * top)))
-        for f, g in zip(fs, gs):
-            for c, r, v in g['parts']:
-                frames.setdefault(str(f), []).append([i + 1] + [round(float(x), 4) for x in (c[0], c[1], c[2], r, v[0], v[1], v[2])])
+        sm = _smooth_track(t, fps)
+        fs = [f for f in sorted(sm) if sm[f]]
+        if not fs:
+            continue
+        sp = [float(np.linalg.norm(np.mean([q[2] for q in sm[f]], 0))) for f in fs]
+        ext = []
+        for f in fs:
+            cs = np.array([q[0] for q in sm[f]]); rs = np.array([q[1] for q in sm[f]])
+            ext.append(float((cs.max(0) - cs.min(0)).max() + 2 * rs.max()))
+        movers.append(dict(id=len(movers) + 1, first=fs[0], last=fs[-1], frames=len(fs), speed=round(max(sp), 2),
+                           size=round(float(np.median(ext)), 2), parts=max(len(sm[f]) for f in fs),
+                           on=bool(len(movers) < 4 and t['score'] >= 0.15 * top)))
+        for f in fs:
+            for c, r, v in sm[f]:
+                frames.setdefault(str(f), []).append([movers[-1]['id']] + [round(float(x), 4) for x in (c[0], c[1], c[2], r, v[0], v[1], v[2])])
     res = dict(movers=movers, frames=frames, ignored=len(tracks) - len(keep), first=first, last=last)
     _MOVER_CACHE[key] = res
     if len(_MOVER_CACHE) > 4:
@@ -2727,7 +2937,8 @@ _KNOBS = [
     ('Lens', 'film', 'float', 'Film back width (mm, 0 = header)', (0, 60)),
     ('Lens', 'fstop', 'float', 'f-stop (0 = header)', (0, 22)),
     ('Lens', 'focus', 'float', 'Focus distance (scene units, 0 = header)', (0, 5000)),
-    ('Lens', 'dof', 'bool', 'Defocus', None),
+    ('Lens', 'dof', 'bool', 'Defocus', 'Depth of field everywhere: the viewer and the render (farm).'),
+    ('Lens', 'dof_view', 'bool', 'Defocus in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Defocus.'),
     ('Lens', 'blades', 'int', 'Blade count (0 = header, < 3 round)', None),
     ('Lens', 'cateye', 'float', 'Cat-eye bokeh (+ header)', (0, 1)),
     ('Lens', 'anamorphic', 'float', 'Anamorphic aspect (+ header)', (-0.5, 1.5)),
@@ -2747,7 +2958,8 @@ _KNOBS = [
     ('Lens', 'shutter', 'float', 'Shutter angle', (0, 360)),
     ('Lens', 'shutter_mode', 'enum', 'Shutter', ['centred', 'backward', 'forward']),
     ('Lens', 'shutter_shape', 'enum', 'Shutter shape', ['backwardsShape', 'box']),
-    ('Lens', 'mb', 'bool', 'Motion blur', None),
+    ('Lens', 'mb', 'bool', 'Motion blur', 'Motion blur everywhere: the viewer and the render (farm).'),
+    ('Lens', 'mb_view', 'bool', 'Motion blur in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Motion blur.'),
     ('Embers', 'embers', 'bool', 'Embers', 'A second emitter, for fire: embers rise from an area you place and size to the fire, ride a buoyant plume, cool from yellow-orange to dull red, and pop in bursts.'),
     ('Embers', 'ember_pos', 'xyz', 'Emitter position', 'The base of the fire (scene units).'),
     ('Embers', 'ember_radius', 'float', 'Emitter radius', (1, 200)),

@@ -84,13 +84,17 @@ The GPU preview and the Python render agree within about 1% of total light, with
      - its motion vector disagrees with the **camera's own move** (P reprojected into the previous camera, more than 1.5 px apart), so walls and floors don't read as moving on a camera move;
      - it isn't on a depth edge, and wasn't just uncovered: the previous frame's own motion vector where it lands must be about the same (motion is smooth; an uncovered surface lands on whatever was in front), and it may not differ from its neighbours along the line of sight only;
      - it's faster than *Ignore motion slower than* and than what a pixel of error would give at that distance.
-  2. **Movers per frame** (`frame_movers`). Moving samples are grouped into connected blobs (touching 30 cm cells). Each blob is split by k-means on position *and* velocity into up to 6 parts (about one per 40 cm, plus one when its speeds vary a lot), so a swinging arm or a flapping cape gets its own sphere with its own speed. Each part is pushed back from the camera by half its radius, since only its camera side is seen.
-  3. **Movers through the shot** (`find_movers`, the **Find moving things** button). Blobs are followed from frame to frame (predicted position, nearest match). The 6 biggest by size × speed × duration are listed; the others are counted, not listed, so a crowd doesn't flood the list. The ones at least 15% of the biggest are switched on. *Use movers* holds the choice (blank = the suggested ones, `all`, `none` or numbers like `1 3`). The result is cached, also as `movers_<hash>.json` in the cache folder, so farm jobs share it. Run time is mostly EXR reading: about 0.85 s a frame at 1280.
-
+  2. **Following movers through the shot** (`find_movers`, the **Find moving things** button; nothing runs until you press it). Each mover keeps the same parts from frame to frame:
+     - its parts are predicted forward by their velocity, and each moving point goes to the mover whose predicted parts are nearest by **position** (so a limb swinging the other way still belongs to its body);
+     - within the mover, points are shared out among its parts by k-means on position and velocity, **started from the prediction**, so a part stays the same part; a limb that starts moving on its own gets one more part (up to 6);
+     - points nobody owns start new movers (connected blobs, split into parts, about one per 40 cm);
+     - a mover that goes behind something keeps its size and is followed on its prediction for up to 8 frames;
+     - at the end, each part's path is smoothed (positions over 2 frames each side, velocities over 1, weighted by how much of it was seen), gaps are bridged, and every part lasts the mover's whole life (riding along with the others where it wasn't seen), so spheres don't pop in or out.
+  3. **The list.** The 6 biggest movers by size × speed × duration are listed; the others are counted, not listed, so a crowd doesn't flood the list. The ones at least 15% of the biggest are switched on. *Use movers* holds the choice (blank = the suggested ones, `all`, `none` or numbers like `1 3`). The result is cached, also as `movers_<hash>.json` in the cache folder, so farm jobs share it. Run time is mostly EXR reading: about 0.85 s a frame at 1280. In the viewer, progress shows frame by frame (with Cancel in the live viewer).
   In the simulation each part is a sphere the air flows around as it moves (potential flow: pushed aside in front, sliding past at the sides, closing in behind), so motes end up roughly where they were, as in real air. The last 5 frames leave a wake that drags a little air along and stirs it with the micro-turbulence field. At most 144 spheres act per step (this frame's first, then the wake), the same on the GPU. *Push strength* scales all of it, *Push reach* the sphere sizes. If your motion vectors point forward, set *Motion vector scale* to −1.
 
   **Mover stand-ins** (viewer only, *Show mover stand-ins*): each part is drawn as a circle in its mover's colour, with an arrow for where it will be in 0.2 s, in the shot camera, the free camera and 3D. They're drawn on the current frame even with the camera held. They're never held out, never lit, never rendered.
-  - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a swinging arm on the camera side and a `backward` layer made like the studio util pass). One mover is found, on every frame, with no false movers and no parts off the walker. Body and arm velocities come out exact (1.79 and up to 4.73 m/s; the arm gets its own part whenever it moves differently from the body).
+  - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a swinging arm on the camera side, passing behind a coat stand, and a `backward` layer made like the studio util pass). One mover is found, with a steady 4 parts on every frame, no false movers and no parts off the walker. Through the coat stand its centre stays within 1–9 cm of the truth. Frame to frame, parts move 2 cm (median) beyond what their velocity predicts, 6 cm at the 95th percentile and 11 cm at most; before tracking these were 5, 26 and 44 cm, and the number of parts wandered between 3 and 5. The arm's fast forward swing reads right (4.5–4.7 m/s vs 4.73); on the backswing it isn't separated from the body as cleanly (the price of steady parts).
 
 ### Embers (`EmberSim`, `render_embers`)
 Try them on the **campfire** stand-in scene: a fire pit, log bench, rocks and tree trunks at night (moonlight), lit by a flickering fire light with shadows, with embers on and no dust. In the viewer the fire also has the mockup's volumetric flames and a glow in the haze; the Python stand-in plate (Nuke's Create stand-in shot) has the fire light but no flames.
@@ -239,6 +243,7 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Lens | `fstop` | f-stop (0 = header) | 0.0 |
 | Lens | `focus` | Focus distance (scene units, 0 = header) | 0.0 |
 | Lens | `dof` | Defocus | True |
+| Lens | `dof_view` | Defocus in the viewer | True |
 | Lens | `blades` | Blade count (0 = header, < 3 round) | 0 |
 | Lens | `cateye` | Cat-eye bokeh (+ header) | 0.0 |
 | Lens | `anamorphic` | Anamorphic aspect (+ header) | 0.0 |
@@ -254,6 +259,7 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Lens | `shutter_mode` | Shutter | backward |
 | Lens | `shutter_shape` | Shutter shape | backwardsShape |
 | Lens | `mb` | Motion blur | True |
+| Lens | `mb_view` | Motion blur in the viewer | True |
 | Embers | `embers` | Embers | False |
 | Embers | `ember_pos` | Emitter position | (-150.0, 0.0, -250.0) |
 | Embers | `ember_radius` | Emitter radius | 30.0 |
@@ -312,6 +318,7 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **Browser Python vs desktop Python:** identical output, bit for bit.
 - **GPU preview vs Python render:** total light within 0.1-1% with every option tested, block correlation 0.97-1.0. The tests covered DOF, blades, cat-eye, anamorphic, custom bokeh, shutter shapes, utility-pass shadows, bounce light and soft shadows.
 - **Character pushers:** detection on the stand-in walker shot as in section 4. Given the same movers, the GPU and Python simulations put every mote in the same place (median difference 0.001 cm after 77 frames).
+- **Viewer speed switches:** *Defocus in the viewer* and *Motion blur in the viewer* turn those off in the live viewer only; *Defocus* and *Motion blur* turn them off everywhere, the render (farm) included. The GPU render-to-cache writes what the node renders, so it ignores the viewer switches.
 - **Holdouts:** the **held out (red)** layer in the viewer shows what they remove. In the wide stand-in only about 2% of the dust is behind anything, so switching holdouts off changes little there; the walker shot shows them clearly.
 - **Live viewer:** tested in headless Chromium against the native server, including loading a utility pass from a disk path and the GPU render-to-cache.
 - **Not tested here:** anything inside a real Nuke session (see section 8), and real GPU frame rates. The headless tests ran on a software renderer.

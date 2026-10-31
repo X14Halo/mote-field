@@ -310,6 +310,13 @@ async function nativeCall(cmd, args) {
   return m.result;
 }
 function call(cmd, args, onProgress) {
+  if (NATIVE && onProgress) {         // the live server reports progress on a side channel while the job runs
+    let done = false;
+    const poll = async () => { while (!done) { await new Promise(r => setTimeout(r, 400)); if (done) break;
+      try { const q = await nativeCall('progress', {}); if (!done && q && q.msg) onProgress(q.x, q.msg); } catch (e) {} } };
+    poll();
+    return nativeCall(cmd, args).finally(() => { done = true; });
+  }
   if (NATIVE) return nativeCall(cmd, args);
   const id = nextId++;
   if (onProgress) progressFns.set(id, onProgress);
@@ -668,7 +675,7 @@ const CLOSEUP_DUST = { density: 360, flakes: 28, fibers: 5, fluff: 1.5, glint: 0
 function onStandinView() {
   const close = V.standin_view === 'close-up';
   for (const k in CLOSEUP_DUST) setKnob(k, close ? CLOSEUP_DUST[k] : SCHEMA.defaults[k]);
-  setKnob('push', V.standin_view === 'walker');       // the walker shot is there to try the pushers (finds its movers)
+  setKnob('push', false);            // movers belong to a shot: find them again (Motion > Find moving things)
   makeStandin();
 }
 async function makeStandin() {
@@ -778,7 +785,8 @@ function setBusy(on, msg, x, cancellable) {
   $('cancelBtn').hidden = !cancellable;
   for (const id of ['btn_frame', 'btn_range', 'btn_fit', 'btn_standin', 'btn_save', 'btn_gpu']) { const b = $(id); if (b && !b.dataset.nuke) b.disabled = on; }
 }
-$('cancelBtn').onclick = () => { cancelRange = true; $('busyMsg').textContent = 'Cancelling after this frame…'; if (playing) stop(); };
+$('cancelBtn').onclick = () => { if (typeof movers !== 'undefined' && movers.busy) { movers.cancel = true; nativeCall('cancel', {}).catch(() => {}); $('busyMsg').textContent = 'Cancelling…'; return; }
+  cancelRange = true; $('busyMsg').textContent = 'Cancelling after this frame…'; if (playing) stop(); };
 
 async function renderFrame(f, explicit) {
   if (busy) { if (explicit) setStatus('Busy, try again in a moment.'); return false; }
@@ -875,7 +883,7 @@ function scheduleLive(ms) {
 async function gpuRenderRange() {
   if (!NATIVE || busy || !previewReady()) return;
   stop();
-  const a = Math.round(V.first), b = Math.round(V.last), n = b - a + 1, p = pparams(), [W0, H0] = pvs.size, t0 = performance.now();
+  const a = Math.round(V.first), b = Math.round(V.last), n = b - a + 1, p = pparams(true), [W0, H0] = pvs.size, t0 = performance.now();
   cancelRange = false; rangeRunning = true;
   const gl = v3.gl;
   try {
@@ -979,6 +987,7 @@ function drawHud() {
       if (!shot.standin && pv.frameTex.size < V.last - V.first + 1) t += '\n<span class="no">reading frames for holdouts: ' + pv.frameTex.size + ' / ' + (V.last - V.first + 1) + '</span>';
       if (pvs.lightNote) t += '\n<span class="no">' + pvs.lightNote + '</span>';
       if (movers.busy) t += '\n<span class="no">' + movers.note + '</span>';
+      else if (V.push && !moversReady(params())) t += '\n<span class="st">pushers on, but no moving things found yet: Motion &gt; Find moving things</span>';
     }
     $('hud').innerHTML = t;
     return;
@@ -1633,8 +1642,9 @@ function kelvinRGB(K) {          // motefield.kelvin_rgb
   const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
   return c.map(v => v / l);
 }
-function pparams() {
+function pparams(final) {          // final: what the node renders (ignores the viewer-only switches)
   const p = params();
+  if (!final) { if (p.dof_view === false) p.dof = false; if (p.mb_view === false) p.mb = false; }
   const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
   p.L = [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)];
   const lc = p.light_rgb || [1, 1, 1];
@@ -1695,7 +1705,7 @@ async function ensurePreview() {
   finally {
     pvs.busy = false; drawHud(); v3dirty();
     if (pvs.again) { pvs.again = false; ensurePreview(); }
-    else if (V.push && shot.utility && !movers.busy && movers.key !== pushKey(params())) findMovers(true);
+
   }
 }
 // ---- moving things (motefield.find_movers): found once per shot, chosen from a short list, drawn as stand-ins ----------
@@ -1724,10 +1734,14 @@ function resetMovers() { movers.found = null; movers.key = ''; movers.applied = 
 async function findMovers(auto) {
   if (!shot.utility || movers.busy) return;
   const p = params(), key = pushKey(p);
-  movers.busy = true; movers.key = key; movers.found = null; movers.applied = ''; movers.note = 'finding what moves…'; renderMoverList(); drawHud();
+  movers.busy = true; movers.key = key; movers.found = null; movers.applied = ''; movers.note = 'Finding moving things in the utility pass…'; renderMoverList(); drawHud();
+  if (playing) stop();
+  setBusy(true, 'Finding moving things in the utility pass (backward motion vectors)…', 0.02, NATIVE);
+  movers.cancel = false;
   try {
-    const r = await call('movers', { p }, (x, msg) => { movers.note = msg + ' (' + Math.round(x * 100) + '%)'; drawHud(); renderMoverList(); });
+    const r = await call('movers', { p }, (x, msg) => { movers.note = msg; setBusy(true, msg + ' · following each moving thing through the shot', x, NATIVE); drawHud(); renderMoverList(); });
     if (movers.key !== key) return;
+    if (!r && movers.cancel) { movers.key = ''; setStatus('Find moving things: cancelled.'); return; }
     movers.found = r || { movers: [], frames: {}, ignored: 0 };
     if (!auto || !String(V.movers || '').trim()) setKnob('movers', '');
     setKnob('push', true);
@@ -1735,7 +1749,7 @@ async function findMovers(auto) {
     setStatus(n ? 'Found ' + n + ' moving thing' + (n > 1 ? 's' : '') + (movers.found.ignored ? ' (and ' + movers.found.ignored + ' smaller, not listed)' : '') + '; the suggested ones are ticked.'
                 : 'Nothing moving found: is there a backward motion layer in the utility pass?', !n);
   } catch (e) { movers.key = ''; setStatus('Find moving things: ' + e.message, true); }
-  finally { movers.busy = false; movers.note = ''; applyMovers(); renderMoverList(); changed(true); }
+  finally { movers.busy = false; movers.note = ''; setBusy(false); applyMovers(); renderMoverList(); changed(true); }
 }
 function renderMoverList() {
   const el = $('moverList'); if (!el) return;
@@ -2021,6 +2035,7 @@ function paintPreview2d() {
     vw.rect = { x0, x1, yTop, yBot };
     pvs.res = [W0, H0];
     look.show({ W: W0, H: H0, cw, ch, cacheEntry: ent, fast, plate: plateTex, dist: distTex, defocusPlate: defocus && p.dof, lens: L, dust: dustSrc, view,
+                cam, su: pv.init ? pv.init.su : 0.01, fire: shot.standin ? fireAt(pvs.plateLight, frame) : null,
                 set: vw.set, skyMul: vw.blackSky ? 0 : 1, gain: Math.pow(2, gain), glow: vw.glow, look: vw.look,
                 rect: [x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2] });
     drawMovers(camProjector(cam, W0, H0, vw.rect));      // cam: the free camera when it's on (camOverride)

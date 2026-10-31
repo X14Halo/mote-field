@@ -122,8 +122,29 @@ void main(){
 // 4. the light shaft: single scattering along each view ray (half res)
 const LK_HAZE = LK_COMMON + `
 uniform sampler2D uNrm; uniform vec2 uFull; uniform float uHaze, uG, uSu; out vec4 o;
-uniform vec3 uFireB; uniform float uFlameR, uFlameH, uTime, uFlameGain; uniform int uFlame;
 float hg(float c, float g){ return (1.0 - g*g) / pow(max(1.0 + g*g - 2.0*g*c, 1e-4), 1.5); }
+
+void main(){
+  ivec2 fp = min(ivec2(gl_FragCoord.xy) * 2, ivec2(uFull) - 1);
+  vec3 rd = rayDir(vec2(fp) + 0.5);
+  float d = texelFetch(uNrm, fp, 0).w; float tmax = d > 0.0 ? d : 2000.0;
+  const int N = 40; float dt = tmax / float(N);
+  float j = hash13(vec3(gl_FragCoord.xy, 5.0));
+  float acc = 0.0, fg = 0.0;
+  bool fire = dot(uFireC, uFireC) > 0.0;
+  for (int i = 0; i < N; i++) { vec3 p = uC[0] + rd * ((float(i) + j) * dt); if (!blockedB(p, uLs)) acc += 1.0;
+    if (fire) { vec3 q = (p - uFireP) * uSu; fg += 1.0 / (dot(q, q) + 0.12); } }
+  float len_m = tmax * uSu;
+  vec3 c = uSunP * (acc / float(N)) * len_m * hg(dot(uLs, rd), uG) * uHaze * 0.011 + uSky * 0.004 * uHaze * len_m;   // as in the mockup
+  if (fire) c += uFireC * (fg / float(N)) * len_m * uHaze * 0.004;                                                  // glow round the fire
+
+  o = vec4(c, 1.0);
+}`;
+
+// 4b. the campfire's flames (half res, every frame: they move; the lit set under them is cached)
+const LK_FLAME = LK_COMMON + `
+uniform sampler2D uDistT; uniform float uSu; out vec4 o;
+uniform vec3 uFireB; uniform float uFlameR, uFlameH, uTime, uFlameGain; uniform int uFlame;
 float vnoise(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
   return mix(mix(mix(hash13(i), hash13(i+vec3(1,0,0)), f.x), mix(hash13(i+vec3(0,1,0)), hash13(i+vec3(1,1,0)), f.x), f.y),
              mix(mix(hash13(i+vec3(0,0,1)), hash13(i+vec3(1,0,1)), f.x), mix(hash13(i+vec3(0,1,1)), hash13(i+vec3(1,1,1)), f.x), f.y), f.z); }
@@ -155,20 +176,11 @@ vec3 flames(vec3 ro, vec3 rd, float tmax){
   em *= dt * uFlameGain; return any(isnan(em)) ? vec3(0.0) : em;
 }
 void main(){
-  ivec2 fp = min(ivec2(gl_FragCoord.xy) * 2, ivec2(uFull) - 1);
-  vec3 rd = rayDir(vec2(fp) + 0.5);
-  float d = texelFetch(uNrm, fp, 0).w; float tmax = d > 0.0 ? d : 2000.0;
-  const int N = 40; float dt = tmax / float(N);
-  float j = hash13(vec3(gl_FragCoord.xy, 5.0));
-  float acc = 0.0, fg = 0.0;
-  bool fire = dot(uFireC, uFireC) > 0.0;
-  for (int i = 0; i < N; i++) { vec3 p = uC[0] + rd * ((float(i) + j) * dt); if (!blockedB(p, uLs)) acc += 1.0;
-    if (fire) { vec3 q = (p - uFireP) * uSu; fg += 1.0 / (dot(q, q) + 0.12); } }
-  float len_m = tmax * uSu;
-  vec3 c = uSunP * (acc / float(N)) * len_m * hg(dot(uLs, rd), uG) * uHaze * 0.011 + uSky * 0.004 * uHaze * len_m;   // as in the mockup
-  if (fire) c += uFireC * (fg / float(N)) * len_m * uHaze * 0.004;                                                  // glow round the fire
-  if (uFlame == 1) c += flames((uC[0] - uFireB) * uSu, rd, tmax * uSu);
-  o = vec4(c, 1.0);
+  vec2 fp = gl_FragCoord.xy * 2.0;
+  ivec2 ds = textureSize(uDistT, 0);
+  float d = texelFetch(uDistT, clamp(ivec2(fp), ivec2(0), ds - 1), 0).r;
+  vec3 rd = rayDir(fp + 1.0);
+  o = vec4(flames((uC[0] - uFireB) * uSu, rd, (d > 0.0 ? d : 2000.0) * uSu), 1.0);
 }`;
 
 // 5. combine: direct + albedo x bounce + haze
@@ -230,12 +242,13 @@ void main(){
 
 // 7. plate x set brightness + dust, into an HDR image at plate resolution
 const LK_COMP = GLSL_COMMON + `
-uniform sampler2D uPlate, uDust, uDustFree; uniform int uHasPlate, uShowPlate, uShowDust, uDustFlip, uHeldView; uniform float uSet; uniform vec2 uWH;
+uniform sampler2D uPlate, uDust, uDustFree, uFlameT; uniform int uHasPlate, uShowPlate, uShowDust, uDustFlip, uHeldView, uFlameOn; uniform float uSet, uPlateMul; uniform vec2 uWH;
 out vec4 o;
 void main(){
   vec2 uv = gl_FragCoord.xy / uWH;            // texture rows run top-down for plates
   vec3 c = vec3(0.0);
-  if (uShowPlate == 1 && uHasPlate == 1) c += texture(uPlate, vec2(uv.x, uv.y)).rgb * uSet;
+  if (uShowPlate == 1 && uHasPlate == 1) c += texture(uPlate, vec2(uv.x, uv.y)).rgb * uSet * uPlateMul;    // the fire's flicker
+  if (uShowPlate == 1 && uFlameOn == 1) c += texture(uFlameT, uv).rgb * uSet;
   if (uShowDust == 1) { ivec2 ds = textureSize(uDust, 0); ivec2 q = ivec2(vec2(uv.x, uDustFlip == 1 ? 1.0 - uv.y : uv.y) * vec2(ds));
     vec3 held = texelFetch(uDust, clamp(q, ivec2(0), ds - 1), 0).rgb;   // float32 buffers can't always be filtered
     c += held;
@@ -285,7 +298,7 @@ class MFLook {
   constructor(pv) {
     this.pv = pv; const P = (vs, fs) => pv._prog(vs, fs);
     this.pG = P(VS_FULL, LK_GBUF); this.pGI = P(VS_FULL, LK_GI); this.pAt = P(VS_FULL, LK_ATROUS); this.pHaze = P(VS_FULL, LK_HAZE);
-    this.pComb = P(VS_FULL, LK_COMBINE); this.pDof = P(VS_FULL, LK_PDOF); this.pComp = P(VS_FULL, LK_COMP);
+    this.pComb = P(VS_FULL, LK_COMBINE); this.pFlame = P(VS_FULL, LK_FLAME); this.pDof = P(VS_FULL, LK_PDOF); this.pComp = P(VS_FULL, LK_COMP);
     this.pDown = P(VS_FULL, LK_DOWN); this.pUp = P(VS_FULL, LK_UP); this.pFinal = P(VS_QUAD, LK_FINAL);
     this.cache = new Map();             // frame -> {plate, dist, bytes, key}: the lit stand-in, kept so playback is free
     this.budget = 420 * 1024 * 1024;
@@ -300,7 +313,7 @@ class MFLook {
     for (const t of (this.scratch && this.scratch.bloom) || []) pv._free(t.d, t.u);
     const hw = Math.max(1, W >> 1), hh = Math.max(1, H >> 1), f32 = () => pv._tex(W, H, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
     const s = { w: W, h: H, direct: this._half(W, H), nrm: f32(), alb: this._half(W, H), gi: this._half(hw, hh), gi2: this._half(hw, hh),
-                haze: this._half(hw, hh), dof: this._half(W, H), hdr: this._half(W, H), bloom: [] };
+                haze: this._half(hw, hh), flame: this._half(hw, hh), dof: this._half(W, H), hdr: this._half(W, H), bloom: [] };
     let bw = W, bh = H;
     for (let i = 0; i < 6; i++) { bw = Math.max(1, bw >> 1); bh = Math.max(1, bh >> 1); s.bloom.push({ w: bw, h: bh, d: this._half(bw, bh), u: this._half(bw, bh) }); }
     return (this.scratch = s);
@@ -316,9 +329,6 @@ class MFLook {
     gl.uniform3fv(prog.u.uSunP, L.kelvin.map(v => v * I)); gl.uniform3fv(prog.u.uSky, [0.66 * I * 0.45, 0.76 * I * 0.45, 0.95 * I * 0.45]); gl.uniform1f(prog.u.uInt, I);
     this.pv._bind(prog, 7, 'uBoxes', this.pv.boxes.tex); gl.uniform1i(prog.u.uNB, this.pv.boxes.na);
     const F = this._fire; gl.uniform3fv(prog.u.uFireP, F ? F.pos : [0, 0, 0]); gl.uniform3fv(prog.u.uFireC, F ? F.col : [0, 0, 0]);
-    if (prog.u.uFlame) { gl.uniform1i(prog.u.uFlame, F && F.base ? 1 : 0);
-      if (F && F.base) { gl.uniform3fv(prog.u.uFireB, F.base); gl.uniform1f(prog.u.uFlameR, F.flameR); gl.uniform1f(prog.u.uFlameH, F.flameH * (0.9 + 0.1 * F.fl));
-        gl.uniform1f(prog.u.uTime, F.t); gl.uniform1f(prog.u.uFlameGain, 4e6 * (0.75 + 0.25 * F.fl)); } }
   }
   // the stand-in, lit, for one frame (cached)
   standin(frame, W, H, L, haze, su, opt) {
@@ -326,8 +336,8 @@ class MFLook {
     // the walker (stand-in character) is where it is on opt.walker (the current frame), even with the camera held or free
     const cur = opt.walker !== undefined ? opt.walker : frame;          // the frame being shown (the camera may be held / free)
     const wf = this.pv.boxes && this.pv.boxes.walker ? cur : null;
-    this._fire = fireAt(L, cur);
-    const ck = wf === null && !this._fire ? frame : frame + '@' + cur;
+    this._fire = L && L.fire ? { pos: L.fire.pos, col: L.fire.col } : null;   // steady: its flicker is applied when shown, so this stays cached
+    const ck = wf === null ? frame : frame + '@' + cur;
     const key = [W, H, haze, opt.key || ''].join('|');
     const hit = this.cache.get(ck);
     if (hit && hit.key === key) { this.cache.delete(ck); this.cache.set(ck, hit); return hit; }
@@ -388,7 +398,17 @@ class MFLook {
         plate = out;
       }
     }
+    const F = o.fire, flames = !!(F && F.base && o.cam && o.dist && o.view !== 'dust');
+    if (flames) {
+      const fp = this.pFlame; gl.useProgram(fp); this._camU(fp, o.cam, W, H);
+      pv._bind(fp, 0, 'uDistT', o.dist); gl.uniform1f(fp.u.uSu, o.su || 0.01);
+      gl.uniform3fv(fp.u.uFireB, F.base); gl.uniform1f(fp.u.uFlameR, F.flameR); gl.uniform1f(fp.u.uFlameH, F.flameH * (0.9 + 0.1 * F.fl));
+      gl.uniform1f(fp.u.uTime, F.t); gl.uniform1f(fp.u.uFlameGain, 4e6 * (0.75 + 0.25 * F.fl));
+      pv._target([s.flame], s.flame.w, s.flame.h); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
     let p = this.pComp; gl.useProgram(p);
+    pv._bind(p, 3, 'uFlameT', flames ? s.flame : pv.dummy); gl.uniform1i(p.u.uFlameOn, flames ? 1 : 0);
+    gl.uniform1f(p.u.uPlateMul, F ? F.fl : 1);
     pv._bind(p, 0, 'uPlate', plate || pv.dummy); pv._bind(p, 1, 'uDust', (o.dust && o.dust.tex) || pv.dummy);
     gl.uniform1i(p.u.uHasPlate, plate ? 1 : 0); gl.uniform1i(p.u.uShowPlate, o.view !== 'dust' ? 1 : 0);
     gl.uniform1i(p.u.uShowDust, o.view !== 'plate' && o.dust && o.dust.tex ? 1 : 0); gl.uniform1i(p.u.uDustFlip, o.dust && o.dust.flip ? 1 : 0);
