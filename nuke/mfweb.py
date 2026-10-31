@@ -90,22 +90,28 @@ def setup_standin(width=1280, view='wide'):
     view = view if view in mf.STANDIN_VIEWS else 'wide'
     folder = '%s/standin_%s_%d' % (ROOT, view.replace('-', ''), width)
     os.makedirs(folder, exist_ok=True)
-    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in mf.standin_boxes()], units='centimetres', view=view)
+    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in mf.standin_boxes(view=view)], units='centimetres', view=view)
     with open(os.path.join(folder, 'standin.json'), 'w') as fh:
         json.dump(meta, fh)
-    boxes = [list(b[0]) + list(b[1]) + list(b[2]) for b in mf.standin_boxes()]
+    boxes = [list(b[0]) + list(b[1]) + list(b[2]) for b in mf.standin_boxes(view=view)]
     walker = None
     if mf.STANDIN_VIEWS[view].get('walker'):      # the walking box: the GPU stand-in moves it along the same line
         Wk = mf.STANDIN_WALKER
         walker = dict(start=list(Wk['start']), end=list(Wk['end']), size=list(Wk['size']), color=list(Wk['color']),
                       first=S['first'], last=S['last'], arm=dict(Wk['arm']))
+    (az, el, inten, k), _ = mf.standin_light(view)
+    plate_light = dict(az=az, el=el, intensity=inten, kelvin=list(mf.kelvin_rgb(k)))
+    F = mf.STANDIN_VIEWS[view].get('fire')
+    if F:                                         # the campfire: its light (flickered per frame by the viewer) and flames
+        plate_light['fire'] = dict(pos=list(F['pos']), col=list(mf.kelvin_rgb(F['k']) * F['gain']), flick=F['flick'], first=S['first'],
+                                   base=[0.0, 0.0, 0.0], flameR=0.285, flameH=0.85)
+    st = mf.standin_settings(view)
+    st = {k2: (list(v) if isinstance(v, tuple) else v) for k2, v in st.items()}
+    st['standin_json'] = folder + '/standin.json'
     return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr', boxes=boxes, walker=walker,
-                           plate_light=dict(az=S['sun_az'], el=S['sun_el'], intensity=6.0, kelvin=list(mf.kelvin_rgb(5000.0))),
-                           room=[[-400.0, 0.0, -600.0], [400.0, 350.0, 350.0]],      # inside of the stand-in room, for the cutaway
-                           first=S['first'], last=S['last'], width=S['width'], height=S['height'],
-                           set=dict(units='centimetres', first=S['first'], last=S['last'], fps=24.0, shadows='stand-in geometry',
-                                    standin_json=folder + '/standin.json', box_center=list(mf.DEFAULTS['box_center']),
-                                    box_size=list(mf.DEFAULTS['box_size']), light_az=S['sun_az'], light_el=S['sun_el'])))
+                           plate_light=plate_light,
+                           room=None if F else [[-400.0, 0.0, -600.0], [400.0, 350.0, 350.0]],      # inside of the stand-in room, for the cutaway
+                           first=S['first'], last=S['last'], width=S['width'], height=S['height'], set=st))
 
 
 def add_files(kind, names, blobs):

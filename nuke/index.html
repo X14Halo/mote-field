@@ -439,7 +439,7 @@ function buildPanel() {
       const d = document.createElement('div'); d.className = 'note'; d.innerHTML = k.label; pg.appendChild(d);
       if (k.tab === 'MoteField' && !k.key) {
         const d2 = document.createElement('div'); d2.className = 'note';
-        d2.innerHTML = 'In the browser it starts on the <b>stand-in shot</b> (an interior with a window opening; pick a wide move or a close-up), made on the fly. The viewer is live: the same dust and lens maths as the Nuke node, on your graphics card. <b>Save this frame</b> renders the exact EXR the Nuke node writes.';
+        d2.innerHTML = 'In the browser it starts on the <b>stand-in shot</b>, made on the fly: an interior with a window opening (a wide move, a close-up, or the walker for the character pushers), or a <b>campfire</b> at night for the embers, with no dust. The viewer is live: the same dust and lens maths as the Nuke node, on your graphics card. <b>Save this frame</b> renders the exact EXR the Nuke node writes.';
         pg.appendChild(d2);
       }
       continue;
@@ -668,7 +668,7 @@ const CLOSEUP_DUST = { density: 360, flakes: 28, fibers: 5, fluff: 1.5, glint: 0
 function onStandinView() {
   const close = V.standin_view === 'close-up';
   for (const k in CLOSEUP_DUST) setKnob(k, close ? CLOSEUP_DUST[k] : SCHEMA.defaults[k]);
-  if (V.standin_view === 'walker') setKnob('push', true);         // the walker shot is there to try the pushers (finds its movers)
+  setKnob('push', V.standin_view === 'walker');       // the walker shot is there to try the pushers (finds its movers)
   makeStandin();
 }
 async function makeStandin() {

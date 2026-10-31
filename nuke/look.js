@@ -37,13 +37,21 @@ bool blockedB(vec3 P, vec3 L){
 float hash13(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
 uniform vec3 uC[4]; uniform float uTh, uTv; uniform vec2 uWH;
 uniform vec3 uLs, uSunP, uSky; uniform float uInt;
+uniform vec3 uFireP, uFireC;        // the campfire stand-in's fire light (scene units; rgb irradiance at 1 m); 0 = none
 vec3 rayDir(vec2 px){ float sx = (px.x / uWH.x * 2.0 - 1.0) * uTh, sy = (1.0 - px.y / uWH.y * 2.0) * uTv; return normalize(-uC[3] + sx * uC[1] + sy * uC[2]); }
 // what a surface sends back: the stand-in's own shading (sun, with shadows, plus a little fill)
 vec3 shade(vec3 P, vec3 n, vec3 alb, float fillK){
   float nl = max(dot(n, uLs), 0.0);
   float lit = (nl > 0.0 && !blockedB(P + n * 0.3, uLs)) ? 1.0 : 0.0;
   float fill = uInt * (0.035 + 0.02 * clamp(n.y, 0.0, 1.0)) * fillK;
-  return alb * (uSunP * (nl * lit) + fill * vec3(0.95, 0.97, 1.0));
+  vec3 light = uSunP * (nl * lit) + fill * vec3(0.95, 0.97, 1.0);
+  if (dot(uFireC, uFireC) > 0.0) {
+    vec3 Lf = uFireP - P; float d = length(Lf); Lf /= max(d, 1e-6);
+    float nf = max(dot(n, Lf), 0.0);
+    if (nf > 0.0) { vec3 hn, ha; float th = traceB(P + n * 0.3, Lf, 1e-4, hn, ha); float dm = d * 0.01;
+      if (th >= d - 1.0) light += uFireC * nf / (dm * dm + 0.09); }
+  }
+  return alb * light;
 }
 `;
 
@@ -114,17 +122,52 @@ void main(){
 // 4. the light shaft: single scattering along each view ray (half res)
 const LK_HAZE = LK_COMMON + `
 uniform sampler2D uNrm; uniform vec2 uFull; uniform float uHaze, uG, uSu; out vec4 o;
+uniform vec3 uFireB; uniform float uFlameR, uFlameH, uTime, uFlameGain; uniform int uFlame;
 float hg(float c, float g){ return (1.0 - g*g) / pow(max(1.0 + g*g - 2.0*g*c, 1e-4), 1.5); }
+float vnoise(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+  return mix(mix(mix(hash13(i), hash13(i+vec3(1,0,0)), f.x), mix(hash13(i+vec3(0,1,0)), hash13(i+vec3(1,1,0)), f.x), f.y),
+             mix(mix(hash13(i+vec3(0,0,1)), hash13(i+vec3(1,0,1)), f.x), mix(hash13(i+vec3(0,1,1)), hash13(i+vec3(1,1,1)), f.x), f.y), f.z); }
+float fbm3(vec3 p){ return 0.5*vnoise(p) + 0.25*vnoise(p*2.03 + 1.7) + 0.125*vnoise(p*4.1 + 9.2); }
+vec3 planck(float T){ vec3 lam = vec3(0.61, 0.55, 0.465); return 1.0 / (lam*lam*lam*lam*lam * (exp(14388.0 / (lam * T)) - 1.0)); }
+// the mockup's flames: four tongues that sway, rise and fall, taper to tips, over a hot core (metres, from the fire's base)
+vec3 flames(vec3 ro, vec3 rd, float tmax){
+  float R = uFlameR * 1.3;
+  float A = dot(rd.xz, rd.xz), B = dot(ro.xz, rd.xz), C = dot(ro.xz, ro.xz) - R*R, D = B*B - A*C;
+  if (D <= 0.0 || A < 1e-6) return vec3(0.0);
+  float sq = sqrt(D), t0 = (-B - sq) / A, t1 = (-B + sq) / A;
+  float yb = -0.02, yt = uFlameH * 1.4;
+  if (abs(rd.y) > 1e-5) { float ta = (yb - ro.y) / rd.y, tb = (yt - ro.y) / rd.y; t0 = max(t0, min(ta, tb)); t1 = min(t1, max(ta, tb)); }
+  t0 = max(t0, 0.0); t1 = min(t1, tmax); if (t1 <= t0) return vec3(0.0);
+  const int N = 22; float dt = (t1 - t0) / float(N), j = hash13(vec3(gl_FragCoord.xy, 9.0));
+  vec3 em = vec3(0.0);
+  for (int i = 0; i < N; i++) { vec3 q = ro + rd * (t0 + (float(i) + j) * dt);
+    float hq = q.y; vec2 xz = q.xz;
+    float n = fbm3(vec3(q.x * 6.0, q.y * 3.2 - uTime * 3.0, q.z * 6.0)), dens = 0.0;
+    for (int k = 0; k < 4; k++) { float fk = float(k), th = fk * 1.7 + 0.6;
+      float Hk = uFlameH * (0.45 + 0.55 * vnoise(vec3(uTime * 1.6 + fk * 7.3, fk * 3.1, 0.0)));
+      float hk = hq / Hk; if (hk > 1.2) continue;
+      vec2 ck = vec2(cos(th), sin(th)) * uFlameR * 0.35 + vec2(sin(uTime * 2.3 + fk * 2.1 + hq * 4.0), cos(uTime * 1.9 + fk * 1.3 + hq * 3.5)) * 0.18 * uFlameR * hq / uFlameH;
+      float wk = uFlameR * 0.55 * max(1.0 - hk, 0.0) + 0.01, d = length(xz - ck) + (n - 0.45) * 0.12;
+      dens += (1.0 - smoothstep(wk * 0.35, wk, d)) * (1.0 - smoothstep(0.8, 1.15, hk + (n - 0.45) * 0.6)); }
+    float core = (1.0 - smoothstep(0.0, 0.35 * uFlameH, hq)) * (1.0 - smoothstep(uFlameR * 0.5, uFlameR * 0.95, length(xz)));
+    dens = (dens * 0.8 + core * 0.6) * (0.5 + n) * smoothstep(-0.03, 0.03, hq);
+    if (dens > 0.0) { float T = mix(1300.0, 1900.0, clamp(dens * 1.2 * (1.0 - 0.35 * hq / uFlameH), 0.0, 1.0)); em += planck(T) * dens; } }
+  em *= dt * uFlameGain; return any(isnan(em)) ? vec3(0.0) : em;
+}
 void main(){
   ivec2 fp = min(ivec2(gl_FragCoord.xy) * 2, ivec2(uFull) - 1);
   vec3 rd = rayDir(vec2(fp) + 0.5);
   float d = texelFetch(uNrm, fp, 0).w; float tmax = d > 0.0 ? d : 2000.0;
   const int N = 40; float dt = tmax / float(N);
   float j = hash13(vec3(gl_FragCoord.xy, 5.0));
-  float acc = 0.0;
-  for (int i = 0; i < N; i++) { vec3 p = uC[0] + rd * ((float(i) + j) * dt); if (!blockedB(p, uLs)) acc += 1.0; }
+  float acc = 0.0, fg = 0.0;
+  bool fire = dot(uFireC, uFireC) > 0.0;
+  for (int i = 0; i < N; i++) { vec3 p = uC[0] + rd * ((float(i) + j) * dt); if (!blockedB(p, uLs)) acc += 1.0;
+    if (fire) { vec3 q = (p - uFireP) * uSu; fg += 1.0 / (dot(q, q) + 0.12); } }
   float len_m = tmax * uSu;
   vec3 c = uSunP * (acc / float(N)) * len_m * hg(dot(uLs, rd), uG) * uHaze * 0.011 + uSky * 0.004 * uHaze * len_m;   // as in the mockup
+  if (fire) c += uFireC * (fg / float(N)) * len_m * uHaze * 0.004;                                                  // glow round the fire
+  if (uFlame == 1) c += flames((uC[0] - uFireB) * uSu, rd, tmax * uSu);
   o = vec4(c, 1.0);
 }`;
 
@@ -272,13 +315,19 @@ class MFLook {
     gl.uniform3fv(prog.u.uLs, [-Math.cos(az) * Math.cos(el), Math.sin(el), -Math.sin(az) * Math.cos(el)]);
     gl.uniform3fv(prog.u.uSunP, L.kelvin.map(v => v * I)); gl.uniform3fv(prog.u.uSky, [0.66 * I * 0.45, 0.76 * I * 0.45, 0.95 * I * 0.45]); gl.uniform1f(prog.u.uInt, I);
     this.pv._bind(prog, 7, 'uBoxes', this.pv.boxes.tex); gl.uniform1i(prog.u.uNB, this.pv.boxes.na);
+    const F = this._fire; gl.uniform3fv(prog.u.uFireP, F ? F.pos : [0, 0, 0]); gl.uniform3fv(prog.u.uFireC, F ? F.col : [0, 0, 0]);
+    if (prog.u.uFlame) { gl.uniform1i(prog.u.uFlame, F && F.base ? 1 : 0);
+      if (F && F.base) { gl.uniform3fv(prog.u.uFireB, F.base); gl.uniform1f(prog.u.uFlameR, F.flameR); gl.uniform1f(prog.u.uFlameH, F.flameH * (0.9 + 0.1 * F.fl));
+        gl.uniform1f(prog.u.uTime, F.t); gl.uniform1f(prog.u.uFlameGain, 4e6 * (0.75 + 0.25 * F.fl)); } }
   }
   // the stand-in, lit, for one frame (cached)
   standin(frame, W, H, L, haze, su, opt) {
     opt = opt || {};
     // the walker (stand-in character) is where it is on opt.walker (the current frame), even with the camera held or free
-    const wf = this.pv.boxes && this.pv.boxes.walker ? (opt.walker !== undefined ? opt.walker : frame) : null;
-    const ck = wf === null ? frame : frame + '@' + wf;
+    const cur = opt.walker !== undefined ? opt.walker : frame;          // the frame being shown (the camera may be held / free)
+    const wf = this.pv.boxes && this.pv.boxes.walker ? cur : null;
+    this._fire = fireAt(L, cur);
+    const ck = wf === null && !this._fire ? frame : frame + '@' + cur;
     const key = [W, H, haze, opt.key || ''].join('|');
     const hit = this.cache.get(ck);
     if (hit && hit.key === key) { this.cache.delete(ck); this.cache.set(ck, hit); return hit; }

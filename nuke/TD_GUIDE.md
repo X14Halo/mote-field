@@ -93,6 +93,7 @@ The GPU preview and the Python render agree within about 1% of total light, with
   - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a swinging arm on the camera side and a `backward` layer made like the studio util pass). One mover is found, on every frame, with no false movers and no parts off the walker. Body and arm velocities come out exact (1.79 and up to 4.73 m/s; the arm gets its own part whenever it moves differently from the body).
 
 ### Embers (`EmberSim`, `render_embers`)
+Try them on the **campfire** stand-in scene: a fire pit, log bench, rocks and tree trunks at night (moonlight), lit by a flickering fire light with shadows, with embers on and no dust. In the viewer the fire also has the mockup's volumetric flames and a glow in the haze; the Python stand-in plate (Nuke's Create stand-in shot) has the fire light but no flames.
 A second emitter, for fire (Embers tab, off by default). Embers rise from a disc you place and size to the fire (position, radius, emission height; **Place** in the viewer puts it on the surface you click).
 - **Air:** a buoyant plume that widens and slows with height, entrainment near the base, a gusting rhythm, turbulence (divergence-free sine modes, like the dust's, drifting upward), wind, and *flutter*: a spinning flake of ash swings round a small helix, so paths squiggle and sometimes loop. Each ember follows the air with a lag that grows with its size, and heavy ones sink a little.
 - **Pops:** the crackle of burning wood. Groups of spark slots fire together on a schedule (*Pops per second*), thrown out fast; heavier, they keep their momentum and arc back down.
@@ -168,7 +169,7 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | MoteField | `first` | First frame | 1001 |
 | MoteField | `last` | Last frame | 1048 |
 | MoteField | `fps` | Frame rate | 24.0 |
-| MoteField | `standin_view` | Stand-in camera | wide |
+| MoteField | `standin_view` | Stand-in scene | wide |
 | MoteField | `btn_standin` | Create stand-in shot | (button) |
 | MoteField | `btn_fit` | Fit box to shot | (button) |
 | MoteField | `btn_3d` | 3D preview | (button) |

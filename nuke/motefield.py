@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.5'
+__version__ = '0.5.1'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -523,9 +523,39 @@ STANDIN = dict(first=1001, last=1048, width=1280, height=536, focal=24.0, film=2
                sun_az=25.0, sun_el=33.0)
 
 
+def campfire_boxes():
+    """The campfire stand-in (centimetres), after the mockup's: a fire pit (a ring of stones, an ash and coal bed, charred
+    logs), a log bench, rocks and tree trunks receding into the dark."""
+    B = []
+
+    def box(mn, mx, c, name):
+        B.append((tuple(float(v) for v in mn), tuple(float(v) for v in mx), tuple(c), name))
+    box((-3000, -30, -3000), (3000, 0, 3000), (0.21, 0.19, 0.16), 'ground')
+    for i in range(11):
+        a = i / 11.0 * 2 * math.pi + 0.2
+        rr = 53 + 4 * math.sin(i * 2.3)
+        sz = 10 + 4 * ((i * 37) % 7) / 7.0
+        cx, cz, g = math.cos(a) * rr, math.sin(a) * rr, 0.22 + 0.1 * ((i * 13) % 5) / 5.0
+        box((cx - sz * 0.65, 0, cz - sz * 0.5), (cx + sz * 0.65, sz * 0.82, cz + sz * 0.5), (g, g * 0.96, g * 0.9), 'stone')
+    box((-42, 0, -42), (42, 2.5, 42), (0.13, 0.12, 0.11), 'ash')
+    box((-40, 2.5, -5), (40, 10.5, 4), (0.11, 0.09, 0.08), 'log')
+    box((-5, 10.5, -37), (4, 18, 37), (0.11, 0.09, 0.08), 'log')
+    box((-24, 18, -20), (22, 24, -13), (0.12, 0.10, 0.08), 'log')
+    box((-190, 2, 118), (-80, 36, 150), (0.31, 0.23, 0.16), 'bench')
+    box((169, 0, -148), (211, 30, -112), (0.30, 0.29, 0.27), 'rock')
+    box((-255, 0, -72), (-205, 32, -28), (0.28, 0.27, 0.25), 'rock')
+    box((225, 0, 106), (255, 20, 134), (0.27, 0.26, 0.24), 'rock')
+    for x, z, r in ((-2.6, -3.4, 0.22), (1.3, -4.6, 0.3), (3.6, -2.1, 0.2), (-4.1, -1.3, 0.26), (-1.0, -6.0, 0.34), (3.0, -6.2, 0.28),
+                    (-3.4, 2.8, 0.24), (4.2, 1.8, 0.3), (0.2, -8.5, 0.4), (-5.5, -5.0, 0.35), (5.6, -4.2, 0.3)):
+        box((x * 100 - r * 100, 0, z * 100 - r * 100), (x * 100 + r * 100, 800, z * 100 + r * 100), (0.17, 0.14, 0.11), 'tree')
+    return B
+
+
 def standin_boxes(frame=None, view='wide'):
-    """The stand-in room in centimetres: list of (min, max, albedo, name). With a frame and the 'walker' view, the
-    walker is in it too."""
+    """The stand-in set in centimetres: list of (min, max, albedo, name). The room, or the campfire. With a frame and the
+    'walker' view, the walker is in it too."""
+    if STANDIN_VIEWS.get(view, {}).get('set') == 'campfire':
+        return campfire_boxes()
     B = []
     if frame is not None and STANDIN_VIEWS.get(view, {}).get('walker'):
         B.extend(b for b, v in standin_walker_parts(frame))
@@ -591,7 +621,37 @@ STANDIN_VIEWS = {
     # and the beam through the middle of the room sits at the focus distance (sharp sparkles)
     'close-up': dict(E0=(-170.0, 120.0, -150.0), E1=(-182.0, 118.0, -162.0), T0=(-380.0, 160.0, -430.0), T1=(-386.0, 157.0, -440.0),
                      focal=50.0, fstop=2.8, focus=190.0),
+    # the campfire at night, for the embers (no dust): moonlight, and the fire lighting the set
+    'campfire': dict(E0=(115.0, 95.0, 430.0), E1=(100.0, 92.0, 400.0), T0=(0.0, 62.0, 0.0), T1=(0.0, 66.0, 0.0),
+                     focal=32.0, fstop=2.8, focus=440.0, set='campfire', sun_az=-55.0, sun_el=38.0, sun_int=0.16, sun_k=8200.0,
+                     fire=dict(pos=(0.0, 35.0, 0.0), k=1850.0, gain=3.2, flick=0.5)),
 }
+
+
+def standin_light(view, frame=None):
+    """The stand-in's lights: key (az, el, intensity, kelvin) and the fire (position cm, rgb at 1 m) or None."""
+    V = STANDIN_VIEWS.get(view, {})
+    key = (V.get('sun_az', STANDIN['sun_az']), V.get('sun_el', STANDIN['sun_el']), V.get('sun_int', 6.0), V.get('sun_k', 5000.0))
+    F = V.get('fire')
+    if not F:
+        return key, None
+    t = 0.0 if frame is None else (frame - STANDIN['first']) / 24.0
+    fl = max(0.35, 1 + F['flick'] * (0.12 * math.sin(t * 7.3) + 0.08 * math.sin(t * 13.7 + 1.3) + 0.06 * math.sin(t * 23.1 + 0.4)))
+    return key, (np.array(F['pos'], np.float64), kelvin_rgb(F['k']) * F['gain'] * fl)
+
+
+def standin_settings(view):
+    """The node settings that go with a stand-in camera (what Create stand-in shot sets)."""
+    V = STANDIN_VIEWS.get(view, {})
+    (az, el, inten, k), fire = standin_light(view)
+    d = dict(units='centimetres', first=STANDIN['first'], last=STANDIN['last'], fps=24.0, shadows='stand-in geometry',
+             light_az=az, light_el=el, light_int=inten, light_k=k)
+    if V.get('set') == 'campfire':       # embers, no dust
+        d.update(density=0.0, embers=True, ember_pos=(0.0, 0.0, 0.0), ember_radius=30.0, ember_height=55.0, ember_rate=60.0,
+                 ember_pops=0.3, ember_pop_size=0.25, box_center=(0.0, 175.0, 0.0), box_size=(800.0, 330.0, 800.0))
+    else:
+        d.update(embers=False, box_center=DEFAULTS['box_center'], box_size=DEFAULTS['box_size'])
+    return d
 
 
 STANDIN_WALKER = dict(start=(-330.0, 0.0, -105.0), end=(20.0, 0.0, -160.0), size=(46.0, 175.0, 30.0), color=(0.13, 0.10, 0.09),
@@ -703,9 +763,12 @@ def _trace_boxes(O, D, boxes):
     return best, nrm, alb
 
 
-def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5000.0, view='wide'):
+def render_standin_frame(frame, width=None, height=None, intensity=None, kelvin=None, view='wide'):
     """Utility pass + clay plate for one stand-in frame (scene units: centimetres)."""
     S = STANDIN
+    (sun_az, sun_el, s_int, s_k), fire = standin_light(view, frame)
+    intensity = s_int if intensity is None else intensity
+    kelvin = s_k if kelvin is None else kelvin
     W, H = width or S['width'], height or S['height']
     cam = standin_camera(frame, view)
     th = math.tan(cam.hfov / 2)
@@ -732,7 +795,7 @@ def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5
     xp, yp, _ = cprev.project(Pprev, W, H)
     mvx = np.where(hit, xp - xc, 0.0)
     mvy = np.where(hit, -(yp - yc), 0.0)
-    L = light_dir(S['sun_az'], S['sun_el'])
+    L = light_dir(sun_az, sun_el)
     sun = kelvin_rgb(kelvin) * intensity
     lit = np.zeros(W * H)
     nl = np.clip(n @ L, 0, None)
@@ -742,7 +805,21 @@ def render_standin_frame(frame, width=None, height=None, intensity=6.0, kelvin=5
         lit[np.where(cand)[0][~blocked]] = 1.0
     sky = np.array([0.66, 0.76, 0.95]) * intensity * 0.45
     fill = intensity * (0.035 + 0.02 * np.clip(n[:, 1], 0, 1))
-    rgb = np.where(hit[:, None], alb * (sun[None, :] * (nl * lit)[:, None] + fill[:, None] * np.array([0.95, 0.97, 1.0])), sky[None, :])
+    light = sun[None, :] * (nl * lit)[:, None] + fill[:, None] * np.array([0.95, 0.97, 1.0])
+    if fire is not None:            # the fire: a point light with shadows (irradiance at 1 m given), as in the mockup
+        fp, fc = fire
+        Lf = fp[None, :] - P
+        dist = np.linalg.norm(Lf, axis=1)
+        Lf /= np.maximum(dist, 1e-6)[:, None]
+        nf = np.clip((n * Lf).sum(1), 0, None)
+        cand = hit & (nf > 0)
+        vis = np.zeros(W * H)
+        if cand.any():
+            ci = np.where(cand)[0]
+            th_, _, _ = _trace_boxes(P[ci] + n[ci] * 0.3, Lf[ci], boxes)
+            vis[ci] = (th_ >= dist[ci] - 1.0).astype(np.float64)
+        light = light + fc[None, :] * (nf * vis / ((dist * 0.01) ** 2 + 0.09))[:, None]
+    rgb = np.where(hit[:, None], alb * light, sky[None, :])
     depth = np.where(hit, t, 0.0)
     f32 = lambda a: a.reshape(H, W).astype(np.float32)
     util = {'pos.R': f32(P[:, 0]), 'pos.G': f32(P[:, 1]), 'pos.B': f32(P[:, 2]),
@@ -767,7 +844,7 @@ def make_standin_shot(folder, progress=None, view='wide'):
         util, plate, attrs = render_standin_frame(f, view=view)
         write_exr(os.path.join(folder, 'standin_utility.%04d.exr' % f), util, attrs)
         write_exr(os.path.join(folder, 'standin_plate.%04d.exr' % f), plate, attrs, half=True)
-    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in standin_boxes()], units='centimetres', view=view)
+    meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in standin_boxes(view=view)], units='centimetres', view=view)
     with open(os.path.join(folder, 'standin.json'), 'w') as fh:
         json.dump(meta, fh)
     return dict(utility=os.path.join(folder, 'standin_utility.####.exr'), plate=os.path.join(folder, 'standin_plate.####.exr'),
@@ -2571,7 +2648,7 @@ _KNOBS = [
     ('MoteField', 'first', 'int', 'First frame', None),
     ('MoteField', 'last', 'int', 'Last frame', None),
     ('MoteField', 'fps', 'float', 'Frame rate', (1, 120)),
-    ('MoteField', 'standin_view', 'enum', 'Stand-in camera', ['wide', 'close-up', 'walker']),
+    ('MoteField', 'standin_view', 'enum', 'Stand-in scene', ['wide', 'close-up', 'walker', 'campfire']),
     ('MoteField', 'btn_standin', 'button', 'Create stand-in shot', 'standin'),
     ('MoteField', 'btn_fit', 'button', 'Fit box to shot', 'fit'),
     ('MoteField', 'btn_3d', 'button', '3D preview', 'preview3d'),
@@ -2996,15 +3073,10 @@ def _nk_standin(g):
 
         def apply():
             g['utility'].setValue(res['utility'])
-            g['units'].setValue('centimetres')
-            g['first'].setValue(res['first'])
-            g['last'].setValue(res['last'])
-            g['shadows'].setValue('stand-in geometry')
             g['standin_json'].setValue(folder + '/standin.json')
-            g['box_center'].setValue(list(DEFAULTS['box_center']))
-            g['box_size'].setValue(list(DEFAULTS['box_size']))
-            g['light_az'].setValue(STANDIN['sun_az'])
-            g['light_el'].setValue(STANDIN['sun_el'])
+            for k, v in standin_settings(p.get('standin_view', 'wide')).items():     # lights, frame range; embers for the campfire
+                if g.knob(k) is not None:
+                    g[k].setValue(list(v) if isinstance(v, (list, tuple)) else v)
             try:
                 r = nuke.root()
                 r['first_frame'].setValue(res['first'])

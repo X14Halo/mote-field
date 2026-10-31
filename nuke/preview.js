@@ -484,6 +484,7 @@ const FS_PLATE = GLSL_COMMON + `
 uniform sampler2D uBoxes; uniform int uNB;
 uniform vec3 uC[4]; uniform float uTh, uTv; uniform vec2 uWH;
 uniform vec3 uLs, uSunP, uSky; uniform float uInt;
+uniform vec3 uFireP, uFireC;      // the campfire stand-in's fire: a point light (scene units; rgb irradiance at 1 m); 0 = none
 layout(location=0) out vec4 oPlate; layout(location=1) out vec4 oDist;
 float trace(vec3 O, vec3 D, out vec3 n, out vec3 alb){
   vec3 Ds = vec3(abs(D.x) < 1e-9 ? 1e-9 : D.x, abs(D.y) < 1e-9 ? 1e-9 : D.y, abs(D.z) < 1e-9 ? 1e-9 : D.z);
@@ -526,7 +527,14 @@ void main(){
     float nl = max(dot(n, uLs), 0.0);
     float lit = (nl > 0.0 && !blocked(P + n * 0.3, uLs)) ? 1.0 : 0.0;
     float fill = uInt * (0.035 + 0.02 * clamp(n.y, 0.0, 1.0));
-    rgb = alb * (uSunP * (nl * lit) + fill * vec3(0.95, 0.97, 1.0));
+    vec3 light = uSunP * (nl * lit) + fill * vec3(0.95, 0.97, 1.0);
+    if (dot(uFireC, uFireC) > 0.0) {             // motefield.render_standin_frame: the fire, with shadows
+      vec3 Lf = uFireP - P; float d = length(Lf); Lf /= max(d, 1e-6);
+      float nf = max(dot(n, Lf), 0.0);
+      if (nf > 0.0) { vec3 hn, ha; float th = trace(P + n * 0.3, Lf, hn, ha); float dm = d * 0.01;
+        if (th >= d - 1.0) light += uFireC * nf / (dm * dm + 0.09); }
+    }
+    rgb = alb * light;
   }
   oPlate = vec4(rgb, 1.0);
   oDist = vec4(hit ? t : 0.0, 0.0, 0.0, 1.0);
@@ -583,6 +591,13 @@ const FS_MOTES3D = `#version 300 es
 precision mediump float; in vec3 vC; out vec4 o;
 void main(){ vec2 d = gl_PointCoord*2.0-1.0; float r = dot(d,d); if (r > 1.0) discard; o = vec4(vC, smoothstep(1.0, 0.0, r)); }`;
 
+// the campfire stand-in's fire light on a frame (motefield.standin_light): position and colour, flickering
+function fireAt(L, frame) {
+  const F = L && L.fire; if (!F) return null;
+  const t = typeof frame === 'number' ? (frame - (F.first || 1001)) / 24 : 0;
+  const fl = Math.max(0.35, 1 + F.flick * (0.12 * Math.sin(t * 7.3) + 0.08 * Math.sin(t * 13.7 + 1.3) + 0.06 * Math.sin(t * 23.1 + 0.4)));
+  return { pos: F.pos, col: F.col.map(v => v * fl), fl, base: F.base, flameR: F.flameR, flameH: F.flameH, t };
+}
 class MFPreview {
   constructor(gl) {
     this.gl = gl;
@@ -958,6 +973,7 @@ class MFPreview {
     gl.uniform3fv(prog.u.uSunP, plateLight.kelvin.map(v => v * I));
     gl.uniform3fv(prog.u.uSky, [0.66 * I * 0.45, 0.76 * I * 0.45, 0.95 * I * 0.45]);
     gl.uniform1f(prog.u.uInt, I);
+    const F = fireAt(plateLight, wf); gl.uniform3fv(prog.u.uFireP, F ? F.pos : [0, 0, 0]); gl.uniform3fv(prog.u.uFireC, F ? F.col : [0, 0, 0]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.pl.frame = frame; this.pl.key = W0 + 'x' + H0 + '|' + wf;
   }
