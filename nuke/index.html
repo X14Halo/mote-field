@@ -101,7 +101,10 @@ select.nk{background:var(--field);border:1px solid var(--fieldb);border-radius:2
 .ph .title i{width:14px;height:14px;border-radius:2px;background:var(--gold);box-shadow:inset 0 0 0 1px #0007}
 .ph .title input{flex:1;max-width:200px;background:var(--field);border:1px solid var(--fieldb);border-radius:2px;padding:2px 6px}
 .ph .title span{color:var(--dim)}
-.tabs{display:flex;gap:1px;overflow-x:auto;scrollbar-width:none}
+.tabs{display:flex;flex-wrap:wrap;gap:1px 1px}
+.shotpick{display:flex;align-items:center;gap:12px;color:var(--dim)}
+.shotpick label{display:flex;align-items:center;gap:6px}
+.shotpick select{max-width:190px}
 .tabs button{background:#2d2d2d;border:1px solid #222;border-bottom:0;border-radius:3px 3px 0 0;padding:5px 11px;cursor:pointer;color:var(--dim);white-space:nowrap}
 .tabs button.on{background:var(--panel);color:#fff;position:relative;top:1px}
 .pane{flex:1;overflow:auto;padding:10px 10px 30px}
@@ -156,7 +159,10 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
 <body>
 <div class="top">
   <div class="logo"><i></i>MoteField</div>
-  <div class="sub">browser version of the Nuke tool · same Python, running in your browser</div>
+  <div class="shotpick" title="The shot to work on. Here: stand-in shots made on the fly. In production this is where the show's sequences and shots would be.">
+    <label>Sequence <select class="nk" id="seqSel"></select></label>
+    <label>Shot <select class="nk" id="shotSel"></select></label>
+  </div>
   <div class="sp"></div>
   <a href="https://github.com/X14Halo/mote-field/blob/main/nuke/TD_GUIDE.md" target="_blank" rel="noopener" title="What the tool is, how it works, and how to port it into the pipeline">How it works / TD guide</a>
   <a href="motefield.py" download>Download motefield.py</a>
@@ -489,6 +495,7 @@ function buildPanel() {
       }
       continue;
     }
+    if (k.key === 'standin_view') continue;        // the Sequence / Shot picker at the top sets it
     const ctl = row(pg, k.label, false, typeof k.extra === 'string' && k.kind !== 'enum' ? k.extra : '');
     const key = k.key;
     if (k.kind === 'file') {
@@ -672,6 +679,41 @@ function pushToNode() {
 }
 // the close-up uses the mockup's close-up dust: more motes, more flakes and lint, more glints
 const CLOSEUP_DUST = { density: 360, flakes: 28, fibers: 5, fluff: 1.5, glint: 0.5 };
+// sequences and shots, as a production tool would list them; here each shot is a stand-in made on the fly
+const SEQS = [
+  { id: 'sq010', label: 'Reading room', shots: [['sh010', 'wide', 'wide'], ['sh020', 'close-up', 'close-up'], ['sh030', 'walker (moving things)', 'walker']] },
+  { id: 'sq020', label: 'Campfire', shots: [['sh010', 'night, embers', 'campfire']] },
+];
+function fillShots(si, view) {
+  const sel = $('shotSel'); sel.innerHTML = '';
+  for (const [id, label, v] of SEQS[si].shots) { const o = document.createElement('option'); o.value = v; o.textContent = id + ' · ' + label; sel.appendChild(o); }
+  if (view) sel.value = view;
+}
+function syncShotPicker() {
+  const seq = $('seqSel'); if (!seq) return;
+  if (!seq.options.length) SEQS.forEach((q, i) => { const o = document.createElement('option'); o.value = i; o.textContent = q.id + ' · ' + q.label; seq.appendChild(o); });
+  const own = seq.querySelector('option[value="own"]');
+  if (!shot.standin) {
+    if (!own) { const o = document.createElement('option'); o.value = 'own'; o.textContent = 'your files'; seq.appendChild(o); }
+    seq.value = 'own'; const sel = $('shotSel'); sel.innerHTML = '<option>' + (shot.label || 'loaded utility pass').split('  (')[0].slice(0, 40) + '</option>';
+    return;
+  }
+  if (own) own.remove();
+  const v = V.standin_view || 'wide', si = Math.max(0, SEQS.findIndex(q => q.shots.some(s => s[2] === v)));
+  seq.value = si; fillShots(si, v);
+}
+$('seqSel').onchange = () => { const v = $('seqSel').value; if (v === 'own') return; fillShots(+v); V.standin_view = $('shotSel').value; onStandinView(); };
+$('shotSel').onchange = () => { if ($('seqSel').value === 'own') return; V.standin_view = $('shotSel').value; onStandinView(); };
+// a new shot: back to looking through its camera, nothing held
+function resetShotView() {
+  if (typeof vw === 'undefined') return;
+  if (vw.hold) { vw.hold = false; const hc = $('holdCam'); if (hc) hc.checked = false; }
+  setKnob('hold_frame', 0);
+  if (vw.free) setFreeCam(false);
+  if (pv) pv.camOverride = null;
+  nav2.s = 1; nav2.x = 0; nav2.y = 0;
+  v3.framed = false;
+}
 function onStandinView() {
   const close = V.standin_view === 'close-up';
   for (const k in CLOSEUP_DUST) setKnob(k, close ? CLOSEUP_DUST[k] : SCHEMA.defaults[k]);
@@ -680,6 +722,7 @@ function onStandinView() {
 }
 async function makeStandin() {
   if (rangeRunning) cancelRange = true;
+  resetShotView();
   setBusy(true, 'Setting up the stand-in shot…', 0.1);
   try {
     const st = await call('standin', { width: standinWidth, view: V.standin_view || 'wide' });
@@ -693,6 +736,7 @@ async function makeStandin() {
     showUtility();
     setFrame(st.first, true);
     if (dim === '3d') loadScene();
+    syncShotPicker();
     setStatus('Stand-in shot ready: frames ' + st.first + '–' + st.last + '. Frames are made the first time they\'re needed.');
   } catch (e) { setStatus('Stand-in failed: ' + e.message, true); }
   finally { setBusy(false); }
@@ -724,7 +768,7 @@ async function usePath(kind, path) {
 function applyShotFiles(kind, r, where) {
   {
     if (kind === 'utility') {
-      shot.utility = r.pattern; shot.standin = false; shot.standinJson = '';
+      shot.utility = r.pattern; shot.standin = false; shot.standinJson = ''; resetShotView();
       pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = ''; resetMovers(); if (pv && pv.ok) pv.clearFrameImages(); if (look) look.clear();
       shot.label = (NATIVE ? r.pattern : r.pattern.split('/').pop()) + '  (' + r.count + ' frames, ' + where + ')';
       if (shot.plate && shot.plate.includes('/standin_')) shot.plate = '';
@@ -1652,6 +1696,7 @@ function pparams(final) {          // final: what the node renders (ignores the 
   p.lightMode = lightMode(p);
   return p;
 }
+function camsKeyNow() { const p = params(); return JSON.stringify([shot.utility, p.units, p.first, p.last]); }
 function previewReady() {
   if (!pv || !pv.ok || !shot.utility || !pv.init || !pv.cams || !pvs.size) return false;
   const p = params();
@@ -1667,7 +1712,7 @@ async function ensurePreview() {
   try {
     for (let guard = 0; guard < 6; guard++) {
       const p = params();
-      const ck = JSON.stringify([shot.utility, p.units, p.first, p.last]);
+      const ck = camsKeyNow();
       if (pvs.camsKey !== ck) {
         const r = await call('scene', { p, cloud: false });
         pv.setCams({ first: r.first, last: r.last, cams: new Float32Array(r.cams.buffer, r.cams.byteOffset, r.cams.length / 4), lens: r.lens });
@@ -1993,7 +2038,7 @@ function paintPreview2d() {
   const black = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, cw, ch); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); };
   const fin = dust.get(frame);
   const size = pvs.size || (fin ? [fin.w, fin.h] : null);
-  if (!size || !pv.cams || !shot.utility) { black(); drawMovers(null); drawHud(); return; }
+  if (!size || !pv.cams || !shot.utility || pvs.camsKey !== camsKeyNow()) { black(); drawMovers(null); drawHud(); return; }
   try {
     const [SW, SH] = size, p = pparams(), cf = camFrame();
     // render at the size it is shown on screen (sharper on high-DPI displays, and when zoomed in), in steps so the lit set
@@ -2018,7 +2063,7 @@ function paintPreview2d() {
         pv.camOverride = fc;
       }
     } else if (shot.standin && pv.boxes && pvs.plateLight) {
-      ent = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01, { walker: frame });
+      ent = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01, { walker: frame, key: pvs.camsKey, quick: playing });
       plateTex = ent.plate; distTex = ent.dist; defocus = true;      // a render comes with its own defocus; the stand-in gets the lens here
     } else { const fi = pv.frameTex.get(cf); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; defocus = !!fi.synthetic; ent = fi.synthetic ? fi : null; } }
     let dustSrc = null;

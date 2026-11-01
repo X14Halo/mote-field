@@ -97,7 +97,7 @@ The GPU preview and the Python render agree within about 1% of total light, with
   - Tested on the stand-in **walker** shot (a box walking through the room on the wide camera move, with a swinging arm on the camera side, passing behind a coat stand, and a `backward` layer made like the studio util pass). One mover is found, with a steady 4 parts on every frame, no false movers and no parts off the walker. Through the coat stand its centre stays within 1–9 cm of the truth. Frame to frame, parts move 2 cm (median) beyond what their velocity predicts, 6 cm at the 95th percentile and 11 cm at most; before tracking these were 5, 26 and 44 cm, and the number of parts wandered between 3 and 5. The arm's fast forward swing reads right (4.5–4.7 m/s vs 4.73); on the backswing it isn't separated from the body as cleanly (the price of steady parts).
 
 ### Embers (`EmberSim`, `render_embers`)
-Try them on the **campfire** stand-in scene: a fire pit, log bench, rocks and tree trunks at night (moonlight), lit by a flickering fire light with shadows, with embers on and no dust. In the viewer the fire also has the mockup's volumetric flames and a glow in the haze; the Python stand-in plate (Nuke's Create stand-in shot) has the fire light but no flames.
+Try them on the **campfire** stand-in scene: a fire pit, log bench, rocks and tree trunks at night (moonlight), lit by a flickering fire light with shadows, with embers on and no dust. The fire itself is a still stand-in: three glowing flame-shaped tongues (no simulation), the same in the viewer and the Python stand-in plate. They're drawn over the set only, never in the utility pass, so they hold no embers out.
 A second emitter, for fire (Embers tab, off by default). Embers rise from a disc you place and size to the fire (position, radius, emission height; **Place** in the viewer puts it on the surface you click).
 - **Air:** a buoyant plume that widens and slows with height, entrainment near the base, a gusting rhythm, turbulence (divergence-free sine modes, like the dust's, drifting upward), wind, and *flutter*: a spinning flake of ash swings round a small helix, so paths squiggle and sometimes loop. Each ember follows the air with a lag that grows with its size, and heavy ones sink a little.
 - **Pops:** the crackle of burning wood. Groups of spark slots fire together on a schedule (*Pops per second*), thrown out fast; heavier, they keep their momentum and arc back down.
@@ -147,6 +147,8 @@ A second emitter, for fire (Embers tab, off by default). Embers rise from a disc
 | `worker.js`, `pyodide/` | Browser only: Python + numpy in WebAssembly. |
 
 ## 6. The browser version and the Nuke tool
+
+Shots are picked at the top of the viewer from a **Sequence / Shot** pulldown, as a production tool would list the show's shots; here they're stand-ins made on the fly (sq010 reading room: wide, close-up, walker; sq020 campfire). Switching shots looks through the new shot's camera with nothing held. In Nuke the same choice is the *Stand-in scene* knob used by Create stand-in shot.
 
 They are one tool: same knobs, same Python (`motefield.py`), same GPU viewer.
 
@@ -238,28 +240,28 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Light | `shadows` | Shadows from | stand-in geometry |
 | Light | `shadow_soft` | Shadow edge softness (cm) | 3.0 |
 | Light | `interior` | Interior: light only through openings | True |
-| Lens | `focal` | Focal length (mm, 0 = header) | 0.0 |
-| Lens | `film` | Film back width (mm, 0 = header) | 0.0 |
-| Lens | `fstop` | f-stop (0 = header) | 0.0 |
-| Lens | `focus` | Focus distance (scene units, 0 = header) | 0.0 |
-| Lens | `dof` | Defocus | True |
-| Lens | `dof_view` | Defocus in the viewer | True |
-| Lens | `blades` | Blade count (0 = header, < 3 round) | 0 |
-| Lens | `cateye` | Cat-eye bokeh (+ header) | 0.0 |
-| Lens | `anamorphic` | Anamorphic aspect (+ header) | 0.0 |
-| Lens | `field_curv` | Field curvature (+ header) | 0.0 |
-| Lens | `fstop_full` | f-stop full aperture (0 = header) | 0.0 |
-| Lens | `front_mult` | Front multiplier | 1.0 |
-| Lens | `back_mult` | Back multiplier | 1.0 |
-| Lens | `max_bokeh` | Largest bokeh radius (px) | 110.0 |
-| Lens | `bokeh_image` | Custom bokeh shape |  |
-| Lens | `bokeh_rot` | Bokeh rotation | 0.0 |
-| Lens | `bokeh_falloff` | Bokeh centre / rim brightness | 0.0 |
-| Lens | `shutter` | Shutter angle | 180.0 |
-| Lens | `shutter_mode` | Shutter | backward |
-| Lens | `shutter_shape` | Shutter shape | backwardsShape |
-| Lens | `mb` | Motion blur | True |
-| Lens | `mb_view` | Motion blur in the viewer | True |
+| Camera | `dof` | Defocus | True |
+| Camera | `dof_view` | Defocus in the viewer | True |
+| Camera | `mb` | Motion blur | True |
+| Camera | `mb_view` | Motion blur in the viewer | True |
+| Camera | `focal` | Focal length (mm, 0 = header) | 0.0 |
+| Camera | `film` | Film back width (mm, 0 = header) | 0.0 |
+| Camera | `fstop` | f-stop (0 = header) | 0.0 |
+| Camera | `focus` | Focus distance (scene units, 0 = header) | 0.0 |
+| Camera | `blades` | Blade count (0 = header, < 3 round) | 0 |
+| Camera | `cateye` | Cat-eye bokeh (+ header) | 0.0 |
+| Camera | `anamorphic` | Anamorphic aspect (+ header) | 0.0 |
+| Camera | `field_curv` | Field curvature (+ header) | 0.0 |
+| Camera | `fstop_full` | f-stop full aperture (0 = header) | 0.0 |
+| Camera | `front_mult` | Front multiplier | 1.0 |
+| Camera | `back_mult` | Back multiplier | 1.0 |
+| Camera | `max_bokeh` | Largest bokeh radius (px) | 110.0 |
+| Camera | `bokeh_image` | Custom bokeh shape |  |
+| Camera | `bokeh_rot` | Bokeh rotation | 0.0 |
+| Camera | `bokeh_falloff` | Bokeh centre / rim brightness | 0.0 |
+| Camera | `shutter` | Shutter angle | 180.0 |
+| Camera | `shutter_mode` | Shutter | backward |
+| Camera | `shutter_shape` | Shutter shape | backwardsShape |
 | Embers | `embers` | Embers | False |
 | Embers | `ember_pos` | Emitter position | (-150.0, 0.0, -250.0) |
 | Embers | `ember_radius` | Emitter radius | 30.0 |
@@ -318,7 +320,7 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **Browser Python vs desktop Python:** identical output, bit for bit.
 - **GPU preview vs Python render:** total light within 0.1-1% with every option tested, block correlation 0.97-1.0. The tests covered DOF, blades, cat-eye, anamorphic, custom bokeh, shutter shapes, utility-pass shadows, bounce light and soft shadows.
 - **Character pushers:** detection on the stand-in walker shot as in section 4. Given the same movers, the GPU and Python simulations put every mote in the same place (median difference 0.001 cm after 77 frames).
-- **Viewer speed switches:** *Defocus in the viewer* and *Motion blur in the viewer* turn those off in the live viewer only; *Defocus* and *Motion blur* turn them off everywhere, the render (farm) included. The GPU render-to-cache writes what the node renders, so it ignores the viewer switches.
+- **Viewer speed switches** (top of the Camera tab, which was called Lens): *Defocus in the viewer* and *Motion blur in the viewer* turn those off in the live viewer only; *Defocus* and *Motion blur* turn them off everywhere, the render (farm) included. The GPU render-to-cache writes what the node renders, so it ignores the viewer switches.
 - **Holdouts:** the **held out (red)** layer in the viewer shows what they remove. In the wide stand-in only about 2% of the dust is behind anything, so switching holdouts off changes little there; the walker shot shows them clearly.
 - **Live viewer:** tested in headless Chromium against the native server, including loading a utility pass from a disk path and the GPU render-to-cache.
 - **Not tested here:** anything inside a real Nuke session (see section 8), and real GPU frame rates. The headless tests ran on a software renderer.

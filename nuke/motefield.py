@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.6'
+__version__ = '0.6.1'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -628,7 +628,10 @@ STANDIN_VIEWS = {
     # the campfire at night, for the embers (no dust): moonlight, and the fire lighting the set
     'campfire': dict(E0=(115.0, 95.0, 430.0), E1=(100.0, 92.0, 400.0), T0=(0.0, 62.0, 0.0), T1=(0.0, 66.0, 0.0),
                      focal=32.0, fstop=2.8, focus=440.0, set='campfire', sun_az=-55.0, sun_el=38.0, sun_int=0.16, sun_k=8200.0,
-                     fire=dict(pos=(0.0, 35.0, 0.0), k=1850.0, gain=3.2, flick=0.5)),
+                     fire=dict(pos=(0.0, 35.0, 0.0), k=1850.0, gain=3.2, flick=0.5,
+                               # a still stand-in for the flames: tongues (base, top, width at the base, cm), drawn glowing
+                               tongues=(((0.0, 6.0, 0.0), (0.0, 72.0, 0.0), 26.0), ((-11.0, 6.0, 7.0), (-16.0, 48.0, 9.0), 16.0),
+                                        ((12.0, 6.0, -6.0), (17.0, 56.0, -5.0), 15.0)))),
 }
 
 
@@ -642,6 +645,42 @@ def standin_light(view, frame=None):
     t = 0.0 if frame is None else (frame - STANDIN['first']) / 24.0
     fl = max(0.35, 1 + F['flick'] * (0.12 * math.sin(t * 7.3) + 0.08 * math.sin(t * 13.7 + 1.3) + 0.06 * math.sin(t * 23.1 + 0.4)))
     return key, (np.array(F['pos'], np.float64), kelvin_rgb(F['k']) * F['gain'] * fl)
+
+
+def flame_tongues(cam, W, H, tongues):
+    """The stand-in fire's tongues on screen: [(x0, y0, x1, y1, width px at the base, distance)] (the viewer draws the same)."""
+    out = []
+    for b, t, w in tongues:
+        pts = np.array([b, t], np.float64)
+        x, y, z = cam.project(pts, W, H)
+        if z[0] <= 1.0:
+            continue
+        wpx = w / z[0] * W / (2 * math.tan(cam.hfov / 2))
+        out.append((x[0], y[0], x[1], y[1], wpx, float(np.linalg.norm(pts[0] - cam.pos))))
+    return out
+
+
+def flame_image(W, H, tongs, depth):
+    """Glowing teardrops: white-yellow core to orange edge, tapering to the tip; hidden behind nearer surfaces."""
+    img = np.zeros((H, W, 3))
+    yy, xx = np.mgrid[0:H, 0:W]
+    px, py = xx + 0.5, yy + 0.5
+    for x0, y0, x1, y1, w0, dist in tongs:
+        ax, ay = x1 - x0, y1 - y0
+        L2 = ax * ax + ay * ay
+        if L2 < 1:
+            continue
+        t = ((px - x0) * ax + (py - y0) * ay) / L2
+        d = np.abs((px - x0) * ay - (py - y0) * ax) / math.sqrt(L2)
+        tc = np.clip(t, 0, 1)
+        w = w0 * 0.5 * (1 - tc) ** 0.55 * (0.75 + 0.5 * np.sin(math.pi * np.clip(tc * 1.3, 0, 1))) * _smooth01((t + 0.1) / 0.25)
+        q = np.where(w > 0.3, d / np.maximum(w, 1e-6), 9.0)
+        a = np.clip(1 - q * q, 0, 1) * _smooth01((1 - t) / 0.3)
+        hot = np.clip(1 - q * 1.2 - t * 0.7, 0, 1)[..., None]
+        col = (np.array([1.0, 0.30, 0.05]) * (1 - hot) + np.array([1.0, 0.70, 0.28]) * hot) * 3.0
+        vis = (depth <= 0) | (depth > dist - 15.0)
+        img += col * (a * vis)[..., None]
+    return img
 
 
 def standin_settings(view):
@@ -824,6 +863,9 @@ def render_standin_frame(frame, width=None, height=None, intensity=None, kelvin=
             vis[ci] = (th_ >= dist[ci] - 1.0).astype(np.float64)
         light = light + fc[None, :] * (nf * vis / ((dist * 0.01) ** 2 + 0.09))[:, None]
     rgb = np.where(hit[:, None], alb * light, sky[None, :])
+    F = STANDIN_VIEWS.get(view, {}).get('fire')
+    if F and F.get('tongues'):        # the still stand-in flames (glow only: not in the utility pass, so they hold nothing out)
+        rgb = rgb + flame_image(W, H, flame_tongues(cam, W, H, F['tongues']), np.where(hit, t, 0.0).reshape(H, W)).reshape(-1, 3)
     depth = np.where(hit, t, 0.0)
     f32 = lambda a: a.reshape(H, W).astype(np.float32)
     util = {'pos.R': f32(P[:, 0]), 'pos.G': f32(P[:, 1]), 'pos.B': f32(P[:, 2]),
@@ -2933,33 +2975,35 @@ _KNOBS = [
     ('Light', 'shadow_soft', 'float', 'Shadow edge softness (cm)', (0, 20)),
     ('Light', 'interior', 'bool', 'Interior: light only through openings', 'Utility pass shadows only: the pass only shows what the camera saw, so light comes in only where the camera saw sky (a window).'),
     ('Light', None, 'text', 'A directional key light. Azimuth 0 = light travelling toward +X, 90 = toward +Z.', None),
-    ('Lens', 'focal', 'float', 'Focal length (mm, 0 = header)', (0, 200)),
-    ('Lens', 'film', 'float', 'Film back width (mm, 0 = header)', (0, 60)),
-    ('Lens', 'fstop', 'float', 'f-stop (0 = header)', (0, 22)),
-    ('Lens', 'focus', 'float', 'Focus distance (scene units, 0 = header)', (0, 5000)),
-    ('Lens', 'dof', 'bool', 'Defocus', 'Depth of field everywhere: the viewer and the render (farm).'),
-    ('Lens', 'dof_view', 'bool', 'Defocus in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Defocus.'),
-    ('Lens', 'blades', 'int', 'Blade count (0 = header, < 3 round)', None),
-    ('Lens', 'cateye', 'float', 'Cat-eye bokeh (+ header)', (0, 1)),
-    ('Lens', 'anamorphic', 'float', 'Anamorphic aspect (+ header)', (-0.5, 1.5)),
-    ('Lens', 'field_curv', 'float', 'Field curvature (+ header)', (-0.5, 0.5)),
-    ('Lens', 'fstop_full', 'float', 'f-stop full aperture (0 = header)', (0, 8)),
-    ('Lens', 'front_mult', 'float', 'Front multiplier', (0, 5)),
-    ('Lens', 'back_mult', 'float', 'Back multiplier', (0, 5)),
-    ('Lens', 'max_bokeh', 'float', 'Largest bokeh radius (px)', (10, 300)),
-    ('Lens', 'bokeh_image', 'file', 'Custom bokeh shape', 'An image of the aperture (EXR or PNG), white = open. It spans the bokeh\'s diameter and replaces the blades.'),
-    ('Lens', 'bokeh_rot', 'float', 'Bokeh rotation', (-180, 180)),
-    ('Lens', 'bokeh_falloff', 'float', 'Bokeh centre / rim brightness', (-1, 1)),
-    ('Lens', None, 'text', 'Like the studio BokehBlur: blades, cat-eye, anamorphic aspect, field curvature and full aperture come from '
+    ('Camera', None, 'divider', 'Depth of field and motion blur', None),
+    ('Camera', 'dof', 'bool', 'Defocus', 'Depth of field everywhere: the viewer and the render (farm).'),
+    ('Camera', 'dof_view', 'bool', 'Defocus in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Defocus.'),
+    ('Camera', 'mb', 'bool', 'Motion blur', 'Motion blur everywhere: the viewer and the render (farm).'),
+    ('Camera', 'mb_view', 'bool', 'Motion blur in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Motion blur.'),
+    ('Camera', None, 'divider', 'Lens', None),
+    ('Camera', 'focal', 'float', 'Focal length (mm, 0 = header)', (0, 200)),
+    ('Camera', 'film', 'float', 'Film back width (mm, 0 = header)', (0, 60)),
+    ('Camera', 'fstop', 'float', 'f-stop (0 = header)', (0, 22)),
+    ('Camera', 'focus', 'float', 'Focus distance (scene units, 0 = header)', (0, 5000)),
+    ('Camera', 'blades', 'int', 'Blade count (0 = header, < 3 round)', None),
+    ('Camera', 'cateye', 'float', 'Cat-eye bokeh (+ header)', (0, 1)),
+    ('Camera', 'anamorphic', 'float', 'Anamorphic aspect (+ header)', (-0.5, 1.5)),
+    ('Camera', 'field_curv', 'float', 'Field curvature (+ header)', (-0.5, 0.5)),
+    ('Camera', 'fstop_full', 'float', 'f-stop full aperture (0 = header)', (0, 8)),
+    ('Camera', 'front_mult', 'float', 'Front multiplier', (0, 5)),
+    ('Camera', 'back_mult', 'float', 'Back multiplier', (0, 5)),
+    ('Camera', 'max_bokeh', 'float', 'Largest bokeh radius (px)', (10, 300)),
+    ('Camera', 'bokeh_image', 'file', 'Custom bokeh shape', 'An image of the aperture (EXR or PNG), white = open. It spans the bokeh\'s diameter and replaces the blades.'),
+    ('Camera', 'bokeh_rot', 'float', 'Bokeh rotation', (-180, 180)),
+    ('Camera', 'bokeh_falloff', 'float', 'Bokeh centre / rim brightness', (-1, 1)),
+    ('Camera', None, 'text', 'Like the studio BokehBlur: blades, cat-eye, anamorphic aspect, field curvature and full aperture come from '
                            'the camera metadata when it has them, and these knobs are added on top. Cat-eye turns bokeh toward the frame edges into '
                            'lemon shapes, less so as you stop down from full aperture. Front / back scale the blur in front of / behind focus. '
                            'Bokeh are round and evenly bright by default, like the studio renders.', None),
-    ('Lens', None, 'divider', 'Motion blur', None),
-    ('Lens', 'shutter', 'float', 'Shutter angle', (0, 360)),
-    ('Lens', 'shutter_mode', 'enum', 'Shutter', ['centred', 'backward', 'forward']),
-    ('Lens', 'shutter_shape', 'enum', 'Shutter shape', ['backwardsShape', 'box']),
-    ('Lens', 'mb', 'bool', 'Motion blur', 'Motion blur everywhere: the viewer and the render (farm).'),
-    ('Lens', 'mb_view', 'bool', 'Motion blur in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Motion blur.'),
+    ('Camera', None, 'divider', 'Shutter', None),
+    ('Camera', 'shutter', 'float', 'Shutter angle', (0, 360)),
+    ('Camera', 'shutter_mode', 'enum', 'Shutter', ['centred', 'backward', 'forward']),
+    ('Camera', 'shutter_shape', 'enum', 'Shutter shape', ['backwardsShape', 'box']),
     ('Embers', 'embers', 'bool', 'Embers', 'A second emitter, for fire: embers rise from an area you place and size to the fire, ride a buoyant plume, cool from yellow-orange to dull red, and pop in bursts.'),
     ('Embers', 'ember_pos', 'xyz', 'Emitter position', 'The base of the fire (scene units).'),
     ('Embers', 'ember_radius', 'float', 'Emitter radius', (1, 200)),

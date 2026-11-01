@@ -596,7 +596,7 @@ function fireAt(L, frame) {
   const F = L && L.fire; if (!F) return null;
   const t = typeof frame === 'number' ? (frame - (F.first || 1001)) / 24 : 0;
   const fl = Math.max(0.35, 1 + F.flick * (0.12 * Math.sin(t * 7.3) + 0.08 * Math.sin(t * 13.7 + 1.3) + 0.06 * Math.sin(t * 23.1 + 0.4)));
-  return { pos: F.pos, col: F.col.map(v => v * fl), fl, base: F.base, flameR: F.flameR, flameH: F.flameH, t };
+  return { pos: F.pos, col: F.col.map(v => v * fl), fl, tongues: F.tongues, t };
 }
 class MFPreview {
   constructor(gl) {

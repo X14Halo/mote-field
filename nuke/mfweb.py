@@ -104,7 +104,7 @@ def setup_standin(width=1280, view='wide'):
     F = mf.STANDIN_VIEWS[view].get('fire')
     if F:                                         # the campfire: its light (flickered per frame by the viewer) and flames
         plate_light['fire'] = dict(pos=list(F['pos']), col=list(mf.kelvin_rgb(F['k']) * F['gain']), flick=F['flick'], first=S['first'],
-                                   base=[0.0, 0.0, 0.0], flameR=0.285, flameH=0.85)
+                                   tongues=[[list(b), list(t), w] for b, t, w in F.get('tongues', ())])
     st = mf.standin_settings(view)
     st = {k2: (list(v) if isinstance(v, tuple) else v) for k2, v in st.items()}
     st['standin_json'] = folder + '/standin.json'
