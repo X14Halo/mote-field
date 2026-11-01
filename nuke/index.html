@@ -1030,6 +1030,7 @@ function drawHud() {
       t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (pvs.res && dim === '2d' ? ' · ' + pvs.res[0] + '×' + pvs.res[1] : '') + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
       if (!shot.standin && pv.frameTex.size < V.last - V.first + 1) t += '\n<span class="no">reading frames for holdouts: ' + pv.frameTex.size + ' / ' + (V.last - V.first + 1) + '</span>';
       if (pvs.lightNote) t += '\n<span class="no">' + pvs.lightNote + '</span>';
+      if (pvs.warmNote) t += '\n<span class="no">' + pvs.warmNote + '</span>';
       if (movers.busy) t += '\n<span class="no">' + movers.note + '</span>';
       else if (V.push && !moversReady(params())) t += '\n<span class="st">pushers on, but no moving things found yet: Motion &gt; Find moving things</span>';
     }
@@ -2027,6 +2028,32 @@ function uploadFinal(d) {
   vw.finalFor = d; vw.finalLayer = layer;
   return vw.finalTex;
 }
+// while nothing else is happening, light the shot's other frames in the background, a frame at a time, so playback
+// (a camera move especially) finds them ready instead of lighting each one as it goes
+let warmT = 0, warmLaterT = 0;
+function scheduleWarmLater() { clearTimeout(warmLaterT); warmLaterT = setTimeout(scheduleWarm, 1000); }
+function scheduleWarm(delay) {
+  clearTimeout(warmT);
+  warmT = setTimeout(() => {
+    if (playing || busy || dim !== '2d' || vw.free || !shot.standin || !look || !pv || !pv.boxes || !pv.init || !pv.cams || !vw.warmSize || !previewReady() || pvs.camsKey !== camsKeyNow()) { if (!playing) scheduleWarmLater(); return; }
+    const [WS, HS] = vw.warmSize, key = [WS, HS, vw.haze, pvs.camsKey].join('|');
+    const a = Math.round(V.first), b = Math.round(V.last);
+    for (let k = 0; k <= b - a; k++) {
+      const f = a + ((frame - a + k) % (b - a + 1));            // the frames after this one first
+      const hit = look.cache.get(pv.boxes.walker ? (vw.hold ? vw.holdFrame : f) + '@' + f : f);
+      const D = vw.warmDof, dofOk = (e) => !D || !D.defocusPlate || e.dof;
+      if (hit && hit.key === key && !hit.quick && dofOk(hit)) continue;
+      if (vw.hold) return;                                         // held: only the held frame is shown, nothing to warm
+      const e = look.standin(f, WS, HS, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01, { walker: f, key: pvs.camsKey });
+      if (D && e) { const c = pv.camAt(f), L = pv.lens(pparams(), c, D.W); L.maxR = Math.min(V.max_bokeh, 60);
+        look.platePrep({ W: D.W, H: D.H, plate: e.plate, dist: e.dist, cacheEntry: e, lens: L, skyMul: D.skyMul, defocusPlate: D.defocusPlate }); }
+      pvs.warmNote = 'lighting the stand-in ahead: ' + (k + 1) + ' / ' + (b - a + 1); drawHud();
+      scheduleWarm(20);
+      return;
+    }
+    if (pvs.warmNote) { pvs.warmNote = ''; drawHud(); }
+  }, delay === undefined ? 400 : delay);         // starts once you've stopped scrubbing / changing things
+}
 function paintPreview2d() {
   v3.raf = 0;
   const gl = v3.gl;
@@ -2047,13 +2074,16 @@ function paintPreview2d() {
     pvs.res = null;
     const W0 = Math.max(320, Math.min(2560, Math.round(Math.max(w, SW * 0.5) / 160) * 160)), H0 = Math.round(W0 * SH / SW);
     let plateTex = null, distTex = null, defocus = false, ent = null;
+    // the lit stand-in set: at most 1280 wide (it's lit by ray tracing and then lens-blurred, so it doesn't need more),
+    // so every frame of the shot can stay cached and a camera move plays as smoothly as a held camera
+    const WS = Math.min(W0, 1280), HS = Math.round(WS * SH / SW);
     const fast = vw.free && performance.now() - (vw.lastMove || 0) < 300;     // while flying around: cheaper bounce light and lens blur
     if (vw.free) {
       const fc = freeCamObj(W0, H0);
       p.focus = vw.freeFocus || p.focus;
       if (shot.standin && pv.boxes && pvs.plateLight) {
         pv.camOverride = fc;
-        ent = look.standin('free', W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01,
+        ent = look.standin('free', WS, HS, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01,
                            { key: [...fc.pos, ...fc.back, ...fc.up, fc.hfov].map(v => v.toFixed(4)).join(',') + (fast ? 'f' : ''), spp: fast ? 6 : 24, cut: true, walker: frame });
         vw.freeEnt = ent;
         plateTex = ent.plate; distTex = ent.dist; defocus = true;
@@ -2063,7 +2093,8 @@ function paintPreview2d() {
         pv.camOverride = fc;
       }
     } else if (shot.standin && pv.boxes && pvs.plateLight) {
-      ent = look.standin(cf, W0, H0, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01, { walker: frame, key: pvs.camsKey, quick: playing });
+      ent = look.standin(cf, WS, HS, pvs.plateLight, vw.haze, pv.init ? pv.init.su : 0.01, { walker: frame, key: pvs.camsKey, quick: playing });
+      vw.warmSize = [WS, HS];
       plateTex = ent.plate; distTex = ent.dist; defocus = true;      // a render comes with its own defocus; the stand-in gets the lens here
     } else { const fi = pv.frameTex.get(cf); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; defocus = !!fi.synthetic; ent = fi.synthetic ? fi : null; } }
     let dustSrc = null;
@@ -2085,6 +2116,8 @@ function paintPreview2d() {
                 rect: [x0 / cw * 2 - 1, 1 - yBot / ch * 2, x1 / cw * 2 - 1, 1 - yTop / ch * 2] });
     drawMovers(camProjector(cam, W0, H0, vw.rect));      // cam: the free camera when it's on (camOverride)
     vw.pick = { cam: Object.assign({}, cam), W0, H0, dist: distTex };
+    vw.warmDof = { W: W0, H: H0, lens: L, skyMul: vw.blackSky ? 0 : 1, defocusPlate: p.dof };
+    if (!playing && shot.standin && !vw.free) scheduleWarm();
   } catch (e) { console.error(e); pvs.err = e.message; black(); drawMovers(null); }
   pv.camOverride = null;
   const now = performance.now();
@@ -2119,7 +2152,7 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
   } catch (e) { bootFail(e.message); console.error(e.detail || e); }
 })();
 window.__mfdbg = { boxHandles, toScreen, get v3() { return v3; } };
-window.__mfweb = { get pv() { return pv; }, get pvs() { return pvs; }, get movers() { return movers; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
+window.__mfweb = { get look() { return look; }, get pv() { return pv; }, get pvs() { return pvs; }, get movers() { return movers; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
 </script>
 </body>
 </html>

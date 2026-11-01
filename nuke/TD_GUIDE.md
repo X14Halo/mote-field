@@ -243,7 +243,7 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Camera | `dof` | Defocus | True |
 | Camera | `dof_view` | Defocus in the viewer | True |
 | Camera | `mb` | Motion blur | True |
-| Camera | `mb_view` | Motion blur in the viewer | True |
+| Camera | `mb_view` | Motion blur in the viewer | False |
 | Camera | `focal` | Focal length (mm, 0 = header) | 0.0 |
 | Camera | `film` | Film back width (mm, 0 = header) | 0.0 |
 | Camera | `fstop` | f-stop (0 = header) | 0.0 |
@@ -320,6 +320,7 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **Browser Python vs desktop Python:** identical output, bit for bit.
 - **GPU preview vs Python render:** total light within 0.1-1% with every option tested, block correlation 0.97-1.0. The tests covered DOF, blades, cat-eye, anamorphic, custom bokeh, shutter shapes, utility-pass shadows, bounce light and soft shadows.
 - **Character pushers:** detection on the stand-in walker shot as in section 4. Given the same movers, the GPU and Python simulations put every mote in the same place (median difference 0.001 cm after 77 frames).
+- **Camera moves in the viewer:** each new view of the stand-in set has to be lit (ray-traced bounce light, haze, lens blur), which a held camera does once. The viewer lights the set at up to 1280 wide, keeps a whole shot of lit frames (720 MB), and while nothing else is happening lights the frames ahead in the background (*lighting the stand-in ahead* in the HUD), so a camera move plays from memory like a held camera. Frames reached during playback before that are lit with a quicker pass and refined when you stop. Viewport motion blur is off by default: on a camera move every mote smears across the frame, up to 16 samples each.
 - **Viewer speed switches** (top of the Camera tab, which was called Lens): *Defocus in the viewer* and *Motion blur in the viewer* turn those off in the live viewer only; *Defocus* and *Motion blur* turn them off everywhere, the render (farm) included. The GPU render-to-cache writes what the node renders, so it ignores the viewer switches.
 - **Holdouts:** the **held out (red)** layer in the viewer shows what they remove. In the wide stand-in only about 2% of the dust is behind anything, so switching holdouts off changes little there; the walker shot shows them clearly.
 - **Live viewer:** tested in headless Chromium against the native server, including loading a utility pass from a disk path and the GPU render-to-cache.

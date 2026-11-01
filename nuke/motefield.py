@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.6.1'
+__version__ = '0.6.2'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -921,7 +921,7 @@ DEFAULTS = dict(
     # key light: a directional light
     light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, light_rgb=(1.0, 1.0, 1.0), bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
     # lens (0 = use the camera from the utility pass headers)
-    focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, dof_view=True, mb_view=True, blades=0, max_bokeh=110.0,
+    focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, dof_view=True, mb_view=False, blades=0, max_bokeh=110.0,
     cateye=0.0, anamorphic=0.0, field_curv=0.0, fstop_full=0.0, front_mult=1.0, back_mult=1.0,
     bokeh_image='', bokeh_rot=0.0, bokeh_falloff=0.0,
     # shutter: as on the studio cameras (180 degrees, backward, backwardsShape)
@@ -2979,7 +2979,7 @@ _KNOBS = [
     ('Camera', 'dof', 'bool', 'Defocus', 'Depth of field everywhere: the viewer and the render (farm).'),
     ('Camera', 'dof_view', 'bool', 'Defocus in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Defocus.'),
     ('Camera', 'mb', 'bool', 'Motion blur', 'Motion blur everywhere: the viewer and the render (farm).'),
-    ('Camera', 'mb_view', 'bool', 'Motion blur in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Motion blur.'),
+    ('Camera', 'mb_view', 'bool', 'Motion blur in the viewer', 'Viewer only, off by default: on a camera move every mote smears across the frame, which is the slowest thing the viewer draws. The render keeps Motion blur.'),
     ('Camera', None, 'divider', 'Lens', None),
     ('Camera', 'focal', 'float', 'Focal length (mm, 0 = header)', (0, 200)),
     ('Camera', 'film', 'float', 'Film back width (mm, 0 = header)', (0, 60)),

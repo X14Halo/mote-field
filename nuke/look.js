@@ -283,22 +283,23 @@ class MFLook {
     this.pComb = P(VS_FULL, LK_COMBINE); this.pDof = P(VS_FULL, LK_PDOF); this.pComp = P(VS_FULL, LK_COMP);
     this.pDown = P(VS_FULL, LK_DOWN); this.pUp = P(VS_FULL, LK_UP); this.pFinal = P(VS_QUAD, LK_FINAL);
     this.cache = new Map();             // frame -> {plate, dist, bytes, key}: the lit stand-in, kept so playback is free
-    this.budget = 420 * 1024 * 1024;
+    this.budget = 720 * 1024 * 1024;     // a whole shot of lit frames (the set is lit at up to 1280 wide)
     this.scratch = null;
   }
   _lin(t) { const gl = this.pv.gl; gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); return t; }
   _half(w, h) { const gl = this.pv.gl; return this._lin(this.pv._tex(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, null)); }
-  _scratch(W, H) {
-    const pv = this.pv, gl = pv.gl;
-    if (this.scratch && this.scratch.w === W && this.scratch.h === H) return this.scratch;
-    if (this.scratch) for (const k in this.scratch) if (this.scratch[k] && this.scratch[k].w) pv._free(this.scratch[k]);
-    for (const t of (this.scratch && this.scratch.bloom) || []) pv._free(t.d, t.u);
+  _scratch(W, H, which) {          // which: 'L' for lighting the set (its own size), else the view
+    const pv = this.pv, gl = pv.gl, name = 'scratch' + (which || '');
+    const old = this[name];
+    if (old && old.w === W && old.h === H) return old;
+    if (old) for (const k in old) if (old[k] && old[k].w) pv._free(old[k]);
+    for (const t of (old && old.bloom) || []) pv._free(t.d, t.u);
     const hw = Math.max(1, W >> 1), hh = Math.max(1, H >> 1), f32 = () => pv._tex(W, H, gl.RGBA32F, gl.RGBA, gl.FLOAT, null);
     const s = { w: W, h: H, direct: this._half(W, H), nrm: f32(), alb: this._half(W, H), gi: this._half(hw, hh), gi2: this._half(hw, hh),
                 haze: this._half(hw, hh), dof: this._half(W, H), hdr: this._half(W, H), bloom: [] };
     let bw = W, bh = H;
     for (let i = 0; i < 6; i++) { bw = Math.max(1, bw >> 1); bh = Math.max(1, bh >> 1); s.bloom.push({ w: bw, h: bh, d: this._half(bw, bh), u: this._half(bw, bh) }); }
-    return (this.scratch = s);
+    return (this[name] = s);
   }
   clear() { for (const e of this.cache.values()) this.pv._free(e.plate, e.dist, e.dof); this.cache.clear(); }
   _camU(prog, c, W, H) {
@@ -325,7 +326,7 @@ class MFLook {
     // while playing (opt.quick), a frame lit at playback quality will do; when stopped, it's lit again at full quality
     if (hit && hit.key === key && (!hit.quick || opt.quick)) { this.cache.delete(ck); this.cache.set(ck, hit); return hit; }
     if (hit) { this.pv._free(hit.plate, hit.dist, hit.dof); this.cache.delete(ck); }
-    const pv = this.pv, gl = pv.gl, s = this._scratch(W, H), c = pv.camAt(frame);
+    const pv = this.pv, gl = pv.gl, s = this._scratch(W, H, 'L'), c = pv.camAt(frame);
     if (wf !== null) pv.walkerTo(wf);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST); gl.bindVertexArray(pv.vao);
     const plate = this._half(W, H), dist = pv._tex(W, H, gl.R32F, gl.RED, gl.FLOAT, null);
@@ -347,7 +348,7 @@ class MFLook {
     pv._bind(p, 0, 'uDirect', s.direct); pv._bind(p, 1, 'uNrm', s.nrm); pv._bind(p, 2, 'uAlb', s.alb); pv._bind(p, 3, 'uGI', src); pv._bind(p, 4, 'uHazeT', s.haze);
     gl.uniform2f(p.u.uFull, W, H); gl.uniform1f(p.u.uGIAmt, 1.0);
     pv._target([plate], W, H); gl.drawArrays(gl.TRIANGLES, 0, 3);
-    const e = { plate, dist, key, bytes: W * H * 28, quick: !!opt.quick };
+    const e = { plate, dist, key, bytes: W * H * 20, quick: !!opt.quick };
     this.cache.set(ck, e);
     let total = 0; for (const v of this.cache.values()) total += v.bytes;
     for (const [f, v] of this.cache) { if (total <= this.budget || v === e) break; pv._free(v.plate, v.dist, v.dof); this.cache.delete(f); total -= v.bytes; }
@@ -355,32 +356,41 @@ class MFLook {
   }
   // everything to the screen. o: {plate, dist, defocusPlate, lens:{focal, film, fstop, focusM, su, front, back, dof, maxR}, dust:{tex, flip},
   //   view, set, skyMul, gain, glow, look, rect, W, H}
+  // the set with its lens blur (kept with the cached frame); o: {W, H, plate, dist, cacheEntry, defocusPlate, lens, skyMul, fast}
+  platePrep(o, s) {
+    const pv = this.pv, gl = pv.gl, W = o.W, H = o.H;
+    s = s || this._scratch(W, H);
+    let plate = o.plate;
+    if (plate && (o.defocusPlate || o.skyMul !== 1)) {
+        const L = o.lens, ent = o.cacheEntry;
+        // the cached stand-in is blurred at its own resolution (it's soft anyway), so a whole shot fits in memory
+        const PW = ent ? o.plate.w : W, PH = ent ? o.plate.h : H;
+        const dk = [PW, PH, L.focal, L.film, L.fstop, L.focusM, L.front, L.back, L.dof, L.maxR, o.skyMul, o.defocusPlate, !!o.fast].join('|');
+        if (ent && ent.dof && ent.dofKey === dk) plate = ent.dof;
+        else {
+          // the lens blur of the set: 4 passes of 96 samples, averaged (additively), so it comes out smooth; kept per frame
+          const out = ent ? (ent.dof || (ent.dof = this._half(PW, PH))) : s.dof;
+          const p = this.pDof; gl.useProgram(p);
+          pv._bind(p, 0, 'uPlate', o.plate); pv._bind(p, 1, 'uDist', o.dist || pv.dummy);
+          gl.uniform2f(p.u.uWH, PW, PH); gl.uniform1f(p.u.uFocal, L.focal); gl.uniform1f(p.u.uFilm, L.film); gl.uniform1f(p.u.uFstop, L.fstop);
+          gl.uniform1f(p.u.uFocusM, L.focusM); gl.uniform1f(p.u.uSu, L.su); gl.uniform1f(p.u.uMaxR, o.defocusPlate ? L.maxR * PW / W : 0);
+          gl.uniform1f(p.u.uFront, L.front); gl.uniform1f(p.u.uBack, L.back); gl.uniform1i(p.u.uDof, L.dof ? 1 : 0); gl.uniform1f(p.u.uSkyMul, o.dist ? o.skyMul : 1);
+          const passes = o.defocusPlate && L.dof ? (o.fast ? 1 : 4) : 1;
+          gl.uniform1i(p.u.uN, 96);
+          pv._target([out], PW, PH); gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
+          gl.enable(gl.BLEND); gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE); gl.blendColor(0, 0, 0, 1 / passes);
+          for (let k = 0; k < passes; k++) { gl.uniform1f(p.u.uRot, k * 1.618); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+          gl.disable(gl.BLEND);
+          if (ent) ent.dofKey = dk;
+          plate = out;
+        }
+      }
+    return plate;
+  }
   show(o) {
     const pv = this.pv, gl = pv.gl, W = o.W, H = o.H, s = this._scratch(W, H);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST); gl.bindVertexArray(pv.vao);
-    let plate = o.plate;
-    if (plate && (o.defocusPlate || o.skyMul !== 1)) {
-      const L = o.lens, ent = o.cacheEntry;
-      const dk = [W, H, L.focal, L.film, L.fstop, L.focusM, L.front, L.back, L.dof, L.maxR, o.skyMul, o.defocusPlate].join('|');
-      if (ent && ent.dof && ent.dofKey === dk) plate = ent.dof;
-      else {
-        // the lens blur of the set: 4 passes of 96 samples, averaged (additively), so it comes out smooth; kept per frame
-        const out = ent ? (ent.dof || (ent.dof = this._half(W, H))) : s.dof;
-        const p = this.pDof; gl.useProgram(p);
-        pv._bind(p, 0, 'uPlate', o.plate); pv._bind(p, 1, 'uDist', o.dist || pv.dummy);
-        gl.uniform2f(p.u.uWH, W, H); gl.uniform1f(p.u.uFocal, L.focal); gl.uniform1f(p.u.uFilm, L.film); gl.uniform1f(p.u.uFstop, L.fstop);
-        gl.uniform1f(p.u.uFocusM, L.focusM); gl.uniform1f(p.u.uSu, L.su); gl.uniform1f(p.u.uMaxR, o.defocusPlate ? L.maxR : 0);
-        gl.uniform1f(p.u.uFront, L.front); gl.uniform1f(p.u.uBack, L.back); gl.uniform1i(p.u.uDof, L.dof ? 1 : 0); gl.uniform1f(p.u.uSkyMul, o.dist ? o.skyMul : 1);
-        const passes = o.defocusPlate && L.dof ? (o.fast ? 1 : 4) : 1;
-        gl.uniform1i(p.u.uN, 96);
-        pv._target([out], W, H); gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
-        gl.enable(gl.BLEND); gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE); gl.blendColor(0, 0, 0, 1 / passes);
-        for (let k = 0; k < passes; k++) { gl.uniform1f(p.u.uRot, k * 1.618); gl.drawArrays(gl.TRIANGLES, 0, 3); }
-        gl.disable(gl.BLEND);
-        if (ent) ent.dofKey = dk;
-        plate = out;
-      }
-    }
+    const plate = this.platePrep(o, s);
     // the campfire's still flames: its tongues on screen (motefield.flame_tongues)
     const F = o.fire, tg = [], tw = [];
     if (F && F.tongues && o.cam && o.view !== 'dust') {
