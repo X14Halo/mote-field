@@ -133,6 +133,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
 .btn:disabled{opacity:.45;cursor:default}
 .btn.go{border-color:#7a4a10;background:linear-gradient(#6a4a26,#553a1c)}
 .btn.go:hover{background:linear-gradient(#7a5630,#634420)}
+.btn.final{border-color:#c8a24a;background:linear-gradient(#c8a24a,#a8842e);color:#111;font-weight:600}
 .btns-row{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 6px 180px}
 .div{display:flex;align-items:center;gap:8px;margin:14px 0 6px;color:#e0e0e0;font-weight:600}
 .div::after{content:"";flex:1;height:1px;background:#4a4a4a}
@@ -183,6 +184,7 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
       <div class="seg" id="camSeg" title="Shot camera: the shot as it will be. Free camera: fly around the set with the same dust, lens and look (C toggles)">
         <button data-c="shot" class="on">Shot cam</button><button data-c="free">Free cam</button>
       </div>
+      <button class="btn" id="finalBtn" title="Final output: the dust and embers as the farm renders them: full shot resolution, motion blur and defocus as set on the Camera tab (the viewer-only switches are ignored), through the shot camera. Each frame is rendered once and kept; press play to render the whole shot, then it plays from memory. (Save this frame writes the exact Python EXR.)">Final output</button>
       <div class="seg" id="viewSeg" title="What the viewer shows">
         <button data-v="comp" class="on">Comp</button><button data-v="dust">Dust</button><button data-v="plate">Plate</button>
       </div>
@@ -1022,15 +1024,18 @@ function draw() {
 }
 function drawHud() {
   if (quality === 'preview' && typeof pvs !== 'undefined') {
-    let t = '<b>' + frame + '</b>  <span class="ok">live</span>' + (vw.free && dim === '2d' ? '  <span class="st">free camera · focus ' + Math.round(vw.freeFocus || 0) + '</span>' : '') + (vw.hold ? '  <span class="st">camera held on ' + vw.holdFrame + '</span>' : '');
+    let t = '<b>' + frame + '</b>  ' + (fo.on ? '<span class="st">FINAL OUTPUT</span>' : '<span class="ok">live</span>') + (vw.free && dim === '2d' ? '  <span class="st">free camera · focus ' + Math.round(vw.freeFocus || 0) + '</span>' : '') + (vw.hold ? '  <span class="st">camera held on ' + vw.holdFrame + '</span>' : '');
     if (!pv || !pv.ok) t += '\n<span class="st">GPU preview unavailable: use Final</span>';
     else if (pvs.err) t += '\n<span class="st">' + pvs.err.replace(/</g, '&lt;') + '</span>';
     else if (!previewReady()) t += '\n<span class="no">' + (pvs.lightNote || 'preparing…') + '</span>';
     else {
-      t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (pvs.res && dim === '2d' ? ' · ' + pvs.res[0] + '×' + pvs.res[1] : '') + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
+      t += '\n' + pvs.n.toLocaleString() + ' motes in the box' + (pvs.res && dim === '2d' && !fo.on ? ' · ' + pvs.res[0] + '×' + pvs.res[1] : '') + (playing && pvs.fps ? ' · ' + pvs.fps.toFixed(0) + ' fps' : '');
       if (!shot.standin && pv.frameTex.size < V.last - V.first + 1) t += '\n<span class="no">reading frames for holdouts: ' + pv.frameTex.size + ' / ' + (V.last - V.first + 1) + '</span>';
       if (pvs.lightNote) t += '\n<span class="no">' + pvs.lightNote + '</span>';
-      if (pvs.warmNote) t += '\n<span class="no">' + pvs.warmNote + '</span>';
+      if (pvs.warmNote && !fo.on) t += '\n<span class="no">' + pvs.warmNote + '</span>';
+      if (fo.on) { const [fw, fh] = foSize(), pf = foParams(), n = Math.round(V.last) - Math.round(V.first) + 1;
+        t += '\n<span class="st">' + fw + '×' + fh + ' · motion blur ' + (pf.mb ? 'on' : 'off') + ' · defocus ' + (pf.dof ? 'on' : 'off') + ' (as the farm) · ' +
+             fo.cache.size + ' / ' + n + ' frames kept' + (fo.evicted ? ' (not enough memory for all: lower Resolution)' : '') + '</span>'; }
       if (movers.busy) t += '\n<span class="no">' + movers.note + '</span>';
       else if (V.push && !moversReady(params())) t += '\n<span class="st">pushers on, but no moving things found yet: Motion &gt; Find moving things</span>';
     }
@@ -1123,6 +1128,12 @@ async function play() {
     if (!playing) return;
     setStatus('Rendering frames ' + a + '–' + b + ' for playback (first pass only)…');
     const ok = await renderRange(true);
+    if (!playing) return;
+    if (!ok) { stop(); return; }
+    setFrame(a, false);
+  }
+  if (fo.on) {
+    const ok = await foCacheAll();
     if (!playing) return;
     if (!ok) { stop(); return; }
     setFrame(a, false);
@@ -1935,6 +1946,7 @@ for (const b of $('qualSeg').children) b.onclick = () => setQuality(b.dataset.q)
   $('viewBtn').onclick = (e) => { e.stopPropagation(); $('viewPop').hidden = !$('viewPop').hidden; };
   document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.popwrap')) $('viewPop').hidden = true; });
   $('holdCam').onchange = () => {
+    if ($('holdCam').checked && fo.on) setFinal(false);
     vw.hold = $('holdCam').checked; vw.holdFrame = frame; setKnob('hold_frame', vw.hold ? frame : 0);
     if (vw.hold && v3.lock) v3.lock = true;
     setStatus(vw.hold ? 'Camera held on frame ' + frame + ': play to watch the dust move with the camera still.' : 'Camera follows the shot again.');
@@ -1947,6 +1959,7 @@ let look = null;
 function camFrame() { return vw.hold ? vw.holdFrame : frame; }
 // ---- free camera: the 3D view's camera, drawn with the full look (lit set, dust, the shot's lens) ----
 function setFreeCam(on) {
+  if (on && fo.on) setFinal(false);          // Final output is through the shot camera
   vw.free = on;
   [...$('camSeg').children].forEach(b => b.classList.toggle('on', b.dataset.c === (on ? 'free' : 'shot')));
   if (on) {
@@ -2054,6 +2067,65 @@ function scheduleWarm(delay) {
     if (pvs.warmNote) { pvs.warmNote = ''; drawHud(); }
   }, delay === undefined ? 400 : delay);         // starts once you've stopped scrubbing / changing things
 }
+// ---- Final output: the farm's dust / embers (full res, the node's motion blur and defocus), one render per frame, kept --------
+const fo = { on: false, key: '', cache: new Map(), bytes: 0, budget: 1536 * 1024 * 1024, prevView: 'comp', evicted: false };
+function foParams() {             // what the node renders: viewer-only switches ignored, nothing held
+  const p = pparams(true); p.hold_frame = 0; return p;
+}
+function foKey() {
+  const p = params(); for (const k of ['cache', 'hold_frame', 'dof_view', 'mb_view', 'show_movers']) delete p[k];
+  return JSON.stringify([p, pvs.camsKey, pvs.size, layer === 'heldout' ? 'both' : layer, movers.applied || '', shot.plate]);
+}
+function foClear() { for (const e of fo.cache.values()) pv._free(e.held, e.free); fo.cache.clear(); fo.bytes = 0; fo.evicted = false; }
+function foSize() { const [SW, SH] = pvs.size, sc = Math.max(Math.min(Number(V.proxy) || 1, 1), 0.1); return [Math.max(Math.round(SW * sc), 8), Math.max(Math.round(SH * sc), 8)]; }
+function foRender(f) {            // render frame f the farm's way and keep it
+  const p = foParams(), [SW, SH] = pvs.size;
+  let dist = null;
+  if (shot.standin && pv.boxes && pvs.plateLight) { pv.standinPlate(f, SW, SH, pvs.plateLight, f); dist = pv.pl.dist; }
+  else { const fi = pv.frameTex.get(f); dist = fi ? fi.dist : null; }
+  pv.simTo(f, p, simStepKey(p));
+  const r = pv.renderDust(f, p, SW, SH, dist, 0, true);
+  const need = layer === 'heldout' ? ['held', 'free'] : [layer === 'noholdout' ? 'free' : 'held'];
+  const e = { w: r.W, h: r.H, bytes: r.W * r.H * 8 * need.length };
+  for (const k of need) e[k] = pv.copyHalf(pv.acc[k], r.W, r.H);
+  fo.cache.set(f, e); fo.bytes += e.bytes;
+  for (const [g, v] of fo.cache) { if (fo.bytes <= fo.budget || v === e) break; pv._free(v.held, v.free); fo.cache.delete(g); fo.bytes -= v.bytes; fo.evicted = true; }
+  return e;
+}
+function setFinal(on) {
+  if (on && (!pv || !pv.ok)) return;
+  fo.on = on; $('finalBtn').classList.toggle('final', on);
+  if (on) {
+    if (vw.free) setFreeCam(false);
+    if (vw.hold) { vw.hold = false; $('holdCam').checked = false; setKnob('hold_frame', 0); }
+    fo.prevView = view;
+    const b = [...$('viewSeg').children].find(x => x.dataset.v === 'dust'); if (b) b.click();     // the dust / embers alone
+    setStatus('Final output: rendered as on the farm, frame by frame, and kept. Press play to render the whole shot; then it plays from memory.');
+  } else {
+    const b = [...$('viewSeg').children].find(x => x.dataset.v === fo.prevView); if (b) b.click();
+  }
+  v3dirty(); drawHud();
+}
+$('finalBtn').onclick = () => setFinal(!fo.on);
+async function foCacheAll() {     // play in Final output: render the frames it doesn't have, then play from memory
+  const a = Math.round(V.first), b = Math.round(V.last), n = b - a + 1;
+  if (fo.key !== foKey()) { foClear(); fo.key = foKey(); }
+  const todo = []; for (let f = a; f <= b; f++) if (!fo.cache.has(f)) todo.push(f);
+  if (!todo.length) return true;
+  cancelRange = false; const t0 = performance.now();
+  try {
+    for (let i = 0; i < todo.length; i++) {
+      if (cancelRange || !fo.on) return false;
+      const f = todo[i];
+      if (!shot.standin && !pv.frameTex.has(f)) pv.setFrameImages(f, await call('fimages', { p: params(), frame: f, pattern: shot.plate }));
+      const per = i ? (performance.now() - t0) / i / 1000 : 0;
+      setBusy(true, 'Final output: rendering frame ' + f + ' (' + (n - todo.length + i + 1) + ' of ' + n + ')' + (per ? ', about ' + Math.ceil(per * (todo.length - i)) + ' s left' : ''), (n - todo.length + i) / n, true);
+      foRender(f); frame = f; $('frameIn').value = f; drawTrack(); paintPreview2d();
+      await new Promise(r => requestAnimationFrame(r));
+    }
+  } finally { setBusy(false); cancelRange = false; }
+  return true;
+}
 function paintPreview2d() {
   v3.raf = 0;
   const gl = v3.gl;
@@ -2078,7 +2150,7 @@ function paintPreview2d() {
     // so every frame of the shot can stay cached and a camera move plays as smoothly as a held camera
     const WS = Math.min(W0, 1280), HS = Math.round(WS * SH / SW);
     const fast = vw.free && performance.now() - (vw.lastMove || 0) < 300;     // while flying around: cheaper bounce light and lens blur
-    if (vw.free) {
+    if (fo.on && view === 'dust') { /* Final output, dust alone: no set to light */ } else if (vw.free) {
       const fc = freeCamObj(W0, H0);
       p.focus = vw.freeFocus || p.focus;
       if (shot.standin && pv.boxes && pvs.plateLight) {
@@ -2098,7 +2170,12 @@ function paintPreview2d() {
       plateTex = ent.plate; distTex = ent.dist; defocus = true;      // a render comes with its own defocus; the stand-in gets the lens here
     } else { const fi = pv.frameTex.get(cf); if (fi) { distTex = fi.dist; plateTex = fi.plate || null; defocus = !!fi.synthetic; ent = fi.synthetic ? fi : null; } }
     let dustSrc = null;
-    if (quality === 'preview' && previewReady()) {
+    if (fo.on && previewReady() && !vw.free) {
+      if (fo.key !== foKey()) { foClear(); fo.key = foKey(); }
+      const e = fo.cache.get(frame) || foRender(frame);
+      fo.cache.delete(frame); fo.cache.set(frame, e);            // most recently used last
+      dustSrc = { tex: layer === 'noholdout' ? e.free : e.held, flip: 1, free: layer === 'heldout' ? e.free : null };
+    } else if (quality === 'preview' && previewReady()) {
       pv.simTo(frame, p, simStepKey(p));
       pv.renderDust(frame, p, W0, H0, distTex, vw.hold ? cf : 0);
       dustSrc = { tex: layer === 'noholdout' ? pv.acc.free : pv.acc.held, flip: 1, free: layer === 'heldout' ? pv.acc.free : null };
@@ -2152,7 +2229,7 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
   } catch (e) { bootFail(e.message); console.error(e.detail || e); }
 })();
 window.__mfdbg = { boxHandles, toScreen, get v3() { return v3; } };
-window.__mfweb = { get look() { return look; }, get pv() { return pv; }, get pvs() { return pvs; }, get movers() { return movers; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
+window.__fo = fo; window.__mfweb = { get look() { return look; }, get pv() { return pv; }, get pvs() { return pvs; }, get movers() { return movers; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
 </script>
 </body>
 </html>

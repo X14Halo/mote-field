@@ -606,7 +606,7 @@ class MFPreview {
     if (!this.ok) return;
     const P = (vs, fs) => this._prog(vs, fs);
     this.pVis = P(VS_FULL, FS_VIS); this.pStep = P(VS_FULL, FS_STEP); this.pPrep = P(VS_FULL, FS_PREP);
-    this.pSplat = P(VS_SPLAT, FS_SPLAT); this.pSplatE = P(vsSplat(48), FS_SPLAT); this.pEStep = P(VS_FULL, FS_ESTEP); this.pEPrep = P(VS_FULL, FS_EPREP); this.pPlate = P(VS_FULL, FS_PLATE); this.pComp = P(VS_QUAD, FS_COMP);
+    this.pSplat = P(VS_SPLAT, FS_SPLAT); this.pSplatE = P(vsSplat(48), FS_SPLAT); this.pSplatF = null; this.pEStep = P(VS_FULL, FS_ESTEP); this.pEPrep = P(VS_FULL, FS_EPREP); this.pPlate = P(VS_FULL, FS_PLATE); this.pComp = P(VS_QUAD, FS_COMP);
     this.p3d = P(VS_MOTES3D, FS_MOTES3D); this.pCopy = P(VS_FULL, FS_COPY);
     this.vao = gl.createVertexArray();
     this.fb = gl.createFramebuffer();
@@ -989,7 +989,8 @@ class MFPreview {
              aspect: Math.max((ex.anamorphic || 1) + p.anamorphic, 0.05), fc: (ex.fieldcurv || 0) + p.field_curv,
              front: p.front_mult, back: p.back_mult, dof: !!p.dof, maxR: p.max_bokeh };
   }
-  renderDust(frame, p, W0, H0, distTex, hold) {
+  // final: every sample along each streak, as the farm render does (up to 24 x the fibre spread; the viewer draws 16)
+  renderDust(frame, p, W0, H0, distTex, hold, final) {
     const gl = this.gl, I = this.init, S = this.sim;
     const sc = Math.max(Math.min(p.proxy, 1), 0.1), W = Math.max(Math.round(W0 * sc), 8), H = Math.max(Math.round(H0 * sc), 8);
     this._ensureTargets(W, H);
@@ -1034,7 +1035,9 @@ class MFPreview {
     gl.uniform1i(u.uHold, p.holdout && distTex ? 1 : 0); gl.uniform1i(u.uFg, p.fg_fade ? 1 : 0); gl.uniform1f(u.uFgNear, p.fg_near); gl.uniform1f(u.uFgFar, p.fg_far);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     // splat
-    prog = this.pSplat;
+    if (final && !this.pSplatF) this.pSplatF = this._prog(vsSplat(48), FS_SPLAT);
+    const NSd = final ? 48 : MF_NS;
+    prog = final ? this.pSplatF : this.pSplat;
     gl.useProgram(prog); gl.bindVertexArray(this.vao);
     this._target([this.acc.held, this.acc.free], W, H);
     gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
@@ -1046,7 +1049,7 @@ class MFPreview {
     gl.uniform1f(prog.u.uAspect, aspect); gl.uniform1f(prog.u.uCat, catAmt); gl.uniform1i(prog.u.uShape, shape);
     this._bind(prog, 4, 'uShapeTex', this.shapeTex || this.dummy);
     gl.uniform1fv(prog.u.uApN, useImg ? this._apNormImage(p.bokeh_falloff) : this._apNorm(blades >= 3 ? blades : 0, p.bokeh_falloff, blades >= 3 ? 0.25 + rot : 0.25));
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, I.n * MF_NS);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, I.n * NSd);
     gl.disable(gl.BLEND);
     // embers: their own per-point maths (render_embers), then the same splat with more samples along their streaks
     const E = this.emb;
@@ -1082,6 +1085,14 @@ class MFPreview {
       gl.disable(gl.BLEND);
     }
     return { W, H, n: I.n };
+  }
+  // a half-float copy of a W x H float texture (Final output keeps one per frame)
+  copyHalf(src, W, H) {
+    const gl = this.gl, t = this._tex(W, H, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, null);
+    gl.disable(gl.BLEND); gl.useProgram(this.pCopy); gl.bindVertexArray(this.vao);
+    this._target([t], W, H); this._bind(this.pCopy, 0, 'uSrc', src);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    return t;
   }
   // viewer: draw into the default framebuffer, image placed at rect (clip space)
   composite(rect, opts, plateTex) {
