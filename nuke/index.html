@@ -220,6 +220,8 @@ input.txt{flex:1;min-width:0;background:var(--field);border:1px solid var(--fiel
           <label title="Show the sky (where the utility pass sees nothing, e.g. through the window) as black"><input type="checkbox" id="vSky"> Black sky</label>
           <label title="Bloom and a little halation around bright dust, like the MoteField mockup">Glow <input type="range" id="vGlow" min="0" max="2" step="0.01"><span class="val" id="vGlowV"></span></label>
           <label title="Haze in the stand-in set, so the window throws a light shaft">Stand-in haze <input type="range" id="vHaze" min="0" max="1" step="0.01"><span class="val" id="vHazeV"></span></label>
+          <label title="Full: the dust is rendered at the shot's resolution (or more when zoomed in). Fit: at the size it's shown on screen, which is faster on a small viewer.">Resolution <select class="nk" id="vRes"><option value="full">Full (shot resolution)</option><option value="fit">Fit to viewer (faster)</option></select></label>
+          <label title="Draw the shapes (Shapes tab) in the viewer on every tab; click a shape's centre to select it"><input type="checkbox" id="vShapes"> Show shapes</label>
           <label title="Filmic: the AgX tone curve the mockup used (highlights roll off). Linear: plain sRGB, clipped.">Tone curve <select class="nk" id="vLook"><option value="filmic">Filmic (AgX)</option><option value="linear">Linear</option></select></label>
           <div class="note" style="margin:4px 0 0">Viewer only: none of this goes into the dust the tool writes.</div>
         </div></div>
@@ -1200,6 +1202,8 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'Tab') { setDim(dim === '2d' ? '3d' : '2d'); e.preventDefault(); }
   else if ((e.key === 'f' || e.key === 'F' || e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey) { if (dim === '2d' && vw.free) setFreeCam(true); else if (dim === '2d') fit2d(); else { unlock(); frame3d(); } }
   else if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey && dim === '2d') setFreeCam(!vw.free);
+  else if (curTab === 'Shapes' && shp.sel >= 0 && !e.ctrlKey && !e.metaKey && 'wer'.includes(e.key.toLowerCase()) && e.key.length === 1)
+    setShapeTool({ w: 'move', e: 'scale', r: 'rotate' }[e.key.toLowerCase()]);
 });
 for (const b of $('viewSeg').children) b.onclick = () => { view = b.dataset.v; [...$('viewSeg').children].forEach(x => x.classList.toggle('on', x === b)); draw(); };
 $('layerSel').onchange = (e) => { layer = e.target.value; draw(); };
@@ -1266,14 +1270,16 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
       vw.placing = null; const b = $('placeShape'); if (b) b.classList.remove('on');
       return;
     }
-    if (curTab === 'Shapes' && e.button === 0 && !e.altKey && dim === '2d' && !vw.free) {      // grab a shape: move it (Shift: scale)
+    if (e.button === 0 && !e.altKey && dim === '2d') {      // a shape: its centre selects it (and drags it); the gizmo's handles move / scale / turn it
       const hit = shapeHit(e);
       if (hit) {
         e.preventDefault(); st.setPointerCapture(e.pointerId);
+        if (curTab !== 'Shapes') { const tb = [...$('tabs').children].find(b => b.textContent === 'Shapes'); if (tb) tb.click(); }
         if (hit.i !== shp.sel) { shp.sel = hit.i; renderShapeEditor(); }
-        const c = vw.pick.cam, th = Math.tan(c.hfov / 2);
-        drag = { mode: 'shape', i: hit.i, id: e.pointerId, x0: hit.x, y0: hit.y, c0: hit.a.c.slice(), s0: hit.a.s.slice(), k: hit.z * 2 * th / (vw.rect.x1 - vw.rect.x0), cam: c };
-        st.style.cursor = 'move'; return;
+        const c = vw.pick.cam, th = Math.tan(c.hfov / 2), G = hit.G;
+        drag = { mode: 'shape', part: hit.part, i: hit.i, id: e.pointerId, x0: hit.x, y0: hit.y, c0: hit.a.c.slice(), s0: hit.a.s.slice(), r0: hit.a.r,
+                 k: hit.z * 2 * th / (vw.rect.x1 - vw.rect.x0), cam: c, G, ang0: G ? Math.atan2(hit.y - G.q[1], hit.x - G.q[0]) : 0 };
+        vw.gzActive = hit.part; st.style.cursor = hit.part === 'ring' ? 'grabbing' : 'move'; draw(); return;
       }
     }
     if (vw.placing === 'object' && e.button === 0 && !e.altKey) {        // stays on: click more objects, Esc to stop
@@ -1304,6 +1310,10 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     st.style.cursor = mode === 'tumble' ? 'grabbing' : mode === 'pan' || mode === 'track' ? 'move' : 'ns-resize';
   });
   st.addEventListener('pointermove', (e) => {
+    if (dim === '2d' && !drag && curTab === 'Shapes' && shp.sel >= 0) {      // hover a gizmo handle
+      const h = shapeHit(e), part = h && h.i === shp.sel ? h.part : h ? 'sel' : null;
+      if (part !== (vw.gzHover || null)) { vw.gzHover = part === 'sel' ? null : part; st.style.cursor = part ? 'pointer' : ''; draw(); }
+    }
     if (dim === '3d' && !drag && v3.vp) {        // hover a handle
       const r = cv3.getBoundingClientRect(), hi = pickHandle(e.clientX - r.left, e.clientY - r.top);
       if (hi !== (v3.hover ?? -1)) { v3.hover = hi; st.style.cursor = hi >= 0 ? 'pointer' : ''; v3dirty(); }
@@ -1311,9 +1321,21 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     if (!drag || e.pointerId !== drag.id) return;
     if (drag.mode === 'handle') { const r = cv3.getBoundingClientRect(); dragHandle(drag, e.clientX - r.left, e.clientY - r.top, e.shiftKey); v3dirty(); return; }
     if (drag.mode === 'shape') {
-      const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), dx = (e.clientX - r.left) * dpr - drag.x0, dy = (e.clientY - r.top) * dpr - drag.y0;
-      if (e.shiftKey) { const f = Math.exp((dx - dy) * 0.004); setShapeVal(drag.i, 's', drag.s0.map(v => Math.max(v * f, 0.1)), false); }
-      else { const c = drag.cam; setShapeVal(drag.i, 'c', drag.c0.map((v, k) => v + (dx * c.right[k] - dy * c.up[k]) * drag.k), false); }
+      const [x, y] = viewerXY(e), dx = x - drag.x0, dy = y - drag.y0, G = drag.G, part = drag.part;
+      if (Math.hypot(dx, dy) < 2 && !drag.moved) return;                  // a click just selects
+      if (part === 'c') {
+        if (shp.tool === 'scale' || e.shiftKey) { const f = Math.exp((dx - dy) * 0.005); setShapeVal(drag.i, 's', drag.s0.map(v => Math.max(v * f, 0.1)), false); }
+        else { const c = drag.cam; setShapeVal(drag.i, 'c', drag.c0.map((v, k) => v + (dx * c.right[k] - dy * c.up[k]) * drag.k), false); }
+      } else if (part === 'ring') {
+        let da = Math.atan2(y - G.q[1], x - G.q[0]) - drag.ang0; da = Math.atan2(Math.sin(da), Math.cos(da));
+        if (Math.abs(da) > 0) drag.acc = (drag.acc || 0) + da, drag.ang0 += da;
+        const deg = G.ringSign ? -drag.acc * 180 / Math.PI * G.ringSign : dx * 0.5;     // edge-on ring: drag sideways
+        setShapeVal(drag.i, 'r', +(drag.r0 + deg).toFixed(2), false);
+      } else {
+        const ax = G.axes[+part[1]], along = dx * ax.ux + dy * ax.uy;
+        if (shp.tool === 'scale') { const s2 = drag.s0.slice(); s2[+part[1]] = Math.max(drag.s0[+part[1]] * Math.max(0.02, 1 + along / ax.len), 0.1); setShapeVal(drag.i, 's', s2, false); }
+        else setShapeVal(drag.i, 'c', drag.c0.map((v, k) => v + ax.d[k] * along / ax.ppu), false);
+      }
       drag.moved = true; draw(); return;
     }
     const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
@@ -1338,7 +1360,7 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     }
     v3dirty();
   });
-  const end = (e) => { if (drag && e.pointerId === drag.id && drag.mode === 'shape') { const mv = drag.moved; drag = null; st.style.cursor = ''; if (mv) { changed(true); renderShapeEditor(); } return; }
+  const end = (e) => { if (drag && e.pointerId === drag.id && drag.mode === 'shape') { const mv = drag.moved; drag = null; vw.gzActive = null; st.style.cursor = ''; if (mv) { changed(true); renderShapeEditor(); } else draw(); return; }
     if (drag && e.pointerId === drag.id) { const wasHandle = drag.mode === 'handle'; drag = null; v3.drag = null; st.style.cursor = ''; if (wasHandle) { changed(true); v3dirty(); } } };
   st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
   st.addEventListener('dblclick', (e) => {      // free camera: focus on what you double-click
@@ -1739,7 +1761,7 @@ function buildLines() {
 //  GPU preview (preview.js): real-time playback with the same simulation and mote model
 // =====================================================================================================
 let quality = 'preview', pv = null;
-const vw = { set: 0.6, blackSky: true, glow: 0.5, haze: 0.3, look: 'filmic', hold: false, holdFrame: 0, finalTex: null, finalFor: null };
+const vw = { set: 0.6, blackSky: true, glow: 0.5, haze: 0.3, look: 'filmic', res: 'full', showShapes: true, hold: false, holdFrame: 0, finalTex: null, finalFor: null };
 const pvs = { initKey: '', camsKey: '', lightKey: '', busy: false, again: false, boxes: null, plateLight: null, size: null,
               n: 0, fetchKey: '', lastPaint: 0, fps: 0, err: '' };
 const INIT_KEYS = ['units', 'seed', 'box_center', 'box_size', 'box_rot', 'density', 'max_motes', 'size_min', 'size_max', 'size_bias',
@@ -1946,7 +1968,7 @@ function drawMovers(project) {     // project(P scene units) -> [x, y, z] device
 }
 // ---- shapes: spheres and boxes that hide the dust / embers inside or outside them, or push the dust -----------------------
 // stored as JSON in the 'shapes' knob (motefield.parse_shapes); placed, dragged and keyed here
-const shp = { sel: -1, el: null };
+const shp = { sel: -1, el: null, tool: 'move' };
 const SHAPE_COLS = { 'hide inside': '#ff6b5a', 'hide outside': '#ffb347', push: '#4fc3f7' };
 function rawShapes() { try { const L = JSON.parse(V.shapes || '[]'); return Array.isArray(L) ? L : []; } catch (e) { return []; } }
 function saveShapes(L, commit) { setKnob('shapes', JSON.stringify(L)); changed(commit); if (commit) renderShapeEditor(); else updateShapeFields(); }
@@ -2014,6 +2036,11 @@ function renderShapeEditor() {
   const i = shp.sel, sh = L[i], ps = parsed[i];
   if (!sh) { drawTrack(); return; }
   const field = (label, tip) => row(el, label, false, tip);
+  { const c0 = field('Viewer tool', 'The gizmo on the selected shape in the viewer. Keys: W move, E scale, R rotate');
+    const seg = document.createElement('div'); seg.className = 'seg';
+    for (const [t, lab] of [['move', 'Move (W)'], ['scale', 'Scale (E)'], ['rotate', 'Rotate (R)']]) {
+      const b = document.createElement('button'); b.textContent = lab; b.dataset.gztool = t; if (shp.tool === t) b.className = 'on'; b.onclick = () => setShapeTool(t); seg.appendChild(b); }
+    c0.appendChild(seg); }
   // name, on
   let c = field('Name'); const nm = document.createElement('input'); nm.className = 'txt'; nm.value = sh.name || ps.name;
   nm.onchange = () => { const M = rawShapes(); M[i].name = nm.value.trim() || ps.name; saveShapes(M, true); }; c.appendChild(nm);
@@ -2056,7 +2083,7 @@ function renderShapeEditor() {
     sp.onclick = () => setFrame(k.f, true); kl.appendChild(sp); }
   c = field(''); c.appendChild(kl);
   const n = document.createElement('div'); n.className = 'note';
-  n.innerHTML = 'In the viewer (2D, shot camera): drag a shape to move it across the view, <b>Shift</b>-drag to scale it. To animate: <b>◆ Key</b> it on one frame; from then on, moving it on another frame keys that frame (like an animated knob in Nuke).';
+  n.innerHTML = 'In the viewer (2D): <b>click a shape\'s centre</b> to select it (on any tab). Its gizmo: drag an <b>arrow</b> to move along that axis, the <b>centre</b> to move across the view; with <b>Scale (E)</b> drag an axis handle to stretch that way or the centre to scale it all; with <b>Rotate (R)</b> drag the ring to turn it. To animate: <b>◆ Key</b> it on one frame; from then on, moving it on another frame keys that frame (like an animated knob in Nuke).';
   el.appendChild(n);
   drawTrack();
 }
@@ -2081,40 +2108,120 @@ function shapeWire(sh, a, project) {   // polylines of a shape on this frame, th
   return lines;
 }
 function drawShapes(g, project, dpr) {
-  if (curTab !== 'Shapes' || !project) return;
+  if (!project || (curTab !== 'Shapes' && !vw.showShapes)) return;
+  const onTab = curTab === 'Shapes';
   mfShapes({ shapes: rawShapes() }, true).forEach((sh, i) => {
     if (!sh.keys.length) return;
-    const a = mfShapeAt(sh, frame), sel = i === shp.sel, col = SHAPE_COLS[sh.mode];
-    g.strokeStyle = col; g.globalAlpha = sh.on ? (sel ? 1 : 0.6) : 0.3; g.lineWidth = (sel ? 2 : 1.2) * dpr;
+    const a = mfShapeAt(sh, frame), sel = onTab && i === shp.sel, col = SHAPE_COLS[sh.mode];
+    const alpha = (sh.on ? (sel ? 1 : 0.6) : 0.3) * (onTab ? 1 : 0.45);
+    g.strokeStyle = col; g.globalAlpha = alpha; g.lineWidth = (sel ? 2 : 1.2) * dpr;
     g.setLineDash(sh.mode === 'hide outside' ? [6 * dpr, 4 * dpr] : []);
     for (const pts of shapeWire(sh, a, project)) { g.beginPath(); let on = false; for (const q of pts) { if (!q) { on = false; continue; } if (on) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); on = true; } g.stroke(); }
     const q = project(a.c);
     if (q && sh.kind === 'sphere' && project.rpx) {          // its outline as the camera sees it (the rings alone read flat face-on)
-      const rr = project.rpx(a.c, Math.max(...a.s) / 2); g.globalAlpha *= 0.55; g.beginPath(); g.arc(q[0], q[1], rr, 0, Math.PI * 2); g.stroke(); g.globalAlpha = sh.on ? (sel ? 1 : 0.6) : 0.3; }
-    if (q) { g.setLineDash([]); g.fillStyle = col; g.beginPath(); g.arc(q[0], q[1], (sel ? 4 : 3) * dpr, 0, Math.PI * 2); g.fill();
-      g.font = (11 * dpr) + 'px ui-monospace, monospace'; g.textAlign = 'left'; g.fillText(sh.name, q[0] + 7 * dpr, q[1] - 6 * dpr);
+      const rr = project.rpx(a.c, Math.max(...a.s) / 2); g.globalAlpha = alpha * 0.55; g.beginPath(); g.arc(q[0], q[1], rr, 0, Math.PI * 2); g.stroke(); g.globalAlpha = alpha; }
+    if (q) { g.setLineDash([]); g.fillStyle = col; g.beginPath(); g.arc(q[0], q[1], (sel ? 4 : 3.5) * dpr, 0, Math.PI * 2); g.fill();
+      g.font = (11 * dpr) + 'px ui-monospace, monospace'; g.textAlign = 'left';
+      if (sel && project.is2d) { g.textAlign = 'right'; g.fillText(sh.name, q[0] - 12 * dpr, q[1] - 12 * dpr); } else g.fillText(sh.name, q[0] + 8 * dpr, q[1] - 7 * dpr);
       if (sh.mode === 'push' && Math.hypot(...a.dc) > 1e-6) { const e = project(a.c.map((v, k) => v + a.dc[k] * 6)); if (e) { g.beginPath(); g.moveTo(q[0], q[1]); g.lineTo(e[0], e[1]); g.stroke(); } } }
+    if (sel && project.is2d) drawGizmo(g, gizmoGeom(a, project, dpr), dpr);
   });
   g.globalAlpha = 1; g.setLineDash([]);
 }
-// the 2D viewer: which shape is under the mouse, and dragging it
-window.__shapeScreen = (i) => {        // tests: where shape i's centre is on the page (CSS px)
-  const k = vw.pick; if (!k || !vw.rect) return null;
-  const sh = mfShapes({ shapes: rawShapes() }, true)[i]; if (!sh) return null;
-  const q = camProjector(k.cam, k.W0, k.H0, vw.rect)(mfShapeAt(sh, frame).c); if (!q) return null;
-  const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2); return [r.left + q[0] / dpr, r.top + q[1] / dpr];
-};
-function shapeHit(e) {
-  const k = vw.pick; if (!k || !vw.rect || dim !== '2d' || vw.free) return null;
-  const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), x = (e.clientX - r.left) * dpr, y = (e.clientY - r.top) * dpr;
-  const pj = camProjector(k.cam, k.W0, k.H0, vw.rect);
-  let best = null;
-  mfShapes({ shapes: rawShapes() }, true).forEach((sh, i) => { if (!sh.keys.length) return;
-    const a = mfShapeAt(sh, frame), q = pj(a.c); if (!q) return;
-    const rp = Math.max(pj.rpx(a.c, Math.min(...a.s) / 2), 12 * dpr), d = Math.hypot(x - q[0], y - q[1]);
-    if (d <= rp && (!best || (i === shp.sel ? -1 : d) < best.d)) best = { i, d: i === shp.sel ? -1 : d, a, z: q[2], x, y }; });
+// ---- the transform gizmo on the selected shape (2D viewer): move along an axis or across the view, scale per axis or
+// all together, turn about the vertical. W / E / R pick the tool, as in Maya.
+const GZ_COLS = ['#ff5f57', '#6cd96a', '#5aa2ff'];
+function gizmoGeom(a, pj, dpr) {
+  const q = pj(a.c); if (!q) return null;
+  const ppu = Math.max(pj.rpx(a.c, 1), 1e-6);                           // px per scene unit across the view at the shape
+  const rad = Math.max(...a.s) / 2 * ppu, L = Math.max(74 * dpr, Math.min(rad * 1.15, 260 * dpr));     // handles reach just past the shape
+  const th = a.r * Math.PI / 180, ca = Math.cos(th), sa = Math.sin(th);
+  const dirs = shp.tool === 'scale' ? [[ca, 0, -sa], [0, 1, 0], [sa, 0, ca]] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];   // scale: the shape's own axes
+  const k = 1 / ppu;                                                    // a step of about one pixel
+  const axes = dirs.map(d => {
+    const p2 = pj(a.c.map((v, i) => v + d[i] * k)); if (!p2) return null;
+    const vx = p2[0] - q[0], vy = p2[1] - q[1], len = Math.hypot(vx, vy);
+    if (len < 1e-9) return null;
+    const fs = len / k / ppu;                                          // foreshortening: 1 across the view, 0 straight at the camera
+    return { d, ux: vx / len, uy: vy / len, ppu: len / k, weak: fs < 0.15, len: L * Math.max(0.35, Math.min(1, fs)) };
+  });
+  let ring = null, ringSign = 0;
+  if (shp.tool === 'rotate') {
+    const Rw = Math.max(Math.max(...a.s) / 2 * 1.15, 0.8 * L / ppu); ring = [];     // around the shape, flat on the ground
+    for (let i = 0; i <= 64; i++) { const u = i / 64 * Math.PI * 2; ring.push(pj([a.c[0] + Math.cos(u) * Rw, a.c[1], a.c[2] + Math.sin(u) * Rw])); }
+    const p0 = ring[0], p1 = ring[1];
+    if (p0 && p1) { const cr = (p0[0] - q[0]) * (p1[1] - q[1]) - (p0[1] - q[1]) * (p1[0] - q[0]); ringSign = Math.abs(cr) > 1e-3 * L * L ? Math.sign(cr) : 0; }
+  }
+  return { q, L, axes, ring, ringSign };
+}
+function drawGizmo(g, G, dpr) {
+  if (!G) return;
+  const { q, L } = G, hov = vw.gzHover, act = vw.gzActive;
+  g.setLineDash([]); g.globalAlpha = 1;
+  const hot = (part) => hov === part || act === part;
+  if (shp.tool === 'rotate' && G.ring) {
+    g.strokeStyle = hot('ring') ? '#ffffff' : '#ffd34a'; g.lineWidth = (hot('ring') ? 3 : 2) * dpr;
+    g.beginPath(); let on = false; for (const p of G.ring) { if (!p) { on = false; continue; } if (on) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); on = true; } g.stroke();
+  } else {
+    G.axes.forEach((ax, i) => {
+      if (!ax) return;
+      const part = 'a' + i, x0 = q[0] + ax.ux * 12 * dpr, y0 = q[1] + ax.uy * 12 * dpr, x1 = q[0] + ax.ux * ax.len, y1 = q[1] + ax.uy * ax.len;
+      g.globalAlpha = ax.weak ? 0.3 : 1; g.strokeStyle = g.fillStyle = hot(part) ? '#ffffff' : GZ_COLS[i]; g.lineWidth = (hot(part) ? 3 : 2) * dpr;
+      g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+      if (shp.tool === 'scale') { const h = 5 * dpr; g.fillRect(x1 - h, y1 - h, 2 * h, 2 * h); }
+      else { const h = 9 * dpr, w = 4.5 * dpr; g.beginPath(); g.moveTo(x1 + ax.ux * h, y1 + ax.uy * h); g.lineTo(x1 - ax.uy * w, y1 + ax.ux * w); g.lineTo(x1 + ax.uy * w, y1 - ax.ux * w); g.fill(); }
+    });
+    g.globalAlpha = 1;
+  }
+  g.lineWidth = 2 * dpr; g.strokeStyle = hot('c') ? '#ffffff' : '#e8e8e8';
+  g.beginPath(); g.arc(q[0], q[1], 8 * dpr, 0, Math.PI * 2); g.stroke();
+  g.font = (10.5 * dpr) + 'px ui-monospace, monospace'; g.textAlign = 'center'; g.fillStyle = 'rgba(235,235,235,.85)';
+  g.fillText({ move: 'MOVE (W)  ·  E scale  ·  R rotate', scale: 'SCALE (E)  ·  W move  ·  R rotate', rotate: 'ROTATE (R)  ·  W move  ·  E scale' }[shp.tool], q[0], q[1] + L + 22 * dpr);
+}
+function segDist(x, y, x0, y0, x1, y1) { const vx = x1 - x0, vy = y1 - y0, t = Math.max(0, Math.min(1, ((x - x0) * vx + (y - y0) * vy) / Math.max(vx * vx + vy * vy, 1e-9))); return Math.hypot(x - x0 - vx * t, y - y0 - vy * t); }
+function gizmoPart(G, x, y, dpr) {          // which handle of the gizmo is at device px x, y
+  if (!G) return null;
+  const { q, L } = G, tol = 8 * dpr;
+  if (Math.hypot(x - q[0], y - q[1]) <= 10 * dpr) return 'c';
+  if (shp.tool === 'rotate' && G.ring) {
+    for (let i = 1; i < G.ring.length; i++) { const a = G.ring[i - 1], b = G.ring[i]; if (a && b && segDist(x, y, a[0], a[1], b[0], b[1]) <= tol) return 'ring'; }
+    return null;
+  }
+  let best = null, bd = tol;
+  G.axes.forEach((ax, i) => { if (!ax || ax.weak) return;
+    const d = segDist(x, y, q[0] + ax.ux * 12 * dpr, q[1] + ax.uy * 12 * dpr, q[0] + ax.ux * (ax.len + 8 * dpr), q[1] + ax.uy * (ax.len + 8 * dpr));
+    if (d <= bd) { bd = d; best = 'a' + i; } });
   return best;
 }
+function viewerXY(e) { const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2); return [(e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr, dpr]; }
+function viewProjector() { const k = vw.pick; return k && vw.rect && dim === '2d' ? camProjector(k.cam, k.W0, k.H0, vw.rect) : null; }
+// the selected shape's gizmo handle under the mouse, or a shape whose centre is under it
+function shapeHit(e) {
+  const pj = viewProjector(); if (!pj) return null;
+  const [x, y, dpr] = viewerXY(e), L = mfShapes({ shapes: rawShapes() }, true);
+  if (curTab === 'Shapes' && shp.sel >= 0 && L[shp.sel] && L[shp.sel].keys.length) {
+    const a = mfShapeAt(L[shp.sel], frame), G = gizmoGeom(a, pj, dpr), part = gizmoPart(G, x, y, dpr);
+    if (part) return { i: shp.sel, part, a, G, x, y, z: G.q[2] };
+  }
+  if (curTab !== 'Shapes' && !vw.showShapes) return null;
+  let best = null;
+  L.forEach((sh, i) => { if (!sh.keys.length) return;
+    const a = mfShapeAt(sh, frame), q = pj(a.c); if (!q) return;
+    const d = Math.hypot(x - q[0], y - q[1]);
+    if (d <= 11 * dpr && (!best || d < best.d)) best = { i, part: 'c', a, d, x, y, z: q[2] }; });
+  if (best) best.G = gizmoGeom(best.a, pj, dpr);
+  return best;
+}
+function setShapeTool(t) { shp.tool = t; vw.gzHover = null; for (const b of document.querySelectorAll('[data-gztool]')) b.classList.toggle('on', b.dataset.gztool === t); draw(); }
+window.__shapeScreen = (i, part) => {   // tests: where shape i's centre (or a gizmo handle) is on the page (CSS px)
+  const pj = viewProjector(); if (!pj) return null;
+  const sh = mfShapes({ shapes: rawShapes() }, true)[i]; if (!sh) return null;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), G = gizmoGeom(mfShapeAt(sh, frame), pj, dpr); if (!G) return null;
+  let p = G.q;
+  if (part && part[0] === 'a' && G.axes[+part[1]]) { const ax = G.axes[+part[1]]; p = [G.q[0] + ax.ux * ax.len * 0.8, G.q[1] + ax.uy * ax.len * 0.8]; }
+  if (part === 'ring' && G.ring) p = G.ring[0];
+  const r = cv3.getBoundingClientRect(); return [r.left + p[0] / dpr, r.top + p[1] / dpr];
+};
 // ---- objects that never hold out (holdout_skip): names from the utility pass's Cryptomatte, or the stand-in's boxes ----
 const objs = { key: '', names: [], ok: true };
 function globRe(q) { return new RegExp('^' + q.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); }
@@ -2217,6 +2324,7 @@ function camProjector(cam, W0, H0, rect) {      // a shot / free camera onto the
     const z = -dot(cam.back); if (z <= 1e-3) return null;
     return [rect.x0 + (dot(cam.right) / z / th * 0.5 + 0.5) * W0 * sx, rect.yTop + (0.5 - dot(cam.up) / z / tv * 0.5) * H0 * sy, z]; };
   f.rpx = (P, r) => { const s = f(P); return s ? r / s[2] / (2 * th) * W0 * sx : 0; };
+  f.is2d = true;
   return f;
 }
 // picked utility passes: each frame's distance image (holdouts) and plate, read once in the background
@@ -2262,12 +2370,14 @@ function setQuality(q) {
 for (const b of $('qualSeg').children) b.onclick = () => setQuality(b.dataset.q);
 (function viewerControls() {
   try { Object.assign(vw, JSON.parse(localStorage.getItem('mf_view') || '{}'), { hold: false }); } catch (e) {}
-  const save = () => { try { const { set, blackSky, glow, haze, look } = vw; localStorage.setItem('mf_view', JSON.stringify({ set, blackSky, glow, haze, look })); } catch (e) {} };
+  const save = () => { try { const { set, blackSky, glow, haze, look, res, showShapes } = vw; localStorage.setItem('mf_view', JSON.stringify({ set, blackSky, glow, haze, look, res, showShapes })); } catch (e) {} };
   const slider = (id, key, fmt) => { const el = $(id), lab = $(id + 'V'); el.value = vw[key]; lab.textContent = fmt(vw[key]);
     el.oninput = () => { vw[key] = +el.value; lab.textContent = fmt(vw[key]); if (key === 'haze' && look) look.clear(); save(); v3dirty(); }; };
   slider('vSet', 'set', v => v.toFixed(2)); slider('vGlow', 'glow', v => v.toFixed(2)); slider('vHaze', 'haze', v => v.toFixed(2));
   $('vSky').checked = vw.blackSky; $('vSky').onchange = () => { vw.blackSky = $('vSky').checked; save(); v3dirty(); };
   $('vLook').value = vw.look; $('vLook').onchange = () => { vw.look = $('vLook').value; save(); v3dirty(); };
+  $('vRes').value = vw.res; $('vRes').onchange = () => { vw.res = $('vRes').value; save(); v3dirty(); };
+  $('vShapes').checked = vw.showShapes; $('vShapes').onchange = () => { vw.showShapes = $('vShapes').checked; save(); draw(); };
   $('viewBtn').onclick = (e) => { e.stopPropagation(); $('viewPop').hidden = !$('viewPop').hidden; };
   document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.popwrap')) $('viewPop').hidden = true; });
   $('holdCam').onchange = () => {
@@ -2469,7 +2579,9 @@ function paintPreview2d() {
     // isn't redone for every small change; the dust's look doesn't depend on resolution
     const fit = Math.min(cw / SW, ch / SH), w = SW * fit * nav2.s, h = SH * fit * nav2.s;      // fill the viewer
     pvs.res = null;
-    const W0 = Math.max(320, Math.min(2560, Math.round(Math.max(w, SW * 0.5) / 160) * 160)), H0 = Math.round(W0 * SH / SW);
+    // full: the shot's own resolution (more when zoomed in past 1:1); fit: the size it's shown at, for speed
+    const W0 = vw.res === 'fit' ? Math.max(320, Math.min(2560, Math.round(Math.max(w, SW * 0.5) / 160) * 160))
+                                : Math.max(320, Math.min(2560, Math.max(SW, Math.round(w / 160) * 160))), H0 = Math.round(W0 * SH / SW);
     let plateTex = null, distTex = null, defocus = false, ent = null;
     // the lit stand-in set: at most 1280 wide (it's lit by ray tracing and then lens-blurred, so it doesn't need more),
     // so every frame of the shot can stay cached and a camera move plays as smoothly as a held camera

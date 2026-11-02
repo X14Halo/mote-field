@@ -1,5 +1,5 @@
 """
-MoteField for Nuke (prototype v0.8.1): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.8.2): camera-aware dust motes for comp.
 
 WHAT IT IS
     A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.8.1'
+__version__ = '0.8.2'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
