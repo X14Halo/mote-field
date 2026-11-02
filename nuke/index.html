@@ -518,6 +518,7 @@ function buildPanel() {
       continue;
     }
     if (k.key === 'standin_view') continue;        // the Sequence / Shot picker at the top sets it
+    if (k.key === 'output_mode') continue;         // the Nuke node's output (dust / over the plate / holdout check); the viewer has its own
     const ctl = row(pg, k.label, false, typeof k.extra === 'string' && k.kind !== 'enum' ? k.extra : '');
     const key = k.key;
     if (k.kind === 'file') {

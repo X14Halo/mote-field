@@ -1,5 +1,5 @@
 """
-MoteField for Nuke (prototype v0.8): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.8.1): camera-aware dust motes for comp.
 
 WHAT IT IS
     A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.8'
+__version__ = '0.8.1'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -163,7 +163,10 @@ class ExrFile(object):
             p['lines'] = _COMP_LINES.get(p['comp'], 1)
             p['tiled'] = tiled or ('tiled' in str(h.get('type', '')))
             n = h.get('chunkCount') or int(math.ceil(p['height'] / float(p['lines'])))
-            p['offsets'] = struct.unpack_from('<%dQ' % n, b, o)
+            try:                     # (a tiled file's table is longer; only the scanline reader here uses it)
+                p['offsets'] = struct.unpack_from('<%dQ' % n, b, o)
+            except struct.error:
+                p['offsets'] = ()
             o += 8 * n
 
     def close(self):
@@ -178,11 +181,16 @@ class ExrFile(object):
 
     def read(self, pi, names):
         p, b = self.parts[pi], self._b
-        if p['tiled']:
-            raise ValueError('Tiled EXRs are not supported; write scanline images')
-        if p['comp'] not in (0, 1, 2, 3):
-            raise ValueError('%s uses %s compression. Write utility passes with ZIP, ZIPS, RLE or no compression.'
-                             % (os.path.basename(self.path), _COMP_NAMES.get(p['comp'], p['comp'])))
+        if p['tiled'] or p['comp'] not in (0, 1, 2, 3):
+            # tiled, PIZ, DWAA/DWAB, B44...: hand it to an EXR library if this Python has one (studio Nuke / farm
+            # environments usually do); the reader here stays for the browser and plain scanline files
+            out = _read_with_library(self.path, pi, names, p)
+            if out is not None:
+                return out
+            what = 'tiled' if p['tiled'] else '%s-compressed' % _COMP_NAMES.get(p['comp'], p['comp'])
+            raise ValueError('%s is %s, which needs OpenImageIO or the OpenEXR Python module (neither is installed here). '
+                             'Install one, or write utility passes as scanline ZIP, ZIPS, RLE or uncompressed.'
+                             % (os.path.basename(self.path), what))
         W, H, chs = p['width'], p['height'], p['channels']
         offs, o = [], 0
         for n, t in chs:
@@ -210,6 +218,46 @@ class ExrFile(object):
                 seg = a[:, offs[i]:offs[i] + _PIX_BYTES[t] * W].copy().view(_PIX_DTYPE[t]).reshape(nl, W)
                 out[n][ly:ly + nl] = seg.astype(np.float32)
         return out
+
+
+def _read_with_library(path, pi, names, part):
+    """Channels of part pi of an EXR this module can't decode itself, through OpenImageIO, or else the OpenEXR module
+    (3.x File API, or the classic InputFile for single-part files). {name: float32 (H, W)} over the part's data window,
+    as ExrFile.read returns; None when no library is available."""
+    W, H = part['width'], part['height']
+    try:
+        import OpenImageIO as oiio
+    except Exception:
+        oiio = None
+    if oiio is not None:
+        inp = oiio.ImageInput.open(path)
+        if inp:
+            try:
+                if pi and not inp.seek_subimage(pi, 0):
+                    raise ValueError('%s: no part %d' % (os.path.basename(path), pi))
+                spec = inp.spec()
+                cn = list(spec.channelnames)
+                px = inp.read_image(0, spec.nchannels, oiio.FLOAT)
+                if px is None:
+                    raise ValueError('%s: %s' % (os.path.basename(path), inp.geterror()))
+                px = np.asarray(px, np.float32).reshape(spec.height, spec.width, spec.nchannels)
+                return {n: np.ascontiguousarray(px[:, :, cn.index(n)]) for n in names}
+            finally:
+                inp.close()
+    try:
+        import OpenEXR
+    except Exception:
+        return None
+    if hasattr(OpenEXR, 'File'):
+        f = OpenEXR.File(path, separate_channels=True)
+        chans = f.parts[pi].channels
+        return {n: np.asarray(chans[n].pixels, np.float32).reshape(H, W) for n in names}
+    if hasattr(OpenEXR, 'InputFile') and pi == 0:
+        import Imath
+        f = OpenEXR.InputFile(path)
+        ft = Imath.PixelType(Imath.PixelType.FLOAT)
+        return {n: np.frombuffer(f.channel(n, ft), np.float32).reshape(H, W).copy() for n in names}
+    return None
 
 
 def _attr_bytes(name, typ, value):
@@ -1030,7 +1078,7 @@ DEFAULTS = dict(
     ember_temp=1300.0, ember_size=0.6, ember_gain=1.0, ember_twinkle=0.6, ember_rise=2.2, ember_spread=1.0, ember_turb=0.9,
     ember_flutter=1.0, ember_wind=0.3, ember_wind_dir=200.0, ember_pops=0.1, ember_pop_size=0.12,
     # holdouts
-    holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0, holdout_skip='',
+    holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0, holdout_skip='', output_mode='dust only',
     cache='', standin_json='', hold_frame=0, standin_view='wide',
 )
 
@@ -1064,6 +1112,9 @@ def frame_path(pattern, f):
     if m:
         return pattern[:m.start()] + str(f).zfill(len(m.group())) + pattern[m.end():]
     return pattern
+
+
+_LOSSY_WARNED = set()
 
 
 class Shot(object):
@@ -1152,6 +1203,13 @@ class Shot(object):
         e = self._open(f)
         found = survey_layers(e)
         self.layers = found
+        role = 'P' if 'P' in found else 'Z' if 'Z' in found else None
+        comp = e.parts[found[role][0]]['comp'] if role else 0
+        if comp in (5, 6, 7, 8, 9) and self.pattern not in _LOSSY_WARNED:      # PXR24, B44(A), DWAA, DWAB
+            _LOSSY_WARNED.add(self.pattern)
+            print('MoteField warning: %s stores its %s with lossy %s compression, so positions can be far off (tens of '
+                  'centimetres or more at edges); holdouts and the camera-move test will be rough. Ask for the utility pass in ZIP or PIZ.'
+                  % (os.path.basename(frame_path(self.pattern, f)), 'world position' if role == 'P' else 'depth', _COMP_NAMES[comp]))
         cam = self._cam(f)
         P = None
         if 'P' in found:
@@ -1932,6 +1990,9 @@ def find_movers(p, shot, progress=None):
     part. A mover that goes behind something is followed on its prediction for up to MOVER_GAP frames; at the end each
     part's path is smoothed and the gaps bridged."""
     key = _movers_key(p)
+    baked = p.get('movers_baked')
+    if isinstance(baked, dict) and baked.get('key') == key:     # baked into the farm settings at export: never redone
+        return baked
     if key in _MOVER_CACHE:
         return _MOVER_CACHE[key]
     disk = None
@@ -2055,9 +2116,11 @@ def find_movers(p, shot, progress=None):
     if len(_MOVER_CACHE) > 4:
         _MOVER_CACHE.pop(next(iter(_MOVER_CACHE)))
     if disk:
-        try:
-            with open(disk, 'w') as fh:
+        try:                      # written whole then renamed, so another job never reads half a file
+            tmp = disk + '.tmp%d' % os.getpid()
+            with open(tmp, 'w') as fh:
                 json.dump(res, fh)
+            os.replace(tmp, disk)
         except Exception:
             pass
     return res
@@ -3176,11 +3239,15 @@ def ember_preroll(p):
     return max(int(p['preroll']), int(math.ceil(3.5 * float(p['fps']))))
 
 
+def _ember_key(p):
+    return hashlib.md5(json.dumps([p.get(k) for k in EMBER_KEYS], default=str).encode()).hexdigest()
+
+
 def embers_at(p, frame, su):
     """Ember state at a frame, simulated from before the first frame (like sim_at)."""
     if not p.get('embers'):
         return None
-    key = hashlib.md5(json.dumps([p.get(k) for k in EMBER_KEYS], default=str).encode()).hexdigest()
+    key = _ember_key(p)
     cache = _EMBER_CACHE.setdefault(key, {})
     if len(_EMBER_CACHE) > 3:
         _EMBER_CACHE.pop(next(iter(_EMBER_CACHE)))
@@ -3215,11 +3282,15 @@ def dust_path(p, f, name='dust'):
 
 def write_dust(path, held, unheld, embers=None):
     # PIPELINE: half-float EXR, ZIP, scene-linear (no colour transform). Match the studio's comp working space and naming.
+    # The dust is light added to the plate, so its alpha is 0 (emission): merged with plus or over, it adds its light and
+    # leaves the plate's alpha alone. Its brightness as a matte, for grading through, is in the dustmatte layer.
     lum = lambda a: np.clip(0.2126 * a[:, :, 0] + 0.7152 * a[:, :, 1] + 0.0722 * a[:, :, 2], 0, 1)
-    ch = {'R': held[:, :, 0], 'G': held[:, :, 1], 'B': held[:, :, 2], 'A': lum(held),
-          'noholdout.red': unheld[:, :, 0], 'noholdout.green': unheld[:, :, 1], 'noholdout.blue': unheld[:, :, 2], 'noholdout.alpha': lum(unheld)}
+    z = np.zeros(held.shape[:2], np.float32)
+    ch = {'R': held[:, :, 0], 'G': held[:, :, 1], 'B': held[:, :, 2], 'A': z,
+          'noholdout.red': unheld[:, :, 0], 'noholdout.green': unheld[:, :, 1], 'noholdout.blue': unheld[:, :, 2], 'noholdout.alpha': z,
+          'dustmatte.alpha': lum(held)}
     if embers is not None:
-        ch.update({'embers.red': embers[:, :, 0], 'embers.green': embers[:, :, 1], 'embers.blue': embers[:, :, 2], 'embers.alpha': lum(embers)})
+        ch.update({'embers.red': embers[:, :, 0], 'embers.green': embers[:, :, 1], 'embers.blue': embers[:, :, 2], 'embers.alpha': z})
     write_exr(path, ch, {'motefield/version': ('string', __version__)}, half=True)
 
 
@@ -3279,7 +3350,8 @@ def fit_box(p, frame=None, far_pct=95.0):
 _KNOBS = [
     # (tab, key, kind, label, extra)
     ('MoteField', None, 'text', '<b>MoteField</b> %s: camera-aware dust for comp. Renders to the cache folder; merge over the plate with plus.' % __version__, None),
-    ('MoteField', 'utility', 'file', 'Utility pass', 'World position (P) and the camera in the EXR header. Use #### for the frame number.'),
+    ('MoteField', 'utility', 'file', 'Utility pass', 'World position (P) and the camera in the EXR header. Use #### for the frame number. '
+                                                    'Blank = the Read connected to the node\'s utility input.'),
     ('MoteField', 'units', 'enum', 'Scene units', list(UNITS)),
     ('MoteField', 'first', 'int', 'First frame', None),
     ('MoteField', 'last', 'int', 'Last frame', None),
@@ -3298,6 +3370,7 @@ _KNOBS = [
     ('MoteField', 'fade_pos', 'xyz', 'Fade  +X +Y +Z', 'Multiplies the edge fade at the +X, +Y and +Z faces'),
     ('MoteField', None, 'divider', 'Render', None),
     ('MoteField', 'cache', 'file', 'Cache folder', 'Where the dust frames are written. Each node needs its own folder.'),
+    ('MoteField', 'output_mode', 'enum', 'Output', ['dust only', 'merged over plate', 'holdout check']),
     ('MoteField', 'proxy', 'float', 'Resolution', (0.1, 1)),
     ('MoteField', 'btn_frame', 'button', 'Render this frame', 'frame'),
     ('MoteField', 'btn_range', 'button', 'Render frame range', 'range'),
@@ -3499,6 +3572,14 @@ def create():
     g.addKnob(hid)
     _nk_defaults(g)
     g.begin()
+    # inputs: 0 the plate (B pipe), 1 the utility pass (its Read gives the path when the Utility pass knob is blank)
+    plate_in = nuke.nodes.Input(name='plate')
+    util_in = nuke.nodes.Input(name='utility')
+    for n_, i_ in ((plate_in, 0), (util_in, 1)):
+        try:
+            n_['number'].setValue(i_)
+        except Exception:
+            pass
     rd = nuke.nodes.Read(name='dust_frames')
     rd['file'].setValue('[value parent.cache]/dust.####.exr')
     for kk, ex in (('first', 'parent.first'), ('last', 'parent.last'), ('origfirst', 'parent.first'), ('origlast', 'parent.last')):
@@ -3514,8 +3595,22 @@ def create():
         rd['raw'].setValue(True)
     except Exception:
         pass
+    # Output: the dust alone (default), added over the plate, or a holdout check (what the holdouts remove, in red)
+    over = nuke.nodes.Merge2(name='dust_over_plate', operation='plus')
+    over.setInput(0, plate_in)
+    over.setInput(1, rd)
+    chk = nuke.nodes.Expression(name='holdout_check')
+    chk.setInput(0, rd)
+    chk['expr0'].setValue('r + 3 * max(0, noholdout.red + noholdout.green + noholdout.blue - r - g - b)')
+    chk_over = nuke.nodes.Merge2(name='check_over_plate', operation='plus')
+    chk_over.setInput(0, plate_in)
+    chk_over.setInput(1, chk)
+    sw = nuke.nodes.Switch(name='output_mode')
+    for i_, n_ in enumerate((rd, over, chk_over)):
+        sw.setInput(i_, n_)
+    sw['which'].setExpression('parent.output_mode')
     out = nuke.nodes.Output()
-    out.setInput(0, rd)
+    out.setInput(0, sw)
     g.end()
     return g
 
@@ -3574,7 +3669,25 @@ def _nk_settings(g):
             p[k] = g[k].evaluate() if '[' in p[k] else p[k]
         except Exception:
             pass
+    if not p['utility']:
+        p['utility'] = _nk_upstream_file(g, 1) or ''
     return p
+
+
+def _nk_upstream_file(g, index):
+    """The file pattern of the Read feeding input `index` of the node (through any nodes in between), or None."""
+    nuke = _nk()
+    n, seen = g.input(index), 0
+    while n is not None and seen < 100:
+        if n.Class() in ('Read', 'DeepRead'):
+            try:
+                path = nuke.filename(n)
+            except Exception:
+                path = None
+            path = path or n['file'].getValue()
+            return path.replace('\\', '/') if path else None
+        n, seen = n.input(0), seen + 1
+    return None
 
 
 def _nk_status(g, msg):
@@ -3673,10 +3786,25 @@ def _nk_button(g, what):
     if what == 'export':
         p = _nk_settings(g)
         path = nuke.getFilename('MoteField settings for the farm', '*.json', default=os.path.join(p['cache'] or '', 'motefield_settings.json'), type='save')
-        if path:
+        if not path:
+            return
+        if not p['utility']:
             save_settings(path, p)
-            nuke.message('Saved %s\n\nOn the farm:\n  python %s render --settings %s --frames %d-%d'
-                         % (path, os.path.abspath(__file__).replace('.pyc', '.py'), path, p['first'], p['last']))
+            nuke.message('Saved %s (no utility pass yet, so nothing was baked).' % path)
+            return
+
+        def work(progress):
+            q = bake_for_farm(p, path, progress)
+            if q is None:
+                return False
+            save_settings(path, q)
+            nuke.executeInMainThread(nuke.message, args=(
+                'Saved %s\n(with %s and simulation checkpoints, so farm tasks can be split freely)\n\nOn the farm:\n'
+                '  python %s render --settings %s --frames %d-%d'
+                % (path, 'the movers' if q.get('movers_baked') else 'no movers', os.path.abspath(__file__).replace('.pyc', '.py'),
+                   path, p['first'], p['last']),))
+            return True
+        _nk_thread(g, 'MoteField: baking for the farm', work)
         return
     if what == 'standin':
         return _nk_standin(g)
@@ -3907,6 +4035,78 @@ def _nk_camera(p):
 # =====================================================================================================
 #  Settings files and the command line (the farm)
 # =====================================================================================================
+def bake_for_farm(p, settings_path, progress=None):
+    """What every farm task would otherwise redo, worked out once: the movers (when Moving things push the dust is on)
+    go into the settings, and the dust and ember state every few frames into <settings>.sim.npz beside them, so a task
+    rendering frame 1180 starts from frame 1170 instead of simulating from the pre-roll. The states are the exact ones a
+    sequential render reaches, so frames come out the same. Returns the settings to save (None if cancelled)."""
+    p = dict(p)
+    p.pop('movers_baked', None)
+    p.pop('sim_checkpoints', None)
+    shot = Shot(p['utility'], p['units'])
+    cb = (lambda x, msg, a=0.0, b=1.0: progress(a + (b - a) * x, msg)) if progress else None
+    if p.get('push'):
+        found = find_movers(p, shot, (lambda x, m: progress(0.3 * x, m)) if progress else None)   # instant if found in this session
+        if found is None:
+            return None
+        p['movers_baked'] = dict(found, key=_movers_key(p))
+    light = make_light(p, shot)
+    pushers = make_pushers(p, shot)
+    first, last = int(p['first']), int(p['last'])
+    step = max(10, int(math.ceil((last - first + 1) / 20.0)))        # at most ~20 states, every 10 frames or more
+    frames = list(range(first, last + 1, step))
+    dust, emb = [], []
+    for i, f in enumerate(frames):
+        if progress and progress(0.3 + 0.7 * i / float(len(frames)), 'Checkpoint: frame %d' % f) is False:
+            return None
+        sim = sim_at(p, f, light, None, pushers)
+        if sim is None:
+            return None
+        dust.append(sim.state())
+        es = embers_at(p, f, shot.su)
+        if es is not None:
+            emb.append(es.state())
+    out = dict(key=np.array(_sim_key(p)), frames=np.array(frames), local=np.stack([d[0] for d in dust]),
+               V=np.stack([d[1] for d in dust]), t=np.array([d[2] for d in dust]))
+    if emb:
+        out.update(ekey=np.array(_ember_key(p)), eP=np.stack([e[0] for e in emb]), eV=np.stack([e[1] for e in emb]),
+                   eage=np.stack([e[2] for e in emb]), ecyc=np.stack([e[3] for e in emb]), et=np.array([e[4] for e in emb]))
+    npz = os.path.splitext(settings_path)[0] + '.sim.npz'
+    tmp = npz + '.tmp%d.npz' % os.getpid()
+    np.savez_compressed(tmp, **out)
+    os.replace(tmp, npz)
+    p['sim_checkpoints'] = os.path.basename(npz)
+    if progress:
+        progress(1.0, 'Baked for the farm')
+    return p
+
+
+def load_checkpoints(p, settings_path):
+    """Seeds the simulation caches from the settings' checkpoint file (bake_for_farm), if it belongs to these settings.
+    Returns how many states were loaded (0 when there are none or they don't match, which only costs time)."""
+    name = p.get('sim_checkpoints')
+    if not name:
+        return 0
+    path = os.path.join(os.path.dirname(os.path.abspath(settings_path)), name)
+    if not os.path.exists(path):
+        print('MoteField: checkpoint file %s not found; simulating from the pre-roll' % path)
+        return 0
+    d = np.load(path)
+    n = 0
+    if str(d['key']) == _sim_key(p):
+        cache = _SIM_CACHE.setdefault(_sim_key(p), {})
+        for i, f in enumerate(d['frames']):
+            cache[int(f)] = (d['local'][i].copy(), d['V'][i].copy(), float(d['t'][i]))
+            n += 1
+    else:
+        print('MoteField: %s was baked from different settings; simulating from the pre-roll' % name)
+    if 'ekey' in d and str(d['ekey']) == _ember_key(p):
+        cache = _EMBER_CACHE.setdefault(_ember_key(p), {})
+        for i, f in enumerate(d['frames']):
+            cache[int(f)] = (d['eP'][i].copy(), d['eV'][i].copy(), d['eage'][i].copy(), d['ecyc'][i].copy(), float(d['et'][i]))
+    return n
+
+
 def save_settings(path, p):
     """The node's settings as JSON: what the farm needs to render exactly what the artist saw."""
     with open(path, 'w') as fh:
@@ -3933,6 +4133,7 @@ def _frames_arg(text):
 
 def main(argv=None):
     """python motefield.py render --settings node.json [--frames 1001-1048] [--cache /path]
+       python motefield.py preflight --settings node.json
        python motefield.py standin /folder [--view close-up]"""
     import argparse
     ap = argparse.ArgumentParser(prog='motefield', description='MoteField dust renderer (the farm / command line).')
@@ -3941,6 +4142,9 @@ def main(argv=None):
     r.add_argument('--settings', required=True)
     r.add_argument('--frames', help='e.g. 1001-1048 or 1001,1010; default: the settings first-last')
     r.add_argument('--cache', help='output folder (default: the settings cache)')
+    pf = sub.add_parser('preflight', help='bake movers and simulation checkpoints into a settings file (run once before '
+                                           'fanning frames out; Export settings already does it)')
+    pf.add_argument('--settings', required=True)
     st = sub.add_parser('standin', help='write the stand-in shot (utility + plate EXRs)')
     st.add_argument('folder')
     st.add_argument('--view', default='wide', choices=sorted(STANDIN_VIEWS))
@@ -3949,6 +4153,9 @@ def main(argv=None):
         p = load_settings(a.settings)
         if a.cache:
             p['cache'] = a.cache
+        n = load_checkpoints(p, a.settings)
+        if n:
+            print('MoteField: %d simulation checkpoints loaded' % n)
         frames = _frames_arg(a.frames) if a.frames else list(range(int(p['first']), int(p['last']) + 1))
         t0 = time.time()
 
@@ -3957,6 +4164,11 @@ def main(argv=None):
             return True
         out = render_frames(p, frames, prog)
         print('MoteField: wrote %d frames to %s in %.1f s' % (len(out), p['cache'], time.time() - t0))
+    elif a.cmd == 'preflight':
+        t0 = time.time()
+        p = bake_for_farm(load_settings(a.settings), a.settings, lambda x, msg: print('%5.1f%%  %s' % (x * 100, msg)) or True)
+        save_settings(a.settings, p)
+        print('MoteField: baked %s in %.1f s' % (a.settings, time.time() - t0))
     elif a.cmd == 'standin':
         res = make_standin_shot(a.folder, None, view=a.view)
         print('Stand-in shot: %s (frames %d-%d)' % (res['utility'], res['first'], res['last']))

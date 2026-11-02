@@ -13,7 +13,7 @@ MoteField adds floating dust motes to a shot in comp, with no 3D particle render
 - motion blur with the studio shutter (180°, backward, backwardsShape);
 - depth holdouts.
 
-**Output:** an EXR per frame with the dust in **RGBA** and the same dust with no holdouts in a **noholdout** layer. Merge it over the plate with *plus*.
+**Output:** an EXR per frame with the dust in **RGBA** and the same dust with no holdouts in a **noholdout** layer. The node has a plate input and can add the dust over it itself (*Output: merged over plate*), or give the dust alone to merge with *plus*.
 
 The simulation is deterministic: the same settings always give the same frame, in any order and on any machine. An artist's setup and a farm render therefore match.
 
@@ -26,18 +26,19 @@ The simulation is deterministic: the same settings always give the same frame, i
 2. **Try the stand-in.** Press **Create stand-in shot**. Pick *wide* or *close-up* in **Stand-in camera** first. It writes a placeholder interior (utility EXRs + a clay plate) and points the node at it.
 3. **Live viewer (fast).** Press **Live viewer (GPU)**. It opens the real-time viewer, the same one as the browser version, in a Nuke panel, or in your browser if this Nuke has no QtWebEngine. It reads and writes the node's knobs, so whatever you set in the viewer is what the node renders.
 4. **Your shot:**
-   - **Utility pass:** the path with `####`. The camera comes from the EXR header automatically.
+   - **Connect it:** the plate to input 0 (*plate*) and the utility pass Read to input 1 (*utility*). With the **Utility pass** knob blank, the node uses that Read's file (through any nodes in between); or type the path with `####`. The camera comes from the EXR header automatically.
+   - **Output** (MoteField tab): *dust only* (default, to merge yourself), *merged over plate* (added over input 0, like an inline filter), or *holdout check* (what the holdouts take away, in red, over the plate).
    - **Scene units:** check them. Then press **Fit box to shot** and adjust the box in the viewer's 3D view by dragging its handles.
    - **Key light:**
      - **From a Nuke light:** select the light node your Houdini light export made and press **Key light from selected Nuke light**.
      - **From a file:** use **Import lights (.json / USD)**. `mflights.py` exports the .json from Houdini; a .usd file works directly if Nuke has `pxr`.
    - **Lens:** focal length, f-stop and focus come from the header. The Lens tab can override or offset everything.
 5. **See it in the comp quickly.** In the live viewer press **Render range on GPU → cache**. It writes `dust.####.exr` into the node's cache folder in seconds, and the node's Read reloads.
-6. **Final frames on the farm.** Press **Export settings (farm)**, then on the farm run:
+6. **Final frames on the farm.** Press **Export settings (farm)**. It **bakes** what every farm task would otherwise redo: the movers (if *Moving things push the dust* is on) go into the settings, and the dust and ember state every 10 frames or so into `motefield_settings.sim.npz` beside them (a few MB). Then on the farm run:
    ```bash
    python motefield.py render --settings motefield_settings.json --frames 1001-1048
    ```
-   This is the reference renderer (Python + numpy, CPU only). It takes a few seconds a frame and needs no GPU or Nuke licence.
+   This is the reference renderer (Python + numpy, CPU only). It takes a few seconds a frame and needs no GPU or Nuke licence. Split the range any way you like: a task starts from the nearest checkpoint, and the frames are bit-for-bit the ones a single sequential render makes. For settings written another way, `python motefield.py preflight --settings <json>` bakes them in one quick job before the frames fan out.
 
 ## 3. How fast, and why
 
@@ -65,7 +66,7 @@ The GPU preview and the Python render agree within about 1% of total light, with
 ## 4. How it works
 
 ### Inputs
-- **Utility pass.** Each frame is one EXR, single- or multi-part. Compression must be NONE, RLE, ZIPS or ZIP.
+- **Utility pass.** Each frame is one EXR, single- or multi-part. The built-in reader does scanline NONE, RLE, ZIPS and ZIP; tiled files and PIZ, DWAA/DWAB, B44 or PXR24 go through **OpenImageIO** or the **OpenEXR** Python module when the environment has one (`_read_with_library`), and otherwise fail with a message saying so. Lossy compression (DWAA/DWAB, B44, PXR24) on the position or depth pass prints a warning: it moves positions by tens of centimetres at edges (measured on the stand-in with DWAA), which spoils holdouts.
   - Layers are found by name (`_ROLE` in `motefield.py`): world position (`pos`, `P`, `worldPosition`…), normals, depth, surface colour.
   - Only position is required; normals and surface colour improve the lighting.
   - Optional: a **Cryptomatte** layer (or an object-id channel), for objects that never hold out.
@@ -144,6 +145,8 @@ A second emitter, for fire (Embers tab, off by default). Embers rise from a disc
 
 ### Output
 `dust.####.exr`: half float, ZIP, scene-linear. Channels `R G B A` (held out) and `noholdout.red/green/blue/alpha`; with embers on, also `embers.red/green/blue/alpha` (the embers alone, held out).
+- **Alpha is 0** in every layer: the dust is light added to the plate (emission), so merging it with *plus* or *over* adds its light and leaves the plate's alpha alone. Its brightness as a matte (clamped luminance of the held-out dust), for grading through, is in **`dustmatte.alpha`**. (Up to 0.8 the alpha was that luminance, which a *plus* merge added onto the plate's alpha.)
+- **Inside the node:** input 0 *plate*, input 1 *utility*, a Read of the cache, and a Switch driven by **Output**: the Read alone, a Merge (plus) of it over the plate, or an Expression that adds 3 × (noholdout − held) to red over the plate.
 
 ## 5. Files
 
@@ -196,6 +199,7 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | MoteField | `fade_neg` | Fade  -X -Y -Z |  |
 | MoteField | `fade_pos` | Fade  +X +Y +Z |  |
 | MoteField | `cache` | Cache folder |  |
+| MoteField | `output_mode` | Output | dust only |
 | MoteField | `proxy` | Resolution | 1.0 |
 | MoteField | `hold_frame` | Hold camera on frame (0 = off) | 0 |
 | Dust | `density` | Density (per m³) | 180.0 |
@@ -305,14 +309,15 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 4. **Units and up axis** (`UNITS`). Centimetres and Y-up are assumed. A Z-up scene needs one swap where the pass is read.
 5. **Key light.** Use the existing Houdini → Nuke light export with **Key light from selected Nuke light** (`light_from_nuke_node`; check the `world_matrix` knob name in Nuke 15). For a live link, set the node's light knobs by expression from the light node.
 6. **Cache / publish location** (`render_frames`, `_nk_defaults`). Write to the studio cache, version it, and register the output.
-7. **Farm submission.** Submit `python motefield.py render --settings <json> --frames <range>` through the studio's farm tool. Frames are independent, so split the range freely. Each job re-simulates from pre-roll, which takes seconds.
+7. **Farm submission.** Submit `python motefield.py render --settings <json> --frames <range>` through the studio's farm tool, from settings made by **Export settings** (or run `preflight` once first). Then split the range freely: each task starts from the nearest baked checkpoint, and never re-tracks the movers. Without checkpoints a task re-simulates from the pre-roll (about 0.2 s a frame at 40,000 motes, so frame 200 of a 200-frame shot pays ~50 s); chunks of 10–20 frames then cost little either way. The checkpoints are checked against the settings, so a stale file is ignored (and costs only time). If the farm sees the utility pass under a different path, the checkpoints don't match and are skipped: keep paths the same, or re-bake there.
 8. **Packaging** (`create`). Make it a gizmo or menu entry. The knobs come from `_KNOBS`, so a gizmo wrapper only needs to call `create()`.
 `.
 
 **Check in your environment**
 - `numpy` in Nuke: confirmed (1.23.5).
 - **QtWebEngine in Nuke 15**, for the live viewer panel: `from PySide2 import QtWebEngineWidgets`. If it's missing, the viewer opens in the browser instead, which works the same. Check that WebGL2 runs there with GPU acceleration on Linux.
-- The **Nuke-side buttons** were exercised against a mock `nuke` module, not real Nuke: Live viewer, Export settings, Key light from Nuke light, 3D preview. Expect small fixes on first run.
+- The **Nuke-side buttons** were exercised against a mock `nuke` module, not real Nuke: Live viewer, Export settings (baking in a background thread), Key light from Nuke light, 3D preview, the node's inputs and Output switch, and the utility path from the input. Expect small fixes on first run.
+- **OpenImageIO / OpenEXR in Nuke and on the farm**, if any utility pass is tiled or PIZ: `import OpenImageIO` or `import OpenEXR` in Nuke's Script Editor and on a blade. Nuke doesn't necessarily ship the Python bindings.
 
 **Worth adding next**
 - **More lights:** point, spot and area lights, practicals. Light visibility and phase per light. `mflights.py` already exports them.
@@ -324,6 +329,8 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 
 ## 9. What has been checked
 
+- **Farm baking:** on the walker stand-in with pushers on, frame 1040 rendered alone from baked settings took 1.8 s against 12.9 s from plain settings (which re-tracked the movers and simulated from the pre-roll), and the two EXRs are identical, every channel, bit for bit. The same with embers on (frame 1037): identical, 0.9 s against 7.9 s.
+- **EXR library fallback:** the stand-in utility pass rewritten by OpenImageIO as scanline PIZ, tiled ZIP and tiled PIZ reads back identical to the ZIP original, through OpenImageIO and through the OpenEXR module; with neither installed it fails with a clear message. As DWAA (lossy), positions moved by up to 4.6 m at depth edges, hence the warning.
 - **EXR reader:** reprojects a real studio utility pass to 0.115 px. Files the writer produces read back with the OpenEXR library.
 - **Determinism:** a frame rendered on its own equals the same frame from a sequential run.
 - **Browser Python vs desktop Python:** identical output, bit for bit.
