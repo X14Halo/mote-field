@@ -360,7 +360,7 @@ const $ = (id) => document.getElementById(id);
 let SCHEMA = null;
 const V = {};                       // knob values
 const shot = { utility: '', plate: '', label: '', standin: true, first: 1001, last: 1048, standinJson: '' };
-let standinWidth = 1280;
+let standinWidth = 1920;
 let frame = 1001;
 const dust = new Map();             // frame -> {key, w, h, held, unheld, motes, secs}
 const plates = new Map();           // frame -> {w, h, rgb} | null
@@ -495,7 +495,7 @@ function buildPanel() {
       if (k.extra === 'fit') {          // browser-only: stand-in resolution, right under the stand-in buttons
         const r = row(pg, 'Stand-in size', true);
         const s = document.createElement('select'); s.className = 'nk';
-        for (const w of SCHEMA.standin_res) { const o = document.createElement('option'); o.value = w; o.textContent = w + ' × ' + Math.round(w * 536 / 1280) + (w === 1280 ? '  (default, as in Nuke)' : w === 1920 ? '  (sharpest; Final is slow)' : w === 640 ? '  (fastest Final)' : ''); s.appendChild(o); }
+        for (const w of SCHEMA.standin_res) { const o = document.createElement('option'); o.value = w; o.textContent = w + ' × ' + Math.round(w * 536 / 1280) + (w === 1920 ? '  (default, full res, as in Nuke)' : w === 640 ? '  (fastest)' : ''); s.appendChild(o); }
         s.value = standinWidth;
         s.onchange = () => { standinWidth = +s.value; if (shot.standin) onButton('standin'); };
         r.appendChild(s);
@@ -2583,9 +2583,9 @@ function paintPreview2d() {
     const W0 = vw.res === 'fit' ? Math.max(320, Math.min(2560, Math.round(Math.max(w, SW * 0.5) / 160) * 160))
                                 : Math.max(320, Math.min(2560, Math.max(SW, Math.round(w / 160) * 160))), H0 = Math.round(W0 * SH / SW);
     let plateTex = null, distTex = null, defocus = false, ent = null;
-    // the lit stand-in set: at most 1280 wide (it's lit by ray tracing and then lens-blurred, so it doesn't need more),
+    // the lit stand-in set: at most 1920 wide (the full stand-in resolution; it's lit by ray tracing and then lens-blurred),
     // so every frame of the shot can stay cached and a camera move plays as smoothly as a held camera
-    const WS = Math.min(W0, 1280), HS = Math.round(WS * SH / SW);
+    const WS = Math.min(W0, 1920), HS = Math.round(WS * SH / SW);
     const fast = vw.free && performance.now() - (vw.lastMove || 0) < 300;     // while flying around: cheaper bounce light and lens blur
     if (fo.on && view === 'dust') { /* Final output, dust alone: no set to light */ } else if (vw.free) {
       const fc = freeCamObj(W0, H0);

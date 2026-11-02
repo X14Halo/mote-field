@@ -143,7 +143,7 @@ def _job(cmd, a):
     if cmd == 'init':
         return json.loads(mfweb.schema())
     if cmd == 'standin':
-        return json.loads(mfweb.setup_standin(a.get('width', 1280), a.get('view') or 'wide'))
+        return json.loads(mfweb.setup_standin(a.get('width', 1920), a.get('view') or 'wide'))
     if cmd == 'fit':
         return json.loads(mfweb.fit(p()))
     if cmd == 'plate':

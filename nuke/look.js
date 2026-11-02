@@ -283,7 +283,7 @@ class MFLook {
     this.pComb = P(VS_FULL, LK_COMBINE); this.pDof = P(VS_FULL, LK_PDOF); this.pComp = P(VS_FULL, LK_COMP);
     this.pDown = P(VS_FULL, LK_DOWN); this.pUp = P(VS_FULL, LK_UP); this.pFinal = P(VS_QUAD, LK_FINAL);
     this.cache = new Map();             // frame -> {plate, dist, bytes, key}: the lit stand-in, kept so playback is free
-    this.budget = 720 * 1024 * 1024;     // a whole shot of lit frames (the set is lit at up to 1280 wide)
+    this.budget = 1600 * 1024 * 1024;    // a whole shot of lit frames (the set is lit at up to 1920 wide: ~31 MB a frame)
     this.scratch = null;
   }
   _lin(t) { const gl = this.pv.gl; gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); return t; }

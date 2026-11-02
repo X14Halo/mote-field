@@ -83,7 +83,7 @@ def schema():
                            standin_res=sorted(STANDIN_RES)))
 
 
-def setup_standin(width=1280, view='wide'):
+def setup_standin(width=1920, view='wide'):
     """Like the Nuke 'Create stand-in shot' button, but frames are made on demand."""
     width = int(width)
     S = dict(mf.STANDIN, width=width, height=STANDIN_RES.get(width, int(round(width * 536 / 1280.0))))
@@ -224,8 +224,11 @@ def scene(pjson, with_cloud=True, max_points=240000):
         cams.extend(list(c.pos) + list(c.right) + list(c.up) + list(c.back) + [c.hfov])
     fs = sorted(set([first, (first + last) // 2, last])) if with_cloud else []
     P_all, C_all, grids = [], [], []
+    # the cloud and mesh are about 320 columns anyway: for the stand-in, read them from its 320-wide copy rather than ray
+    # tracing three full-resolution frames first
+    src = _movers_source(p)[1] if shot.meta is not None else shot
     for f in fs:
-        e = shot._open(f)
+        e = src._open(f)
         try:
             found = mf.survey_layers(e)
             if 'P' not in found:
