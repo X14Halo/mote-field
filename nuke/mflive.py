@@ -166,6 +166,8 @@ def _job(cmd, a):
             return mfweb.find_movers(p(), _progress)
         finally:
             _PROGRESS['msg'] = ''
+    if cmd == 'objects':
+        return mfweb.objects(p(), a['frame'], a.get('u'), a.get('v'))
     if cmd == 'fimages':
         return mfweb.frame_images(p(), a['frame'], a.get('pattern') or '')
     if cmd == 'bokeh':

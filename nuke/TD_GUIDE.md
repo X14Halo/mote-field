@@ -68,6 +68,7 @@ The GPU preview and the Python render agree within about 1% of total light, with
 - **Utility pass.** Each frame is one EXR, single- or multi-part. Compression must be NONE, RLE, ZIPS or ZIP.
   - Layers are found by name (`_ROLE` in `motefield.py`): world position (`pos`, `P`, `worldPosition`…), normals, depth, surface colour.
   - Only position is required; normals and surface colour improve the lighting.
+  - Optional: a **Cryptomatte** layer (or an object-id channel), for objects that never hold out.
 - **Camera.** Read from each frame's header: `camToWorld` / `worldToCamera`, plus focal length and aperture (or a horizontal FOV), f-stop and focus distance.
   - Optional lens metadata: blade count, cat-eye, anamorphic aspect, field curvature, full aperture.
   - Fractional frames (for the shutter) blend the neighbouring frames' cameras.
@@ -99,12 +100,15 @@ The GPU preview and the Python render agree within about 1% of total light, with
 ### Embers (`EmberSim`, `render_embers`)
 Try them on the **campfire** stand-in scene: a fire pit, log bench, rocks and tree trunks at night (moonlight), lit by a flickering fire light with shadows, with embers on and no dust. The fire itself is a still stand-in: three glowing flame-shaped tongues (no simulation), the same in the viewer and the Python stand-in plate. They're drawn over the set only, never in the utility pass, so they hold no embers out.
 A second emitter, for fire (Embers tab, off by default). Embers rise from a disc you place and size to the fire (position, radius, emission height; **Place** in the viewer puts it on the surface you click).
-- **Air:** a buoyant plume that widens and slows with height, entrainment near the base, a gusting rhythm, turbulence (divergence-free sine modes, like the dust's, drifting upward), wind, and *flutter*: a spinning flake of ash swings round a small helix, so paths squiggle and sometimes loop. Each ember follows the air with a lag that grows with its size, and heavy ones sink a little.
+- **Air:** a buoyant plume that widens and slows with height, entrainment near the base, gusts (value noise), turbulence, wind, and *flutter*: a spinning flake of ash swings round a small helix, so paths squiggle and sometimes loop. Each ember follows the air with a lag that grows with its size, and heavy ones sink a little.
+- **Turbulence is the MoteField mockup's:** the curl of 3D simplex noise at two scales, drifting up with the plume (`_snoise`, `_curl`; the same GLSL as the mockup). It's read along each ember's **guide path** (`EmberSim._guide`): where the ember would be in smooth air, its launch eased into a steady drift, worked out from its seed with no simulation. Read at the ember itself, the swirl feeds on its own tiny differences: 64-bit numpy and the 32-bit GPU drifted up to 3 m apart within two seconds, and rounding the farm's own state to 32 bits moved embers by up to 78 cm. Along the guide path the same rounding moves them by at most 0.01 cm, and the swirl looks the same. The simplex gradient pick is done in whole numbers so its tie-breaks (exact zeros, frequent here) come out the same in both.
 - **Pops:** the crackle of burning wood. Groups of spark slots fire together on a schedule (*Pops per second*), thrown out fast; heavier, they keep their momentum and arc back down.
 - **Look:** they glow by their own heat. Colour is black-body radiation at a temperature that falls as they rise (yellow-orange to dull red, gone below about 750 K), with a twinkle and a fade in and out. Brightness comes from their size and distance, like the dust. They get the same lens, shutter (streaks), holdouts and noholdout layer as the dust.
 - **Deterministic, so farm frames match:** every random choice is an integer hash (PCG) of (slot, life number, what for), which gives the same 24-bit numbers in numpy and GLSL. Steady embers live in slots that respawn when their life ends; the slot count is rate × mean life. The simulation starts at least 3.5 s before the first frame, so the plume is full on frame one. A frame rendered alone equals the same frame in a sequence.
 - **Output:** added to RGBA and noholdout with the dust, and on their own (held out) in the **embers** layer.
-- **Checked:** GPU vs Python at frame 1024 of the walker shot: the same 192 embers alive, positions within 0.002 cm (median), total light 61.2 vs 61.3, image block correlation 0.99997.
+- **Defaults** are a calm fire: 20 embers a second and a pop every 10 s or so (*Pops per second* 0.1, *Pop size* 0.12).
+- **Distance from camera:** *Hidden nearer than* / *Fully visible from* fade embers in with distance (scene units; both 0 = off), separately from the dust's.
+- **Checked:** GPU vs Python at frame 1024: the same 28 embers alive, positions within 0.004 cm (median) and 0.16 cm at most. With turbulence 2.5 and a pop a second: 69 alive, 0.009 cm median, 0.46 cm at most. (Reading the turbulence at the ember itself, as the mockup did, these were 4.5 cm median and up to 3 m.)
 
 ### Light
 - **Key light.** A directional light. `light_dir(az, el)` points toward the light; colour = temperature × RGB × intensity (`sun_rgb`).
@@ -126,7 +130,16 @@ A second emitter, for fire (Embers tab, off by default). Embers rise from a disc
   - optional blades, rotation, rim/centre brightness, anamorphic aspect, cat-eye (stronger toward the frame edges, weaker as you stop down), or a custom bokeh image.
   - The aperture kernel is normalised, so energy is conserved: a defocused mote gets bigger and dimmer.
 - **Motion blur:** each mote's own motion plus the camera's motion over the shutter. 180°, backward and *backwardsShape* by default: an S-curve that opens toward the frame. Box is available. Lint fibres also spread along their length.
-- **Holdouts:** each mote is compared against the utility pass distance at its pixel. **Fade out foreground holdouts** lets a foreground character's edges stop blocking dust; you then hold it out with the character's matte in comp. The **noholdout** layer never has holdouts.
+- **Holdouts:** each mote is compared against the utility pass distance at its pixel. The **noholdout** layer never has holdouts.
+  - *No holdout nearer than* / *Full holdout beyond* (scene units, both 0 = off) let surfaces near the camera stop blocking dust, so a foreground character's edges don't chew it; you then hold it out with the character's matte in comp. (They used to need a checkbox as well, so changing the numbers alone did nothing; the checkbox is gone.)
+  - **Never hold out** (`holdout_skip`): objects that don't block the dust or embers, by name, comma separated, `*` wildcards. Names come from the utility pass's **Cryptomatte** layer (`cryptomatte_info`: rank 0 of the object layer if there are several, names from the manifest), or a plain object-id channel (`_ROLE['ID']`; its names are the numbers). Those pixels count as empty, so whatever is behind the object shows through too. **List objects** shows the names; in the viewer, **Pick in viewer** adds what you click and the object chips toggle. The stand-in utility pass now has a `CryptoObject` layer (MurmurHash3 ids, manifest in the header, as renderers write it), and the GPU stand-in flags those boxes in its holdout distance image.
+- **Steady (less popping)** (Dust tab, 0–1): for dust that pops or flickers. At 1: a flake's tumbling flash goes to its average brightness, glints and the grit sparkle go away, shadow edges get 12 cm softer, the smallest blur grows from 0.25 to 0.75 px so tiny motes stop shimmering on the pixel grid, and each holdout is averaged over 5 taps across the mote's blur, so a mote slides behind an edge instead of blinking off. It applies to the embers' blur and holdouts too.
+- **Distance from camera** (Dust tab): *Hidden nearer than* / *Fully visible from* fade the motes in with distance from the lens (scene units; both 0 = off).
+- **Shapes** (Shapes tab, `shapes` knob, JSON): spheres (ellipsoids) and boxes, turned about the vertical, placed and keyed in the viewer.
+  - *Hide inside* takes away the dust / embers in the shape, *hide outside* everything else, each with its own **soft edge** (a fade that wide, centred on the surface) and a choice of dust, embers or both. Several multiply.
+  - *Push* shapes move the dust like a found mover of that size (a ball of the mean radius), on their own or with the movers, so you can key a shape sweeping through the air instead of finding motion in the shot. Their velocity is the slope of the keys.
+  - Keys are smooth (Catmull-Rom through the keys, held before the first and after the last; `_hermite`, the same in the viewer); one key holds a shape still.
+  - In the viewer: **+ Sphere / + Box**, then drag the selected shape in the 2D view to move it across the view, Shift-drag to scale; **Place** puts it on a surface you click; **◆ Key** a shape once and from then on moving it on another frame keys that frame (like an animated knob in Nuke); **Delete key**, **Clear keys** (still again); the keys show on the timeline and in the panel (click one to go there). Wireframes show in 2D and 3D while the Shapes tab is open.
 - **Splatting:** motes are splatted in blur-radius bins. Tiny ones get a Gaussian; larger ones get an FFT convolution with the aperture kernel, grouped by cat-eye direction when cat-eye is on.
 
 ### Output
@@ -176,21 +189,14 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | MoteField | `last` | Last frame | 1048 |
 | MoteField | `fps` | Frame rate | 24.0 |
 | MoteField | `standin_view` | Stand-in scene | wide |
-| MoteField | `btn_standin` | Create stand-in shot | (button) |
-| MoteField | `btn_fit` | Fit box to shot | (button) |
-| MoteField | `btn_3d` | 3D preview | (button) |
-| MoteField | `btn_live` | Live viewer (GPU) | (button) |
 | MoteField | `box_center` | Box centre | (-60.0, 175.0, -130.0) |
 | MoteField | `box_size` | Box size | (760.0, 330.0, 900.0) |
 | MoteField | `box_rot` | Box rotate Y | 0.0 |
 | MoteField | `fade` | Edge fade | 45.0 |
-| MoteField | `fade_neg` | Fade  -X -Y -Z | (1.0, 1.0, 1.0) |
-| MoteField | `fade_pos` | Fade  +X +Y +Z | (1.0, 1.0, 1.0) |
+| MoteField | `fade_neg` | Fade  -X -Y -Z |  |
+| MoteField | `fade_pos` | Fade  +X +Y +Z |  |
 | MoteField | `cache` | Cache folder |  |
 | MoteField | `proxy` | Resolution | 1.0 |
-| MoteField | `btn_frame` | Render this frame | (button) |
-| MoteField | `btn_range` | Render frame range | (button) |
-| MoteField | `btn_export` | Export settings (farm) | (button) |
 | MoteField | `hold_frame` | Hold camera on frame (0 = off) | 0 |
 | Dust | `density` | Density (per m³) | 180.0 |
 | Dust | `seed` | Seed | 1 |
@@ -210,6 +216,9 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Dust | `tumble` | Tumble rate | 1.0 |
 | Dust | `tint` | Tint | (1.0, 1.0, 1.0) |
 | Dust | `max_motes` | Max motes | 150000 |
+| Dust | `steady` | Steady (less popping) | 0.0 |
+| Dust | `cam_fade_near` | Hidden nearer than | 0.0 |
+| Dust | `cam_fade_far` | Fully visible from | 0.0 |
 | Motion | `speed` | Speed | 1.0 |
 | Motion | `drift` | Drift (cm/s) | 1.2 |
 | Motion | `drift_dir` | Drift heading | 200.0 |
@@ -222,7 +231,6 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Motion | `preroll` | Pre-roll frames | 48 |
 | Motion | `substeps` | Steps per frame | 2 |
 | Motion | `push` | Moving things push the dust | False |
-| Motion | `btn_movers` | Find moving things | (button) |
 | Motion | `movers` | Use movers |  |
 | Motion | `show_movers` | Show mover stand-ins (viewer) | True |
 | Motion | `push_amount` | Push strength | 1.0 |
@@ -234,8 +242,6 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Light | `light_int` | Intensity | 6.0 |
 | Light | `light_k` | Colour temperature (K) | 5000.0 |
 | Light | `light_rgb` | Light colour | (1.0, 1.0, 1.0) |
-| Light | `btn_nklight` | Key light from selected Nuke light | (button) |
-| Light | `btn_lights` | Import lights (.json / USD) | (button) |
 | Light | `bounce` | Bounce light on dust | 1.0 |
 | Light | `shadows` | Shadows from | stand-in geometry |
 | Light | `shadow_soft` | Shadow edge softness (cm) | 3.0 |
@@ -243,7 +249,7 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Camera | `dof` | Defocus | True |
 | Camera | `dof_view` | Defocus in the viewer | True |
 | Camera | `mb` | Motion blur | True |
-| Camera | `mb_view` | Motion blur in the viewer | False |
+| Camera | `mb_view` | Motion blur in the viewer | True |
 | Camera | `focal` | Focal length (mm, 0 = header) | 0.0 |
 | Camera | `film` | Film back width (mm, 0 = header) | 0.0 |
 | Camera | `fstop` | f-stop (0 = header) | 0.0 |
@@ -266,24 +272,27 @@ Generated from `motefield._KNOBS`, so it always matches the node.
 | Embers | `ember_pos` | Emitter position | (-150.0, 0.0, -250.0) |
 | Embers | `ember_radius` | Emitter radius | 30.0 |
 | Embers | `ember_height` | Emission height | 55.0 |
-| Embers | `ember_rate` | Embers per second | 60.0 |
+| Embers | `ember_rate` | Embers per second | 20.0 |
 | Embers | `ember_life` | Lifetime | 1.0 |
 | Embers | `ember_temp` | Start temperature (K) | 1300.0 |
 | Embers | `ember_size` | Ember size (mm) | 0.6 |
 | Embers | `ember_gain` | Brightness | 1.0 |
 | Embers | `ember_twinkle` | Twinkle | 0.6 |
+| Embers | `ember_fade_near` | Hidden nearer than | 0.0 |
+| Embers | `ember_fade_far` | Fully visible from | 0.0 |
 | Embers | `ember_rise` | Plume speed (m/s) | 2.2 |
 | Embers | `ember_spread` | Launch spread | 1.0 |
 | Embers | `ember_flutter` | Flutter | 1.0 |
 | Embers | `ember_turb` | Turbulence | 0.9 |
 | Embers | `ember_wind` | Wind (m/s) | 0.3 |
 | Embers | `ember_wind_dir` | Wind heading | 200.0 |
-| Embers | `ember_pops` | Pops per second | 0.6 |
-| Embers | `ember_pop_size` | Pop size | 0.45 |
+| Embers | `ember_pops` | Pops per second | 0.1 |
+| Embers | `ember_pop_size` | Pop size | 0.12 |
 | Holdouts | `holdout` | Depth holdouts | True |
-| Holdouts | `fg_fade` | Fade out foreground holdouts | False |
 | Holdouts | `fg_near` | No holdout nearer than | 0.0 |
 | Holdouts | `fg_far` | Full holdout beyond | 0.0 |
+| Holdouts | `holdout_skip` | Never hold out |  |
+| Shapes | `shapes` | Shapes (JSON) | [] |
 
 ## 8. Porting to the pipeline: checklist
 
@@ -292,7 +301,7 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 **Needed for real shots**
 1. **Utility pass path from the shot** (`Shot`). Replace the path knob with a shot picker (show / seq / shot / layer / version) that resolves the frame pattern. The `utility` key stays the resolved pattern, so nothing else changes.
 2. **Camera header keys** (`camera_from_headers`). Matching is loose today: any key ending in `camToWorld`, `focalLength`, `fStop`, `focusDistance`, `horizontalAperture`, and the lens extras. Check one of the studio's utility EXRs with ViewMetadata and pin the names.
-3. **Layer names** (`_ROLE`). Add the studio's names for position, normals, depth, surface colour and the backward motion vectors (for the pushers; `backward` is already in the list).
+3. **Layer names** (`_ROLE`). Add the studio's names for position, normals, depth, surface colour and the backward motion vectors (for the pushers; `backward` is already in the list). For *Never hold out*, check which Cryptomatte layer the utility pass carries (`cryptomatte_info` prefers one with "object" in its name) and whether it's in the utility EXR or a separate one; only rank 0 is read, so an object counts at the pixels where it's the main one.
 4. **Units and up axis** (`UNITS`). Centimetres and Y-up are assumed. A Z-up scene needs one swap where the pass is read.
 5. **Key light.** Use the existing Houdini → Nuke light export with **Key light from selected Nuke light** (`light_from_nuke_node`; check the `world_matrix` knob name in Nuke 15). For a live link, set the node's light knobs by expression from the light node.
 6. **Cache / publish location** (`render_frames`, `_nk_defaults`). Write to the studio cache, version it, and register the output.
@@ -321,8 +330,17 @@ Every place to change is marked `# PIPELINE:` in `motefield.py`.
 - **GPU preview vs Python render:** total light within 0.1-1% with every option tested, block correlation 0.97-1.0. The tests covered DOF, blades, cat-eye, anamorphic, custom bokeh, shutter shapes, utility-pass shadows, bounce light and soft shadows.
 - **Character pushers:** detection on the stand-in walker shot as in section 4. Given the same movers, the GPU and Python simulations put every mote in the same place (median difference 0.001 cm after 77 frames).
 - **Final output** (toolbar button): the dust and embers as the farm renders them, on the GPU: full shot resolution (× the Resolution knob), motion blur and defocus as set by *Motion blur* / *Defocus* (the viewer-only switches are ignored), every sample along each streak (48 per mote; the live viewer draws 16), through the shot camera with nothing held. It opens on the Dust view; Comp shows it over the plate. Each frame is rendered once and kept (up to 1.5 GB); pressing play renders the frames it doesn't have (with progress and Cancel), then plays from memory. Checked against the Python farm render of the same frame: total light within 0.1%, block correlation 0.9998. **Save this frame (.exr)** still writes the exact Python EXR.
-- **Camera moves in the viewer:** each new view of the stand-in set has to be lit (ray-traced bounce light, haze, lens blur), which a held camera does once. The viewer lights the set at up to 1280 wide, keeps a whole shot of lit frames (720 MB), and while nothing else is happening lights the frames ahead in the background (*lighting the stand-in ahead* in the HUD), so a camera move plays from memory like a held camera. Frames reached during playback before that are lit with a quicker pass and refined when you stop. Viewport motion blur is off by default: on a camera move every mote smears across the frame, up to 16 samples each.
+- **Camera moves in the viewer:** each new view of the stand-in set has to be lit (ray-traced bounce light, haze, lens blur), which a held camera does once. The viewer lights the set at up to 1280 wide, keeps a whole shot of lit frames (720 MB), and while nothing else is happening lights the frames ahead in the background (*lighting the stand-in ahead* in the HUD), so a camera move plays from memory like a held camera. Frames reached during playback before that are lit with a quicker pass and refined when you stop. Viewport motion blur is on by default again now that camera moves play from memory (on a move every mote smears across the frame, up to 16 samples each; *Motion blur in the viewer* turns it off).
 - **Viewer speed switches** (top of the Camera tab, which was called Lens): *Defocus in the viewer* and *Motion blur in the viewer* turn those off in the live viewer only; *Defocus* and *Motion blur* turn them off everywhere, the render (farm) included. The GPU render-to-cache writes what the node renders, so it ignores the viewer switches.
+- **Holdouts, steady, distance fade and shapes, GPU vs Python** (the Final output path vs the farm render, same frame): the same frame through the Final output path and the farm render, total light and 16-px block correlation:
+  - baseline (wide): 387.53 vs 387.34, correlation 0.9995;
+  - *Steady* 0.8: both +3.1%, correlation of the change 0.998;
+  - distance fade 250–550: change correlation 0.9998;
+  - a hide-inside sphere and a keyed, turning hide-outside box: both −5.3%, change correlation 0.9999;
+  - *Never hold out* `coatstand, walker*` on the walker shot: 297.05 → 452.68 vs 297.04 → 452.67 (the dust behind them comes back), change correlation 0.9997; with *Steady* 0.8 as well: 387.84 vs 387.80;
+  - campfire: an embers-only hide sphere 810.0 → 670.4 vs 810.2 → 670.6; ember distance fade 810.0 → 507.8 vs 810.2 → 507.8 (correlation 0.99999);
+  - a push shape keyed through the dust at 3 m/s: every mote within 0.0007 cm of the farm's (median), the same as with no shape; at 8 m/s the image correlation is 0.9992 (motes right in front of a fast sphere go left or right of it on tiny differences).
+  - Fixed on the way: the first time the GPU made its pusher texture it knocked out the per-mote data for one step, so the first push run after loading drifted every mote about 1 cm from the farm's. Textures are now always made on a spare unit.
 - **Holdouts:** the **held out (red)** layer in the viewer shows what they remove. In the wide stand-in only about 2% of the dust is behind anything, so switching holdouts off changes little there; the walker shot shows them clearly.
 - **Live viewer:** tested in headless Chromium against the native server, including loading a utility pass from a disk path and the GPU render-to-cache.
 - **Not tested here:** anything inside a real Nuke session (see section 8), and real GPU frame rates. The headless tests ran on a software renderer.

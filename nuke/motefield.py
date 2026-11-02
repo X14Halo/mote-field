@@ -1,5 +1,5 @@
 """
-MoteField for Nuke (prototype v0.7): camera-aware dust motes for comp.
+MoteField for Nuke (prototype v0.8): camera-aware dust motes for comp.
 
 WHAT IT IS
     A Nuke node that adds physically based dust motes to a shot without a 3D render. It reads the shot's utility pass
@@ -33,7 +33,7 @@ The dust is simulated from a fixed seed, so a frame always comes out the same, w
 import math, os, struct, time, zlib, json, hashlib
 import numpy as np
 
-__version__ = '0.7'
+__version__ = '0.8'
 
 # =====================================================================================================
 #  EXR input / output (scanline; single or multi-part; NONE, RLE, ZIPS, ZIP)
@@ -274,6 +274,7 @@ _ROLE = {
     'MV': ['backward', 'backwardmotion', 'motionback', 'motionbackward', 'mvback', 'backmotion', 'motionvectors', 'motionvector',
            'motion', 'mv', 'vel', 'velocity'],
     'C': ['surfacecolor', 'albedo', 'diffusealbedo', 'basecolor', 'diffusecolor', 'surfacealbedo'],
+    'ID': ['objectid', 'objid', 'id', 'idr', 'objectidr', 'matteid'],
 }
 
 
@@ -324,7 +325,97 @@ def survey_layers(exr):
         if all(names) and names[0][0] == names[1][0]:
             found['MV'] = (names[0][0], [names[0][1], names[1][1]])
             break
+    ci = cryptomatte_info(exr)
+    if ci:
+        found['ID'] = (ci[0], [ci[1]])
     return found
+
+
+def _murmur3_32(data, seed=0):
+    """MurmurHash3 (x86, 32 bit), as Cryptomatte hashes object names."""
+    c1, c2, h, n = 0xcc9e2d51, 0x1b873593, seed & M32, len(data)
+    rotl = lambda x, r: ((x << r) | (x >> (32 - r))) & M32
+    for i in range(0, n - n % 4, 4):
+        k = struct.unpack_from('<I', data, i)[0]
+        k = rotl((k * c1) & M32, 15) * c2 & M32
+        h = (rotl(h ^ k, 13) * 5 + 0xe6546b64) & M32
+    k, tail = 0, data[n - n % 4:]
+    for i, ch in enumerate(tail):
+        k |= ch << (8 * i)
+    if tail:
+        h ^= rotl((k * c1) & M32, 15) * c2 & M32
+    h ^= n
+    h ^= h >> 16
+    h = (h * 0x85ebca6b) & M32
+    h ^= h >> 13
+    h = (h * 0xc2b2ae35) & M32
+    return h ^ (h >> 16)
+
+
+def crypto_id(name):
+    """The float32 Cryptomatte id of a name (its hash, kept clear of denormals, inf and nan)."""
+    h = _murmur3_32(name.encode('utf-8'))
+    if ((h >> 23) & 255) in (0, 255):
+        h ^= 1 << 23
+    return float(np.array([h], np.uint32).view(np.float32)[0])
+
+
+def cryptomatte_layer(layer, names):
+    """A one-rank Cryptomatte layer (every pixel fully one object) from an (H, W) array of names ('' = nothing):
+    channels and header attributes, as renderers write them."""
+    uniq = sorted(set(names.ravel()) - {''})
+    ids = {nm: crypto_id(nm) for nm in uniq}
+    lut = np.vectorize(lambda nm: ids.get(nm, 0.0), otypes=[np.float32])
+    idimg = lut(names) if names.size else np.zeros(names.shape, np.float32)
+    cov = (names != '').astype(np.float32)
+    z = np.zeros(names.shape, np.float32)
+    ch = {layer + '00.R': idimg, layer + '00.G': cov, layer + '00.B': z, layer + '00.A': z}
+    key = '%08x' % _murmur3_32(layer.encode('utf-8'))
+    man = json.dumps({nm: '%08x' % np.array([ids[nm]], np.float32).view(np.uint32)[0] for nm in uniq})
+    attrs = {'cryptomatte/%s/name' % key[:7]: ('string', layer), 'cryptomatte/%s/hash' % key[:7]: ('string', 'MurmurHash3_32'),
+             'cryptomatte/%s/conversion' % key[:7]: ('string', 'uint32_to_float32'), 'cryptomatte/%s/manifest' % key[:7]: ('string', man)}
+    return ch, attrs
+
+
+def cryptomatte_info(exr):
+    """The utility pass's object ids: (part, rank-0 id channel, {name: id}) from a Cryptomatte layer (an object one if
+    there are several), or a plain object-id channel (names are the numbers), or None."""
+    best = None
+    for pi, part in enumerate(exr.parts):
+        h = part['header']
+        for k, v in h.items():
+            if not (k.startswith('cryptomatte/') and k.endswith('/name')):
+                continue
+            layer = v.decode('utf-8', 'replace') if isinstance(v, bytes) else str(v)
+            chans = [n for n, t in part['channels']]
+            idc = next((c for c in chans if c.lower() in (layer.lower() + '00.r', layer.lower() + '00.red')), None)
+            if idc is None:
+                continue
+            man = {}
+            raw = h.get(k[:-len('name')] + 'manifest')
+            try:
+                raw = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+                for nm, hx in json.loads(raw or '{}').items():
+                    man[nm] = float(np.array([int(hx, 16)], np.uint32).view(np.float32)[0])
+            except Exception:
+                man = {}
+            score = 2 if 'object' in layer.lower() else 1 if 'asset' in layer.lower() else 0
+            if best is None or score > best[0]:
+                best = (score, pi, idc, man)
+    if best:
+        return best[1], best[2], best[3]
+    for pi, part in enumerate(exr.parts):
+        for n, t in part['channels']:
+            if ''.join(c for c in n.lower() if c.isalnum()) in _ROLE['ID']:
+                return pi, n, None
+    return None
+
+
+def match_names(spec, names):
+    """Names (Cryptomatte-style: comma separated, * and ? wildcards) picked out of names."""
+    import fnmatch
+    pats = [w.strip() for w in str(spec or '').replace('\n', ',').split(',') if w.strip()]
+    return [nm for nm in names if any(fnmatch.fnmatchcase(nm, q) for q in pats)]
 
 
 def _nums(v):
@@ -690,8 +781,8 @@ def standin_settings(view):
     d = dict(units='centimetres', first=STANDIN['first'], last=STANDIN['last'], fps=24.0, shadows='stand-in geometry',
              light_az=az, light_el=el, light_int=inten, light_k=k)
     if V.get('set') == 'campfire':       # embers, no dust
-        d.update(density=0.0, embers=True, ember_pos=(0.0, 0.0, 0.0), ember_radius=30.0, ember_height=55.0, ember_rate=60.0,
-                 ember_pops=0.3, ember_pop_size=0.25, box_center=(0.0, 175.0, 0.0), box_size=(800.0, 330.0, 800.0))
+        d.update(density=0.0, embers=True, ember_pos=(0.0, 0.0, 0.0), ember_radius=30.0, ember_height=55.0, ember_rate=20.0,
+                 ember_pops=0.1, ember_pop_size=0.12, box_center=(0.0, 175.0, 0.0), box_size=(800.0, 330.0, 800.0))
     else:
         d.update(embers=False, box_center=DEFAULTS['box_center'], box_size=DEFAULTS['box_size'])
     return d
@@ -775,8 +866,9 @@ def _cols(A, N):
     return A[:, 0].copy(), A[:, 1].copy(), A[:, 2].copy()
 
 
-def _trace_boxes(O, D, boxes):
-    """Nearest hit of rays from O (shared (1,3) or per ray) along D (N,3) against boxes: t, normal, albedo."""
+def _trace_boxes(O, D, boxes, names=False):
+    """Nearest hit of rays from O (shared (1,3) or per ray) along D (N,3) against boxes: t, normal, albedo (and with
+    names=True, the name of the box each ray hit, '' for none)."""
     N = len(D)
     Ds = np.where(np.abs(D) < 1e-9, 1e-9, D)
     Oc = _cols(O, N)
@@ -784,6 +876,7 @@ def _trace_boxes(O, D, boxes):
     best = np.full(N, np.inf)
     nrm = np.zeros((N, 3))
     alb = np.zeros((N, 3))
+    nm = np.full(N, '', dtype=object) if names else None
     for gmn, gmx, mem in _group_boxes(boxes):
         _, a, b = _slab(Oc, inv, gmn, gmx)
         idx = np.where((b >= np.maximum(a, 1e-4)) & (a < best))[0]
@@ -791,7 +884,7 @@ def _trace_boxes(O, D, boxes):
             continue
         Oi = tuple(c[idx] for c in Oc)
         Ii = tuple(c[idx] for c in inv)
-        for mn, mx, c, _ in mem:
+        for mn, mx, c, bname in mem:
             (nx, ny, nz), tmin, tmax = _slab(Oi, Ii, mn, mx)
             ok = (tmax >= np.maximum(tmin, 1e-4)) & (tmin > 1e-4) & (tmin < best[idx])
             if not ok.any():
@@ -803,7 +896,9 @@ def _trace_boxes(O, D, boxes):
             n[np.arange(len(j)), ax] = -np.sign(Ds[j, ax])
             nrm[j] = n
             alb[j] = c
-    return best, nrm, alb
+            if names:
+                nm[j] = bname
+    return (best, nrm, alb, nm) if names else (best, nrm, alb)
 
 
 def render_standin_frame(frame, width=None, height=None, intensity=None, kelvin=None, view='wide'):
@@ -822,7 +917,7 @@ def render_standin_frame(frame, width=None, height=None, intensity=None, kelvin=
     D = -cam.back[None, :] + sx.reshape(-1, 1) * cam.right[None, :] + sy.reshape(-1, 1) * cam.up[None, :]
     D /= np.linalg.norm(D, axis=1, keepdims=True)
     boxes = standin_boxes(frame, view)
-    t, n, alb = _trace_boxes(cam.pos[None, :], D, boxes)
+    t, n, alb, hitname = _trace_boxes(cam.pos[None, :], D, boxes, names=True)
     hit = np.isfinite(t)
     P = np.zeros((W * H, 3))
     P[hit] = cam.pos + D[hit] * t[hit, None]
@@ -872,10 +967,13 @@ def render_standin_frame(frame, width=None, height=None, intensity=None, kelvin=
             'normal.R': f32(n[:, 0]), 'normal.G': f32(n[:, 1]), 'normal.B': f32(n[:, 2]),
             'depth.Z': f32(depth), 'surfaceColor.R': f32(alb[:, 0]), 'surfaceColor.G': f32(alb[:, 1]), 'surfaceColor.B': f32(alb[:, 2]),
             'backward.R': f32(mvx), 'backward.G': f32(mvy)}
+    crypto, crypto_attrs = cryptomatte_layer('CryptoObject', hitname.reshape(H, W))     # object names, as a renderer writes them
+    util.update(crypto)
     plate = {'R': f32(rgb[:, 0]), 'G': f32(rgb[:, 1]), 'B': f32(rgb[:, 2]), 'A': f32(np.ones(W * H))}
     attrs = {'camToWorld': ('m44f', cam.to_world_m44()), 'focalLength': ('float', cam.focal),
              'horizontalAperture': ('float', cam.film), 'fStop': ('float', cam.fstop),
              'focusDistance': ('float', cam.focus), 'motefield/standin': ('string', 'MoteField stand-in shot, scene units cm')}
+    attrs.update(crypto_attrs)
     return util, plate, attrs
 
 
@@ -912,7 +1010,8 @@ DEFAULTS = dict(
     density=180.0, max_motes=150000, size_min=4.0, size_max=60.0, size_bias=2.4,
     flakes=18.0, fibers=1.2, fluff=0.4, flake_scale=1.0, fiber_scale=1.0, fluff_scale=0.6,
     # scattering
-    brightness=1.0, forward=0.65, shadow_fill=0.35, glint=0.4, tumble=1.0, tint=(1.0, 1.0, 1.0),
+    brightness=1.0, forward=0.65, shadow_fill=0.35, glint=0.4, tumble=1.0, tint=(1.0, 1.0, 1.0), steady=0.0,
+    cam_fade_near=0.0, cam_fade_far=0.0, ember_fade_near=0.0, ember_fade_far=0.0, shapes='[]',
     # air (cm/s, metres for eddy size)
     speed=1.0, drift=1.2, drift_dir=200.0, lift=0.0, eddies=3.0, eddy_size=1.4, micro=0.8, thermal=1.5, settle=0.5,
     preroll=48, substeps=2,
@@ -921,17 +1020,17 @@ DEFAULTS = dict(
     # key light: a directional light
     light_az=25.0, light_el=33.0, light_int=6.0, light_k=5000.0, light_rgb=(1.0, 1.0, 1.0), bounce=1.0, shadows='stand-in geometry', interior=True, shadow_soft=3.0,
     # lens (0 = use the camera from the utility pass headers)
-    focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, dof_view=True, mb_view=False, blades=0, max_bokeh=110.0,
+    focal=0.0, film=0.0, fstop=0.0, focus=0.0, dof=True, dof_view=True, mb_view=True, blades=0, max_bokeh=110.0,
     cateye=0.0, anamorphic=0.0, field_curv=0.0, fstop_full=0.0, front_mult=1.0, back_mult=1.0,
     bokeh_image='', bokeh_rot=0.0, bokeh_falloff=0.0,
     # shutter: as on the studio cameras (180 degrees, backward, backwardsShape)
     shutter=180.0, shutter_mode='backward', shutter_shape='backwardsShape', mb=True,
     # embers (scene units for the emitter, mm for ember size, m/s for speeds)
-    embers=False, ember_pos=(-150.0, 0.0, -250.0), ember_radius=30.0, ember_height=55.0, ember_rate=60.0, ember_life=1.0,
+    embers=False, ember_pos=(-150.0, 0.0, -250.0), ember_radius=30.0, ember_height=55.0, ember_rate=20.0, ember_life=1.0,
     ember_temp=1300.0, ember_size=0.6, ember_gain=1.0, ember_twinkle=0.6, ember_rise=2.2, ember_spread=1.0, ember_turb=0.9,
-    ember_flutter=1.0, ember_wind=0.3, ember_wind_dir=200.0, ember_pops=0.6, ember_pop_size=0.45,
+    ember_flutter=1.0, ember_wind=0.3, ember_wind_dir=200.0, ember_pops=0.1, ember_pop_size=0.12,
     # holdouts
-    holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0,
+    holdout=True, fg_fade=False, fg_near=0.0, fg_far=0.0, holdout_skip='',
     cache='', standin_json='', hold_frame=0, standin_view='wide',
 )
 
@@ -949,7 +1048,7 @@ def settings(**kw):
 
 
 def _sim_key(p):
-    return hashlib.md5(json.dumps([p[k] for k in SIM_KEYS], default=str).encode()).hexdigest()
+    return hashlib.md5(json.dumps([p[k] for k in SIM_KEYS] + [push_shapes_key(p)], default=str).encode()).hexdigest()
 
 
 # =====================================================================================================
@@ -975,6 +1074,7 @@ class Shot(object):
         self.su = UNITS.get(units, 0.01)
         self._cams = {}
         self._frames = {}
+        self._ids = {}
         self.layers = None
 
     def _open(self, f):
@@ -1012,6 +1112,38 @@ class Shot(object):
                                  'horizontal FOV or focal length + aperture).' % f)
             self._cams[f] = c
         return self._cams[f]
+
+    def object_ids(self, f):
+        """(H, W) object ids of frame f (rank 0 of its Cryptomatte, or its object-id channel) and {name: id}; (None, {})
+        when the utility pass has neither. A plain id channel's names are its numbers."""
+        if f in self._ids:
+            return self._ids[f]
+        e = self._open(f)
+        try:
+            ci = cryptomatte_info(e)
+            out = (None, {})
+            if ci:
+                img = e.read(ci[0], [ci[1]])[ci[1]]
+                names = ci[2]
+                if names is None:
+                    names = {('%g' % v): float(v) for v in np.unique(img[img != 0])[:4096]}
+                out = (img, names)
+        finally:
+            e.close()
+        if len(self._ids) > 4:
+            self._ids.pop(next(iter(self._ids)))
+        self._ids[f] = out
+        return out
+
+    def holdout_skip(self, f, spec):
+        """Pixels of frame f showing an object named in spec (comma separated, * wildcards), or None."""
+        if not str(spec or '').strip():
+            return None
+        img, names = self.object_ids(f)
+        sel = match_names(spec, sorted(names)) if img is not None else []
+        if not sel:
+            return None
+        return np.isin(img, np.array([names[n] for n in sel], np.float32))
 
     def surface(self, f):
         """(H, W) distance from the camera to what each pixel sees (scene units, 0 = nothing), plus the world positions."""
@@ -1953,20 +2085,155 @@ def mover_ids(p, found):
     return set(int(x) for x in s.replace(',', ' ').split() if x.isdigit())
 
 
+# =====================================================================================================
+#  Shapes: spheres and boxes placed (and keyed) in the shot that hide the dust / embers inside or outside them, with a
+#  soft edge, or push the dust like a moving thing. Stored as JSON in the 'shapes' knob; the live viewer edits them.
+# =====================================================================================================
+SHAPE_MAX = 8             # hide shapes the GPU takes (push shapes join the pushers)
+SHAPE_MODES = ('hide inside', 'hide outside', 'push')
+
+
+def parse_shapes(p):
+    """The shapes in p['shapes'] (a JSON list), cleaned up: each {name, kind, mode, target, falloff, on, keys: [{f, c, s, r}]}
+    with keys sorted by frame. Shapes that are off or have no keys are left out."""
+    raw = p.get('shapes') or '[]'
+    try:
+        L = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except Exception:
+        return []
+    out = []
+    for i, sh in enumerate(L if isinstance(L, list) else []):
+        if not isinstance(sh, dict) or not sh.get('on', True):
+            continue
+        keys = []
+        for k in sh.get('keys') or []:
+            try:
+                keys.append(dict(f=float(k['f']), c=[float(v) for v in k['c']][:3], s=[max(float(v), 1e-3) for v in k['s']][:3],
+                                 r=float(k.get('r', 0.0))))
+            except Exception:
+                pass
+        if not keys:
+            continue
+        keys.sort(key=lambda k: k['f'])
+        mode = sh.get('mode', 'hide inside')
+        out.append(dict(name=str(sh.get('name') or 'Shape %d' % (i + 1)), kind='box' if sh.get('kind') == 'box' else 'sphere',
+                        mode=mode if mode in SHAPE_MODES else 'hide inside',
+                        target=sh.get('target') if sh.get('target') in ('dust', 'embers') else 'both',
+                        falloff=max(float(sh.get('falloff', 0.0) or 0.0), 0.0), keys=keys))
+    return out
+
+
+def _hermite(keys, f, get):
+    """Value and slope (per frame) at frame f of a keyed quantity: smooth (Catmull-Rom) through the keys, held before the
+    first and after the last. get(key) -> np array. The live viewer interpolates the same way."""
+    n = len(keys)
+    if n == 1 or f <= keys[0]['f']:
+        return get(keys[0]), get(keys[0]) * 0.0
+    if f >= keys[-1]['f']:
+        return get(keys[-1]), get(keys[-1]) * 0.0
+    i = 0
+    while keys[i + 1]['f'] < f:
+        i += 1
+    P = [get(k) for k in keys]
+    F = [k['f'] for k in keys]
+
+    def slope(j):
+        a, b = max(j - 1, 0), min(j + 1, n - 1)
+        return (P[b] - P[a]) / max(F[b] - F[a], 1e-6)
+    dt = max(F[i + 1] - F[i], 1e-6)
+    t = (f - F[i]) / dt
+    m0, m1 = slope(i) * dt, slope(i + 1) * dt
+    h00, h10, h01, h11 = 2 * t ** 3 - 3 * t * t + 1, t ** 3 - 2 * t * t + t, -2 * t ** 3 + 3 * t * t, t ** 3 - t * t
+    d00, d10, d01, d11 = 6 * t * t - 6 * t, 3 * t * t - 4 * t + 1, -6 * t * t + 6 * t, 3 * t * t - 2 * t
+    v = h00 * P[i] + h10 * m0 + h01 * P[i + 1] + h11 * m1
+    dv = (d00 * P[i] + d10 * m0 + d01 * P[i + 1] + d11 * m1) / dt
+    return v, dv
+
+
+def shape_at(sh, f):
+    """A shape on frame f: centre, size, Y rotation (degrees) and the centre's velocity (scene units per frame)."""
+    c, dc = _hermite(sh['keys'], f, lambda k: np.array(k['c'], np.float64))
+    sz, _ = _hermite(sh['keys'], f, lambda k: np.array(k['s'], np.float64))
+    r, _ = _hermite(sh['keys'], f, lambda k: np.array([k['r']], np.float64))
+    return c, np.maximum(sz, 1e-3), float(r[0]), dc
+
+
+def shape_sd(kind, c, sz, rdeg, P):
+    """Signed distance (scene units; < 0 inside) from points P (n, 3) to a sphere (sz = diameters, an ellipsoid when they
+    differ) or a box (sz = edge lengths), turned rdeg about the vertical."""
+    a = math.radians(rdeg)
+    ca, sa = math.cos(a), math.sin(a)
+    d = P - c
+    q = np.stack([ca * d[:, 0] - sa * d[:, 2], d[:, 1], sa * d[:, 0] + ca * d[:, 2]], 1)
+    h = sz * 0.5
+    if kind == 'box':
+        e = np.abs(q) - h
+        return np.linalg.norm(np.maximum(e, 0.0), axis=1) + np.minimum(e.max(1), 0.0)
+    return (np.linalg.norm(q / h, axis=1) - 1.0) * h.min()
+
+
+def shape_mask(p, P, frame, target, shapes=None):
+    """How much of each point (scene units) the hide shapes leave, 0..1: 'hide inside' shapes take away what is in them,
+    'hide outside' ones what isn't, over a soft edge 'falloff' wide (scene units) centred on the surface."""
+    w = np.ones(len(P))
+    for sh in (parse_shapes(p) if shapes is None else shapes):
+        if sh['mode'] == 'push' or sh['target'] not in ('both', target):
+            continue
+        c, sz, r, _ = shape_at(sh, frame)
+        sd = shape_sd(sh['kind'], c, sz, r, P)
+        F = sh['falloff']
+        inside = 1.0 - (_smooth01(sd / F + 0.5) if F > 0 else (sd >= 0).astype(np.float64))
+        w *= inside if sh['mode'] == 'hide outside' else 1.0 - inside
+    return w
+
+
+def push_shapes_key(p):
+    """What of the shapes the dust simulation depends on (the push shapes), for its cache keys."""
+    return json.dumps([sh for sh in parse_shapes(p) if sh['mode'] == 'push'], sort_keys=True)
+
+
+def shape_pushers(p, su):
+    """frame -> rows (cx, cy, cz, r, vx, vy, vz; m and m/s) of the push shapes, like the movers found in the shot: each
+    pushes like a ball of its size. None when there are none."""
+    sh = [x for x in parse_shapes(p) if x['mode'] == 'push']
+    if not sh:
+        return None
+    fps = float(p['fps'])
+
+    def get(f):
+        rows = []
+        for x in sh:
+            c, sz, _, dc = shape_at(x, float(f))
+            rows.append(list(c * su) + [float(np.mean(sz)) * 0.5 * su] + list(dc * su * fps))
+        return np.array(rows, np.float64)
+    return get
+
+
+
 def make_pushers(p, shot, progress=None):
     """frame -> the pushers on that frame (rows of cx, cy, cz, r, vx, vy, vz in m, m/s) or None; None when pushers are off."""
     # always from the utility pass (position + backward motion vectors), the stand-in walker included, so the stand-in
     # tests exactly what a real shot does
-    if not p.get('push') or shot is None:
-        return None
-    found = find_movers(p, shot, progress)
-    ids = mover_ids(p, found)
-    tab = {}
-    for f, rows in (found or {}).get('frames', {}).items():
-        sel = [q[1:] for q in rows if q[0] in ids]
-        if sel:
-            tab[int(f)] = np.array(sel, np.float64)
-    return tab.get
+    # plus the push shapes keyed in the viewer (on whether or not the shot's movers are)
+    sp = shape_pushers(p, UNITS.get(p['units'], 0.01))
+    tab = None
+    if p.get('push') and shot is not None:
+        found = find_movers(p, shot, progress)
+        ids = mover_ids(p, found)
+        tab = {}
+        for f, rows in (found or {}).get('frames', {}).items():
+            sel = [q[1:] for q in rows if q[0] in ids]
+            if sel:
+                tab[int(f)] = np.array(sel, np.float64)
+    if sp is None:
+        return tab.get if tab is not None else None
+    if not tab:
+        return sp
+
+    def get(f):
+        a = tab.get(f)
+        return sp(f) if a is None else np.concatenate([a, sp(f)])
+    return get
 
 
 def pushers_for_step(p, get, frame):
@@ -2277,6 +2544,9 @@ def _frame_ctx(p, shot, frame, su):
     hold = int(p.get('hold_frame') or 0)          # review aid: keep the camera (and holdouts) on one frame while the dust moves
     cam = shot.camera(hold or frame)
     dist_img, _ = shot.surface(hold or frame)
+    skip = shot.holdout_skip(hold or frame, p.get('holdout_skip')) if p['holdout'] and hasattr(shot, 'holdout_skip') else None
+    if skip is not None:                          # objects that never hold out: see-through, as if nothing were there
+        dist_img = np.where(skip, 0.0, dist_img).astype(np.float32)
     H0, W0 = dist_img.shape
     sc = max(min(float(p['proxy']), 1.0), 0.1)
     W, H = max(int(round(W0 * sc)), 8), max(int(round(H0 * sc)), 8)
@@ -2285,13 +2555,23 @@ def _frame_ctx(p, shot, frame, su):
     s = p['shutter'] / 360.0 if p['mb'] else 0.0
     mode = str(p['shutter_mode']).lower()
     t_open, t_close = (-s, 0.0) if mode.startswith('back') else (0.0, s) if mode.startswith('for') else (-s / 2, s / 2)
-    return dict(su=su, hold=hold, cam=cam, dist_img=dist_img, W0=W0, H0=H0, W=W, H=H, sc=sc, focal=focal,
+    return dict(su=su, frame=frame, hold=hold, cam=cam, dist_img=dist_img, W0=W0, H0=H0, W=W, H=H, sc=sc, focal=focal,
                 film=p['film'] or cam.film or (2 * focal * math.tan(cam.hfov / 2)), fstop=fstop,
                 focus_m=(p['focus'] or cam.focus or 500.0) * su, focal_px=W / (2 * math.tan(cam.hfov / 2)),
                 t_open=t_open, t_close=t_close,
                 cam_o=cam if hold else shot.camera(frame + t_open), cam_c=cam if hold else shot.camera(frame + t_close),
                 tsec=(frame - p['first']) / float(p['fps']) * p['speed'], sec_per_frame=p['speed'] / float(p['fps']),
                 margin=p['max_bokeh'] * sc + 40, lens=lens_settings(p, cam, fstop))
+
+
+def cam_fade(dist, near, far):
+    """Weight of things at dist from the camera (scene units): 0 nearer than near, rising to 1 at far (both 0 = off)."""
+    near, far = float(near or 0.0), float(far or 0.0)
+    if far > near:
+        return _smooth01((dist - near) / (far - near))
+    if near > 0:
+        return (dist >= near).astype(np.float64)
+    return np.ones(len(dist))
 
 
 def _coc(p, X, px, py, z_m):
@@ -2317,7 +2597,8 @@ def _draw(p, X, P, V, col, rs, rsk, held, unheld, fiber=None, max_s=24):
     sc, margin, n = X['sc'], X['margin'], len(P)
     px, py, zc = cam.project(P, W, H)
     dist = np.linalg.norm(P - cam.pos, axis=1)
-    R = np.clip(np.abs(_coc(p, X, px, py, zc * su)) * 0.5, 0.25, p['max_bokeh'] * sc)
+    steady = float(p.get('steady', 0.0))
+    R = np.clip(np.abs(_coc(p, X, px, py, zc * su)) * 0.5, 0.25 + 0.5 * steady, p['max_bokeh'] * sc)
 
     # shutter: where each point is on screen when the shutter opens and closes
     spf = X['sec_per_frame']
@@ -2341,16 +2622,22 @@ def _draw(p, X, P, V, col, rs, rsk, held, unheld, fiber=None, max_s=24):
     hold = np.ones(n)
     if p['holdout']:
         dist_img = X['dist_img']
-        sx = np.clip((px / W * W0).astype(np.intp), 0, W0 - 1)
-        sy = np.clip((py / H * H0).astype(np.intp), 0, H0 - 1)
-        surf = dist_img[sy, sx].astype(np.float64)
-        occl = np.where(surf > 0, _smooth01(((dist - surf) / np.maximum(surf, 1e-6) + 0.01) / 0.04), 0.0)
-        fgw = np.ones(n)
-        if p['fg_fade'] and p['fg_far'] > p['fg_near']:
-            fgw = _smooth01((surf - p['fg_near']) / (p['fg_far'] - p['fg_near']))
-        elif p['fg_fade']:
-            fgw = (surf >= p['fg_near']).astype(np.float64)
-        hold = 1 - occl * fgw
+        # steady: averaged over the mote's blur, so it fades behind an edge instead of popping off as its centre crosses
+        taps = [(0.0, 0.0)] if steady <= 0 else [(0.0, 0.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)]
+        rr = steady * Reff * 0.7071
+        hold = np.zeros(n)
+        for ox, oy in taps:
+            sx = np.clip(((px + ox * rr) / W * W0).astype(np.intp), 0, W0 - 1)
+            sy = np.clip(((py + oy * rr) / H * H0).astype(np.intp), 0, H0 - 1)
+            surf = dist_img[sy, sx].astype(np.float64)
+            occl = np.where(surf > 0, _smooth01(((dist - surf) / np.maximum(surf, 1e-6) + 0.01) / 0.04), 0.0)
+            fgw = np.ones(n)                        # surfaces near the camera can be let off holding out
+            if p['fg_far'] > p['fg_near']:
+                fgw = _smooth01((surf - p['fg_near']) / (p['fg_far'] - p['fg_near']))
+            elif p['fg_near'] > 0:
+                fgw = (surf >= p['fg_near']).astype(np.float64)
+            hold += 1 - occl * fgw
+        hold /= len(taps)
 
     # expand into samples along the shutter (and along fibres)
     NS = S * K
@@ -2453,6 +2740,8 @@ def render_frame(p, shot, frame, sim, progress=None):
     zc = -(d @ cam.back)
     near = 0.05 / su
     weight = weight * _smooth01((zc * su - 0.06) / 0.24)      # motes fade out as they come right up to the lens
+    weight = weight * cam_fade(np.linalg.norm(d, axis=1), p.get('cam_fade_near'), p.get('cam_fade_far'))
+    weight = weight * shape_mask(p, P, frame, 'dust')
     keep = (weight > 1e-4) & (zc > near)
     px, py, _ = cam.project(P, W, H)
     margin = X['margin']
@@ -2462,7 +2751,8 @@ def render_frame(p, shot, frame, sim, progress=None):
         return held.astype(np.float32), unheld.astype(np.float32)
     P, V, weight, zc = P[idx], V[idx], weight[idx], zc[idx]
     typ, hh, vis = sim.type[idx], sim.h[idx], sim._vis[idx]
-    soft_r = p.get('shadow_soft', 0.0) * 0.01 / su
+    steady = float(p.get('steady', 0.0))             # less popping: softer shadow edges, steadier flakes, fewer glints
+    soft_r = (p.get('shadow_soft', 0.0) + 12.0 * steady) * 0.01 / su
     if sim.light is not None and soft_r > 0:
         vis = soft_visibility(sim.light, P, light_dir(p['light_az'], p['light_el']), soft_r)
     z_m = zc * su
@@ -2481,12 +2771,13 @@ def render_frame(p, shot, frame, sim, progress=None):
     tcol = np.ones((len(idx), 3))
     m = typ == GRIT
     dg = p['size_min'] * (p['size_max'] / max(p['size_min'], 1e-3)) ** (u[m] ** p['size_bias'])
-    sigma[m] = (dg / 40.0) ** 2 * (1 + 0.12 * np.sin(2 * math.pi * (rate[m] * tsec * 1.3 + hh[m, 7])))
+    sigma[m] = (dg / 40.0) ** 2 * (1 + 0.12 * (1 - steady) * np.sin(2 * math.pi * (rate[m] * tsec * 1.3 + hh[m, 7])))
     rs[m] = 0.5 * dg * 1e-6 * ppm[m]
     m = typ == FLAKE
     df = 30.0 * 8.0 ** (u[m] ** 2.2) * p['flake_scale']
     nl = np.abs(ax[m] @ L)
     nv = np.abs((ax[m] * Vd[m]).sum(1))
+    nl, nv = nl + (0.5 - nl) * steady, nv + (0.5 - nv) * steady       # a tumbling flake's flash, toward its average
     sigma[m] = (df * df / 1600.0) * (0.4 * nl * (0.25 + 0.75 * nv) + 0.03)
     rs[m] = 0.5 * df * 1e-6 * ppm[m]
     gph[m] = p['forward'] * 0.85
@@ -2514,7 +2805,7 @@ def render_frame(p, shot, frame, sim, progress=None):
     hg = (1 - gph ** 2) / np.power(np.maximum(1 + gph ** 2 - 2 * gph * c, 1e-4), 1.5)
     rad = sun[None, :] * (vis * hg)[:, None]
     m = (typ == FLAKE) & (vis > 0)
-    if m.any() and p['glint'] > 0:
+    if m.any() and p['glint'] * (1 - steady) > 0:
         Hh = L[None, :] + Vd[m]
         Hh /= np.linalg.norm(Hh, axis=1, keepdims=True)
         g = 0.0
@@ -2523,7 +2814,7 @@ def render_frame(p, shot, frame, sim, progress=None):
         for i in range(4):
             tt = tsec + (t_open + (t_close - t_open) * i / 3.0) * sec_per_frame
             g = g + gw[i] * np.abs((_tumble_axis(hh[m, 4], hh[m, 5], hh[m, 6], rate[m], tt) * Hh).sum(1)) ** 90
-        rad[m] += sun[None, :] * (vis[m] * g * 0.25 * 8 * p['glint'] * (0.4 + 0.6 * hh[m, 2]))[:, None]
+        rad[m] += sun[None, :] * (vis[m] * g * 0.25 * 8 * p['glint'] * (1 - steady) * (0.4 + 0.6 * hh[m, 2]))[:, None]
     # fill: bounce light off the sunlit patches of the set, plus an overall fill
     bpos, bnrm, bflx, bamb = bounce_lights(p, shot, sim.light) if sim.light is not None else (np.zeros((0, 3)),) * 3 + (sun * 0.004,)
     Ei = np.tile(bamb, (len(idx), 1))
@@ -2573,6 +2864,8 @@ def render_embers(p, X, es, held, unheld):
     T0 = p['ember_temp'] * (0.9 + 0.2 * rnd(8))
     T = 650.0 + (T0 - 650.0) * np.exp(-age / (life * 0.95))          # radiative cooling: yellow-orange, then dull red
     env = _smooth01(age / 0.03) * (1 - _smooth01((age / life - 0.82) / 0.18))
+    env = env * cam_fade(np.linalg.norm(P - cam.pos, axis=1), p.get('ember_fade_near'), p.get('ember_fade_far'))
+    env = env * shape_mask(p, P, X['frame'], 'embers')
     f1, p1, f2, p2 = 3 + 11 * rnd(9), rnd(10), 0.8 + 3.2 * rnd(11), rnd(12)
     exp_t = (X['t_close'] - X['t_open']) * X['sec_per_frame']
     tw = np.zeros(len(sl))
@@ -2632,6 +2925,83 @@ def planck_rgb(T):
     return 1.0 / (lam ** 5 * (np.exp(np.minimum(14388.0 / (lam * T), 80.0)) - 1.0))
 
 
+# ---- the MoteField mockup's ember air, exactly: curl of 3D simplex noise (Ashima / Gustavson) and value-noise gusts ----
+def _mod289(x):
+    # x holds whole numbers: +0.5 keeps the division clear of whole numbers, so 32-bit (GPU) and 64-bit agree exactly
+    return x - np.floor((x + 0.5) * (1.0 / 289.0)) * 289.0
+
+
+def _permute(x):
+    return _mod289(_mod289(x * 34.0 + 1.0) * x)
+
+
+def _snoise(v):
+    """3D simplex noise of points v (n, 3), as the GLSL snoise the mockup and the viewer use."""
+    v = np.asarray(v, np.float64)
+    i = np.floor(v + v.sum(1, keepdims=True) / 3.0)
+    x0 = v - i + i.sum(1, keepdims=True) / 6.0
+    g = (x0 >= x0[:, [1, 2, 0]]).astype(np.float64)
+    l = 1.0 - g
+    lz = l[:, [2, 0, 1]]
+    i1, i2 = np.minimum(g, lz), np.maximum(g, lz)
+    x1, x2, x3 = x0 - i1 + 1.0 / 6.0, x0 - i2 + 1.0 / 3.0, x0 - 0.5
+    i = _mod289(i)
+    o = np.zeros((len(v), 1))
+    pz = np.concatenate([o, i1[:, 2:3], i2[:, 2:3], o + 1.0], 1)
+    py = np.concatenate([o, i1[:, 1:2], i2[:, 1:2], o + 1.0], 1)
+    px = np.concatenate([o, i1[:, 0:1], i2[:, 0:1], o + 1.0], 1)
+    p = _permute(_permute(_permute(i[:, 2:3] + pz) + i[:, 1:2] + py) + i[:, 0:1] + px)
+    j = p - 49.0 * np.floor((p + 0.5) / 49.0)            # whole-number maths, exact on the GPU too
+    x_ = np.floor((j + 0.5) / 7.0)
+    y_ = j - 7.0 * x_
+    xi, yi = 4.0 * x_ - 13.0, 4.0 * y_ - 13.0           # the gradient (x, y, h) * 14, all whole numbers, so the
+    hi = 14.0 - np.abs(xi) - np.abs(yi)                  # sign of h (often exactly 0) is the same in 32 and 64 bits
+    x, y, h = xi / 14.0, yi / 14.0, hi / 14.0
+    b0 = np.stack([x[:, 0], x[:, 1], y[:, 0], y[:, 1]], 1)
+    b1 = np.stack([x[:, 2], x[:, 3], y[:, 2], y[:, 3]], 1)
+    s0, s1 = np.floor(b0) * 2.0 + 1.0, np.floor(b1) * 2.0 + 1.0
+    sh = -(hi < 0.5).astype(np.float64)
+    a0 = b0[:, [0, 2, 1, 3]] + s0[:, [0, 2, 1, 3]] * sh[:, [0, 0, 1, 1]]
+    a1 = b1[:, [0, 2, 1, 3]] + s1[:, [0, 2, 1, 3]] * sh[:, [2, 2, 3, 3]]
+    P = [np.stack([a0[:, 0], a0[:, 1], h[:, 0]], 1), np.stack([a0[:, 2], a0[:, 3], h[:, 1]], 1),
+         np.stack([a1[:, 0], a1[:, 1], h[:, 2]], 1), np.stack([a1[:, 2], a1[:, 3], h[:, 3]], 1)]
+    P = [q * (1.79284291400159 - 0.85373472095314 * (q * q).sum(1, keepdims=True)) for q in P]
+    X = [x0, x1, x2, x3]
+    m = np.maximum(0.6 - np.stack([(q * q).sum(1) for q in X], 1), 0.0)
+    m = m * m
+    return 42.0 * (m * m * np.stack([(P[k] * X[k]).sum(1) for k in range(4)], 1)).sum(1)
+
+
+def _pot(p):
+    return np.stack([_snoise(p), _snoise(p + np.array([31.4, 17.1, -9.7])), _snoise(p + np.array([-12.3, 45.6, 7.8]))], 1)
+
+
+def _curl(p):
+    e = 0.1
+    dx, dy, dz = np.array([e, 0, 0]), np.array([0, e, 0]), np.array([0, 0, e])
+    a, b, c, d, f, g = _pot(p + dx), _pot(p - dx), _pot(p + dy), _pot(p - dy), _pot(p + dz), _pot(p - dz)
+    return np.stack([(c[:, 2] - d[:, 2]) - (f[:, 1] - g[:, 1]), (f[:, 0] - g[:, 0]) - (a[:, 2] - b[:, 2]),
+                     (a[:, 1] - b[:, 1]) - (c[:, 0] - d[:, 0])], 1) / (2 * e)
+
+
+def _hash13(p):
+    p = p * 0.1031
+    p = p - np.floor(p)
+    p = p + (p * (p[:, [2, 1, 0]] + 31.32)).sum(1, keepdims=True)
+    q = (p[:, 0] + p[:, 1]) * p[:, 2]
+    return q - np.floor(q)
+
+
+def _vnoise(x):
+    i = np.floor(x)
+    f = x - i
+    f = f * f * (3 - 2 * f)
+    H = lambda dx, dy, dz: _hash13(i + np.array([dx, dy, dz], np.float64))
+    mx = lambda a, b, t: a + (b - a) * t
+    return mx(mx(mx(H(0, 0, 0), H(1, 0, 0), f[:, 0]), mx(H(0, 1, 0), H(1, 1, 0), f[:, 0]), f[:, 1]),
+              mx(mx(H(0, 0, 1), H(1, 0, 1), f[:, 0]), mx(H(0, 1, 1), H(1, 1, 1), f[:, 0]), f[:, 1]), f[:, 2])
+
+
 def ember_counts(p):
     """steady slots, burst groups, sparks per pop."""
     ns = int(min(EMBER_STEADY_MAX, round(max(p['ember_rate'], 0.0) * 1.38 * max(p['ember_life'], 0.05))))
@@ -2664,8 +3034,6 @@ class EmberSim(object):
         self.V = np.zeros((n, 3))
         self.cyc = np.where(self.burst, 0, 0).astype(np.int64)
         self.age = np.where(self.burst, -1.0, 0.0)
-        mrng = np.random.default_rng(self.seed * 7919 + 4242)
-        self.modes = [DustSim._modes(mrng, 24, 0.6), DustSim._modes(mrng, 16, 0.15)]
         a = math.radians(p['ember_wind_dir'])
         self.wind = np.array([math.cos(a), 0.0, math.sin(a)]) * p['ember_wind']
         self.t = 0.0
@@ -2686,22 +3054,39 @@ class EmberSim(object):
         rp = max(float(self.p['ember_pops']), 1e-6)
         return (n * self.ng + g + 0.8 * ember_rnd(self.BURST_ID + g, n, 20, self.seed)) / rp
 
-    def _spawn(self, i, cy):
-        """New embers at slots i (index array), life number cy: born in the flames, more often near the tips (the flame
-        narrows with height); steady ones launched up in a cone, pops thrown out fast."""
-        if not len(i):
-            return
-        sl, p = self.slot[i], self.p
+    def _launch(self, sl, cy, b):
+        """Birth place and launch velocity of slots sl, life number cy (b: pop sparks): born in the flames, more often
+        near the tips (the flame narrows with height); steady ones launched up in a cone, pops thrown out fast."""
+        p = self.p
         r_ = lambda k: ember_rnd(sl, cy, k, self.seed)
         hh = r_(0) ** 0.7
         a, r = r_(1) * 2 * math.pi, np.sqrt(r_(2)) * self.rad * (1 - 0.6 * hh)
-        self.P[i] = self.emit + np.stack([np.cos(a) * r, hh * self.hgt, np.sin(a) * r], 1)
+        P = self.emit + np.stack([np.cos(a) * r, hh * self.hgt, np.sin(a) * r], 1)
         ca, cone, sp = r_(3) * 2 * math.pi, p['ember_spread'] * 0.6 * np.sqrt(r_(4)), p['ember_rise'] * (0.5 + 0.85 * r_(5))
         V = np.stack([np.sin(cone) * np.cos(ca), np.cos(cone), np.sin(cone) * np.sin(ca)], 1) * sp[:, None]
         bca, bel = r_(17) * 2 * math.pi, 0.45 + 0.95 * r_(18)
         bsp = (2.5 + 3.0 * p['ember_pop_size']) * (0.45 + 0.85 * r_(19))
         Vb = np.stack([np.cos(bca) * np.cos(bel), np.sin(bel), np.sin(bca) * np.cos(bel)], 1) * bsp[:, None]
-        self.V[i] = np.where(self.burst[i][:, None], Vb, V)
+        return P, np.where(b[:, None], Vb, V)
+
+    def _spawn(self, i, cy):
+        if not len(i):
+            return
+        self.P[i], self.V[i] = self._launch(self.slot[i], cy, self.burst[i])
+
+    def _tau(self, sz, b):
+        return np.where(b, 0.35 + 0.6 * sz, 0.12 + 0.35 * sz)
+
+    def _guide(self, i, sl, cy, sz):
+        """Where the ember would be in smooth air: its launch eased into a steady drift. The turbulence is read along
+        this path rather than at the ember itself, so the swirl can't feed on its own tiny rounding differences and
+        snowball -- the farm (64-bit) and the viewer (32-bit GPU) keep the same ember paths."""
+        b, a = self.burst[i], self.age[i]
+        S, V0 = self._launch(sl, cy, b)
+        tau = self._tau(sz, b)
+        A = np.tile(self.wind * 0.8, (len(i), 1))
+        A[:, 1] += np.where(b, 0.0, 0.45 * self.p['ember_rise']) - np.where(b, 0.8 + 2.5 * sz, 0.22 * sz)
+        return S + A * a[:, None] + (V0 - A) * (tau * (1 - np.exp(-a / tau)))[:, None]
 
     def attr_cycle(self):
         """The life number each slot's look comes from (a pop slot has already counted its firing)."""
@@ -2711,33 +3096,32 @@ class EmberSim(object):
         """The air an ember rides in: a buoyant plume that widens and slows with height, entrainment near the base,
         turbulence, wind, and the flutter of a spinning flake of ash."""
         p, P, t = self.p, self.P[i], self.t
+        sl, cy, b = self.slot[i], np.where(self.burst[i], self.cyc[i] - 1, self.cyc[i]), self.burst[i]
+        sz = self.size(sl, cy)
+        G = self._guide(i, sl, cy, sz)
         rel = P - self.emit
         h = np.maximum(rel[:, 1], 0.0)
+        hg = np.maximum(G[:, 1] - self.emit[1], 0.0)
         r = np.hypot(rel[:, 0], rel[:, 2])
         rise = p['ember_rise']
         sig = self.rad * 0.9 + 0.08 + h * 0.18
-        gust = 0.7 + 0.6 * (0.5 + 0.25 * np.sin(2.1 * t - 1.1 * h + 0.3) + 0.25 * np.sin(3.7 * t - 0.6 * h + 1.7))
+        gust = 0.7 + 0.6 * _vnoise(np.stack([np.full(len(h), t * 1.3), hg * 0.8 - t * 1.1, np.full(len(h), 3.0)], 1))
         air = self.wind[None, :] * np.minimum(h * 0.8 + 0.25, 1.0)[:, None]
         air[:, 1] += 0.75 * rise * np.exp(-r * r / (2 * sig * sig)) * gust / (1 + h * 0.25)
         k = 0.06 * np.exp(-h * 2) * rise / (r + 0.15)
         air[:, 0] -= rel[:, 0] * k
         air[:, 2] -= rel[:, 2] * k
         turb = p['ember_turb']
-        if turb > 0:
-            for (K, A, ph, om), adv, amp in ((self.modes[0], 0.4, turb * (0.25 + np.minimum(h, 2.0) * 0.5)),
-                                              (self.modes[1], 0.3, turb * 0.16 * np.minimum(0.3 + h, 1.5))):
-                q = P - np.array([0.0, adv * t, 0.0])
-                air += (0.6 * (np.sin(q @ K.T + ph + om * (t * 0.5)) @ A)) * amp[:, None]
-        sl, cy = self.slot[i], np.where(self.burst[i], self.cyc[i] - 1, self.cyc[i])
+        if turb > 0:                    # swirling turbulence at two scales, drifting up with the plume
+            air += _curl(G * 2.2 + np.array([0.0, -t * 0.9, t * 0.2])) * (turb * (0.25 + np.minimum(hg, 2.0) * 0.5))[:, None]
+            air += _curl(G * 7.0 + np.array([0.0, -t * 2.0, t])) * (turb * 0.16 * np.minimum(0.3 + hg, 1.5))[:, None]
         fa = p['ember_flutter'] * (0.08 + 0.34 * ember_rnd(sl, cy, 13, self.seed))
         fw = 2 * math.pi * (1.5 + 4.5 * ember_rnd(sl, cy, 14, self.seed))
         fph = ember_rnd(sl, cy, 15, self.seed) * 2 * math.pi
         sg = np.where(ember_rnd(sl, cy, 16, self.seed) < 0.5, -1.0, 1.0)
         tt = self.age[i] * fw + fph
         air += np.stack([np.cos(tt), 0.35 * np.sin(tt * 1.7 + fph), sg * np.sin(tt)], 1) * fa[:, None]
-        sz = self.size(sl, cy)
-        b = self.burst[i]
-        tau = np.where(b, 0.35 + 0.6 * sz, 0.12 + 0.35 * sz)
+        tau = self._tau(sz, b)
         air[:, 1] -= np.where(b, 0.8 + 2.5 * sz, 0.22 * sz)
         return air, tau
 
@@ -2939,6 +3323,15 @@ _KNOBS = [
     ('Dust', 'tumble', 'float', 'Tumble rate', (0, 3)),
     ('Dust', 'tint', 'color', 'Tint', None),
     ('Dust', 'max_motes', 'int', 'Max motes', None),
+    ('Dust', 'steady', 'float', 'Steady (less popping)', (0, 1)),
+    ('Dust', None, 'text', '<b>Steady</b> calms motes that pop or flicker: flakes flash less as they tumble, glints and grit sparkle fade out, '
+                          'shadow edges soften (+12 cm at 1), tiny motes get a touch of blur so they don\'t shimmer on the pixel grid, and '
+                          'holdouts are averaged over each mote\'s blur so it slides behind an edge instead of blinking off. Dust and embers.', None),
+    ('Dust', None, 'divider', 'Distance from camera', None),
+    ('Dust', 'cam_fade_near', 'float', 'Hidden nearer than', (0, 2000)),
+    ('Dust', 'cam_fade_far', 'float', 'Fully visible from', (0, 2000)),
+    ('Dust', None, 'text', 'Motes fade in with distance from the camera: none nearer than the first distance, full strength from the second '
+                          '(scene units; both 0 = off). Embers have their own on the Embers tab.', None),
     ('Motion', 'speed', 'float', 'Speed', (0, 3)),
     ('Motion', 'drift', 'float', 'Drift (cm/s)', (0, 20)),
     ('Motion', 'drift_dir', 'float', 'Drift heading', (0, 360)),
@@ -2979,7 +3372,7 @@ _KNOBS = [
     ('Camera', 'dof', 'bool', 'Defocus', 'Depth of field everywhere: the viewer and the render (farm).'),
     ('Camera', 'dof_view', 'bool', 'Defocus in the viewer', 'Viewer only: turn off to make the live viewer faster. The render keeps Defocus.'),
     ('Camera', 'mb', 'bool', 'Motion blur', 'Motion blur everywhere: the viewer and the render (farm).'),
-    ('Camera', 'mb_view', 'bool', 'Motion blur in the viewer', 'Viewer only, off by default: on a camera move every mote smears across the frame, which is the slowest thing the viewer draws. The render keeps Motion blur.'),
+    ('Camera', 'mb_view', 'bool', 'Motion blur in the viewer', 'Viewer only: turn off if a camera move plays slowly (every mote smears across the frame). The render keeps Motion blur.'),
     ('Camera', None, 'divider', 'Lens', None),
     ('Camera', 'focal', 'float', 'Focal length (mm, 0 = header)', (0, 200)),
     ('Camera', 'film', 'float', 'Film back width (mm, 0 = header)', (0, 60)),
@@ -3015,6 +3408,8 @@ _KNOBS = [
     ('Embers', 'ember_size', 'float', 'Ember size (mm)', (0.1, 3)),
     ('Embers', 'ember_gain', 'float', 'Brightness', (0, 20)),
     ('Embers', 'ember_twinkle', 'float', 'Twinkle', (0, 1)),
+    ('Embers', 'ember_fade_near', 'float', 'Hidden nearer than', (0, 2000)),
+    ('Embers', 'ember_fade_far', 'float', 'Fully visible from', (0, 2000)),
     ('Embers', None, 'divider', 'Motion', None),
     ('Embers', 'ember_rise', 'float', 'Plume speed (m/s)', (0, 6)),
     ('Embers', 'ember_spread', 'float', 'Launch spread', (0, 2)),
@@ -3028,13 +3423,26 @@ _KNOBS = [
                             'burning wood: short bursts of fast sparks that arc back down. They get the same lens, shutter and holdouts as the dust, '
                             'and are written into RGBA with the dust and on their own in the <b>embers</b> layer.', None),
     ('Holdouts', 'holdout', 'bool', 'Depth holdouts', 'Dust behind what the utility pass sees is held out.'),
-    ('Holdouts', 'fg_fade', 'bool', 'Fade out foreground holdouts', None),
     ('Holdouts', 'fg_near', 'float', 'No holdout nearer than', (0, 2000)),
     ('Holdouts', 'fg_far', 'float', 'Full holdout beyond', (0, 2000)),
-    ('Holdouts', None, 'text', 'Surfaces nearer than the first distance never block dust, rising to a full holdout at the second (scene units). '
-                              'Use it when a foreground character\'s edges cause trouble, then hold the dust out with the character\'s matte in comp. '
-                              'The <b>noholdout</b> layer always has the dust with no holdouts at all. In the live viewer, the <b>held out (red)</b> layer '
-                              'shows the dust the holdouts take away in red: only dust behind something in the utility pass is held out.', None),
+    ('Holdouts', None, 'text', 'Surfaces nearer than the first distance never block dust, rising to a full holdout at the second '
+                              '(scene units; both 0 = off). Use it when a foreground character\'s edges cause trouble, then hold the dust out with '
+                              'the character\'s matte in comp.', None),
+    ('Holdouts', None, 'divider', 'Objects that never hold out', None),
+    ('Holdouts', 'holdout_skip', 'str', 'Never hold out', 'Objects that never block the dust or embers: their names in the utility pass\'s Cryptomatte '
+                                                         '(object layer), comma separated, * wildcards, e.g. "coatstand, tree*". Anything behind them '
+                                                         'shows through too. Blank = everything holds out.'),
+    ('Holdouts', 'btn_objects', 'button', 'List objects', 'objects'),
+    ('Holdouts', None, 'text', 'The names come from the utility pass\'s Cryptomatte layer (or a plain object-id channel, whose names are the '
+                              'numbers). In the live viewer, <b>Pick in viewer</b> adds what you click. The <b>noholdout</b> layer always has the '
+                              'dust with no holdouts at all; the viewer\'s <b>held out (red)</b> layer shows what the holdouts take away.', None),
+    ('Shapes', 'shapes', 'str', 'Shapes (JSON)', 'Spheres and boxes that hide the dust / embers inside or outside them, or push the dust. '
+                                               'Made, moved and keyed in the live viewer (Shapes tab); stored here as JSON.'),
+    ('Shapes', None, 'text', 'Each shape is a sphere or a box you place in the shot. <b>Hide inside</b> takes away the dust and embers in it, '
+                            '<b>hide outside</b> everything else; <b>falloff</b> is the width of the soft edge, centred on the shape\'s surface '
+                            '(scene units). <b>Push</b> shapes move the dust like a moving thing of their size: key them to sweep through the air '
+                            'instead of finding motion in the shot. Keys are smooth (Catmull-Rom); one key holds the shape still. Make, drag, scale '
+                            'and key them in the live viewer; the farm reads them from this knob.', None),
 ]
 
 
@@ -3272,6 +3680,21 @@ def _nk_button(g, what):
         return
     if what == 'standin':
         return _nk_standin(g)
+    if what == 'objects':
+        p = _nk_settings(g)
+        if not p['utility']:
+            nuke.message('Choose a utility pass first (or press Create stand-in shot).')
+            return
+        f = int(min(max(nuke.frame(), p['first']), p['last']))
+        img, names = Shot(p['utility'], p['units']).object_ids(f)
+        if img is None:
+            nuke.message('The utility pass has no Cryptomatte layer or object-id channel, so objects can\'t be picked by name.')
+            return
+        seen = sorted(nm for nm, v in names.items() if (img == np.float32(v)).any())
+        skip = set(match_names(p['holdout_skip'], seen))
+        nuke.message('MoteField: objects in the utility pass on frame %d (* = never holds out)\n\n%s\n\nType names into Never hold out, '
+                     'comma separated (* wildcards work).' % (f, '\n'.join(('* ' if nm in skip else '   ') + nm for nm in seen) or '(none)'))
+        return
     if what == 'movers':
         p = _nk_settings(g)
         if not p['utility']:

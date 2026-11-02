@@ -88,12 +88,13 @@ def setup_standin(width=1280, view='wide'):
     width = int(width)
     S = dict(mf.STANDIN, width=width, height=STANDIN_RES.get(width, int(round(width * 536 / 1280.0))))
     view = view if view in mf.STANDIN_VIEWS else 'wide'
-    folder = '%s/standin_%s_%d' % (ROOT, view.replace('-', ''), width)
+    folder = '%s/standin8_%s_%d' % (ROOT, view.replace('-', ''), width)          # 8: with a Cryptomatte layer
     os.makedirs(folder, exist_ok=True)
     meta = dict(S, boxes=[[b[0], b[1], b[3]] for b in mf.standin_boxes(view=view)], units='centimetres', view=view)
     with open(os.path.join(folder, 'standin.json'), 'w') as fh:
         json.dump(meta, fh)
     boxes = [list(b[0]) + list(b[1]) + list(b[2]) for b in mf.standin_boxes(view=view)]
+    names = [b[3] for b in mf.standin_boxes(view=view)]
     walker = None
     if mf.STANDIN_VIEWS[view].get('walker'):      # the walking box: the GPU stand-in moves it along the same line
         Wk = mf.STANDIN_WALKER
@@ -109,7 +110,7 @@ def setup_standin(width=1280, view='wide'):
     st = {k2: (list(v) if isinstance(v, tuple) else v) for k2, v in st.items()}
     st['standin_json'] = folder + '/standin.json'
     return json.dumps(dict(utility=folder + '/standin_utility.####.exr', plate=folder + '/standin_plate.####.exr', boxes=boxes, walker=walker,
-                           plate_light=plate_light,
+                           names=names, walker_names=['walker', 'walker_arm'] if walker else [], plate_light=plate_light,
                            room=None if F else [[-400.0, 0.0, -600.0], [400.0, 350.0, 350.0]],      # inside of the stand-in room, for the cutaway
                            first=S['first'], last=S['last'], width=S['width'], height=S['height'], set=st))
 
@@ -194,7 +195,7 @@ def render(pjson, frame, progress=None):
     cb = None
     if progress:
         cb = lambda x, msg: progress(0.1 + 0.6 * x, msg)
-    pushers = mf.make_pushers(*_movers_source(p)) if p.get('push') else None
+    pushers = mf.make_pushers(*_movers_source(p)) if p.get('push') else mf.make_pushers(p, None)     # movers and / or push shapes
     sim = mf.sim_at(p, frame, light, cb, pushers)
     if progress:
         progress(0.75, 'Rendering frame %d' % frame)
@@ -301,12 +302,10 @@ def ember_init(pjson):
     f0 = int(p['first']) - mf.ember_preroll(p)
     t0 = (f0 - p['first']) / float(p['fps']) * p['speed']
     es.start(t0)
-    pack = lambda m: np.concatenate([m[0], m[1], m[2][:, None], m[3][:, None]], 1).astype(np.float32)
     pos = np.concatenate([es.P, es.cyc[:, None].astype(np.float64)], 1).astype(np.float32)
     vel = np.concatenate([es.V, es.age[:, None]], 1).astype(np.float32)
     return dict(n=es.n, ns=es.ns, ng=es.ng, nm=es.nm, seedoff=int((int(p['seed']) * 7919) & mf.M32), emit=list(es.emit), rad=es.rad,
-                hgt=es.hgt, wind=list(es.wind), modes0=pack(es.modes[0]).tobytes(), modes1=pack(es.modes[1]).tobytes(),
-                M0=len(es.modes[0][0]), M1=len(es.modes[1][0]), t0=t0, f0=f0, sub=max(2, int(p['substeps'])),
+                hgt=es.hgt, wind=list(es.wind), t0=t0, f0=f0, sub=max(2, int(p['substeps'])),
                 pos=pos.tobytes(), vel=vel.tobytes(), su=su)
 
 
@@ -342,12 +341,32 @@ def preview_light(pjson):
                 blo=list(lo), bhi=list(hi), views=views)
 
 
+def objects(pjson, frame, u=None, v=None):
+    """The objects the utility pass names on a frame (Cryptomatte / object id), and the one at (u, v) in 0..1 image
+    coordinates (top left 0, 0) when given."""
+    p = _params(pjson)
+    shot = _shot(p)
+    img, names = shot.object_ids(int(frame))
+    if img is None:
+        return dict(ok=False, names=[], hit=None)
+    seen = sorted(nm for nm, val in names.items() if (img == np.float32(val)).any())
+    hit = None
+    if u is not None and v is not None:
+        H, W = img.shape
+        val = img[min(max(int(float(v) * H), 0), H - 1), min(max(int(float(u) * W), 0), W - 1)]
+        hit = next((nm for nm, x in names.items() if np.float32(x) == val), None)
+    return dict(ok=True, names=seen, hit=hit)
+
+
 def frame_images(pjson, frame, plate_pattern):
     """Distance image (for holdouts) and plate of one frame of a picked utility pass, for the GPU preview."""
     p = _params(pjson)
     shot = _shot(p)
     dist, _ = shot.surface(int(frame))
     out = dict(w=dist.shape[1], h=dist.shape[0], dist=dist.astype(np.float32).tobytes())
+    skip = shot.holdout_skip(int(frame), p.get('holdout_skip')) if p['holdout'] else None
+    if skip is not None:                 # the distances holdouts use: objects that never hold out are see-through
+        out['hdist'] = np.where(skip, 0.0, dist).astype(np.float32).tobytes()
     pl = plate(pjson, plate_pattern, frame) if plate_pattern else None
     if pl:
         out.update(pw=pl['w'], ph=pl['h'], rgb=pl['rgb'])

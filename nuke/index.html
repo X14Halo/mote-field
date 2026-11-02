@@ -61,6 +61,26 @@ select.nk{background:var(--field);border:1px solid var(--fieldb);border-radius:2
 .movers .mover:hover{background:rgba(255,255,255,.05)}
 .movers .mover i{width:10px;height:10px;border-radius:50%;flex:none}
 .movers .mover .dim{opacity:.55}
+.objs{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 8px}
+.objs .obj{font-size:11.5px;padding:2px 8px;border-radius:10px;border:1px solid rgba(255,255,255,.14);cursor:pointer;user-select:none;opacity:.8}
+.objs .obj:hover{opacity:1;border-color:rgba(255,255,255,.3)}
+.objs .obj.on{background:rgba(255,120,90,.18);border-color:rgba(255,140,110,.55);opacity:1}
+.objs .none{font-size:11.5px;opacity:.55}
+.btn.on{border-color:var(--orange);box-shadow:inset 0 0 0 1px var(--orange)}
+.shapes{display:flex;flex-direction:column;gap:2px;margin:4px 0 8px}
+.shapes .sh{display:flex;align-items:center;gap:7px;padding:3px 6px;border-radius:3px;cursor:pointer;font-size:12px}
+.shapes .sh:hover{background:rgba(255,255,255,.05)}
+.shapes .sh.sel{background:rgba(255,255,255,.09)}
+.shapes .sh i{width:10px;height:10px;flex:none;border:2px solid currentColor}
+.shapes .sh i.sphere{border-radius:50%}
+.shapes .sh .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shapes .sh .md{opacity:.6;font-size:11px}
+.shapes .sh .x{opacity:.5;padding:0 4px}
+.shapes .sh .x:hover{opacity:1}
+.shapes .sh.off{opacity:.5}
+.shkeys{display:flex;flex-wrap:wrap;gap:4px;font-family:var(--mono);font-size:11px}
+.shkeys span{padding:1px 6px;border-radius:2px;background:#2a2a2a;cursor:pointer}
+.shkeys span.cur{background:#6a4a26;color:#fff}
 .keys{position:absolute;right:10px;bottom:8px;font-size:11px;color:#8a8a8a;text-shadow:0 1px 2px #000;pointer-events:none;text-align:right}
 .keys b{color:#c8c8c8;font-weight:500}
 .vbar .v3 label input{accent-color:var(--orange)}
@@ -441,7 +461,7 @@ function buildPanel() {
   const pages = {};
   tabs.forEach((t, i) => {
     const b = document.createElement('button'); b.textContent = t; if (!i) b.className = 'on';
-    b.onclick = () => { [...tabsEl.children].forEach(x => x.classList.toggle('on', x === b)); for (const k in pages) pages[k].hidden = k !== t; curTab = t; v3dirty(); try { localStorage.setItem('mf_tab', t); } catch (e) {} };
+    b.onclick = () => { [...tabsEl.children].forEach(x => x.classList.toggle('on', x === b)); for (const k in pages) pages[k].hidden = k !== t; curTab = t; v3dirty(); draw(); drawTrack(); if (t === 'Holdouts') refreshObjects(); try { localStorage.setItem('mf_tab', t); } catch (e) {} };
     tabsEl.appendChild(b);
     const pg = document.createElement('div'); pg.hidden = !!i; pages[t] = pg; pane.appendChild(pg);
   });
@@ -526,12 +546,22 @@ function buildPanel() {
       }
       continue;
     }
+    if (k.kind === 'str' && key === 'shapes') { ctl.parentElement.hidden = true; buildShapeEditor(pg); ui[key] = { set: () => renderShapeEditor() }; continue; }
     if (k.kind === 'str') {
       const t = document.createElement('input'); t.className = 'txt'; t.placeholder = key === 'movers' ? 'blank = the suggested ones' : '';
       t.onchange = () => { V[key] = t.value.trim(); changed(true); };
       ctl.appendChild(t);
       ui[key] = { set: (v) => { t.value = v || ''; } };
       if (key === 'movers') { const l = document.createElement('div'); l.id = 'moverList'; l.className = 'movers'; pg.appendChild(l); }
+      if (key === 'holdout_skip') {      // browser / live viewer: click objects in the viewer, or toggle them in the list
+        t.placeholder = 'e.g. coatstand, tree*';
+        const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Pick in viewer'; b.id = 'pickObj';
+        b.title = 'Click objects in the viewer (2D) to add or remove them (Esc to stop)';
+        b.onclick = () => { vw.placing = vw.placing === 'object' ? null : 'object'; b.classList.toggle('on', vw.placing === 'object');
+          setStatus(vw.placing ? 'Click objects in the viewer to let the dust show through them (click again to remove; Esc to stop).' : ''); };
+        ctl.appendChild(b);
+        const l = document.createElement('div'); l.id = 'objList'; l.className = 'objs'; pg.appendChild(l);
+      }
       continue;
     }
     if (k.kind === 'enum') {
@@ -635,6 +665,7 @@ async function onButton(what) {
   if (what === 'standin') return makeStandin();
   if (what === 'movers') { if (!shot.utility) return setStatus('Choose a utility pass first (or press Create stand-in shot).', true); movers.key = ''; return findMovers(false); }
   if (what === 'lights') return $('fileLights').click();
+  if (what === 'objects') { objs.key = ''; return refreshObjects(true); }
   if (what === 'export') {           // the settings the farm renders from (python motefield.py render --settings ...)
     const p = params(); p.cache = p.cache || ''; const blob = new Blob([JSON.stringify(p, null, 1)], { type: 'application/json' });
     const el = document.createElement('a'); el.href = URL.createObjectURL(blob); el.download = 'motefield_settings.json'; document.body.appendChild(el); el.click(); el.remove();
@@ -729,9 +760,9 @@ async function makeStandin() {
   try {
     const st = await call('standin', { width: standinWidth, view: V.standin_view || 'wide' });
     shot.utility = st.utility; shot.plate = st.plate; shot.standin = true; shot.standinJson = st.set.standin_json;
-    pvs.boxes = st.boxes; pvs.walker = st.walker || null; resetMovers(); pvs.plateLight = Object.assign({}, st.plate_light, { room: st.room }); pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = '';
+    pvs.boxes = st.boxes; pvs.walker = st.walker || null; pvs.boxNames = st.names || []; pvs.walkerNames = st.walker_names || []; objs.key = ''; resetMovers(); pvs.plateLight = Object.assign({}, st.plate_light, { room: st.room }); pvs.camsKey = ''; pvs.lightKey = ''; pvs.bounceKey = '';
     if (look) look.clear();
-    if (pv && pv.ok) { pv.setBoxes(st.boxes, pvs.walker); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
+    if (pv && pv.ok) { pv.setBoxes(st.boxes, pvs.walker, pvs.boxNames, pvs.walkerNames); pv.clearFrameImages(); if (pv.pl) pv.pl.frame = null; }
     shot.label = 'stand-in shot, ' + (V.standin_view || 'wide') + ' (' + st.width + ' × ' + st.height + ', browser memory)';
     for (const [k, v] of Object.entries(st.set)) if (k !== 'standin_json') setKnob(k, v);
     dust.clear(); plates.clear(); v3.sceneKey = ''; v3.framed = false;
@@ -938,8 +969,8 @@ async function gpuRenderRange() {
       setBusy(true, 'GPU frame ' + f + ' (' + (f - a + 1) + ' of ' + n + ')', (f - a) / n, true);
       const cf = vw.hold ? vw.holdFrame : f;
       let dist = null;
-      if (shot.standin && pv.boxes && pvs.plateLight) { pv.standinPlate(cf, W0, H0, pvs.plateLight, f); dist = pv.pl.dist; }   // depth only, for holdouts
-      else { if (!pv.frameTex.has(cf)) pv.setFrameImages(cf, await call('fimages', { p: params(), frame: cf, pattern: shot.plate })); dist = pv.frameTex.get(cf).dist; }
+      if (shot.standin && pv.boxes && pvs.plateLight) { applySkip(); pv.standinPlate(cf, W0, H0, pvs.plateLight, f); dist = pv.pl.dist; }   // depth only, for holdouts
+      else { if (!pv.frameTex.has(cf)) pv.setFrameImages(cf, await call('fimages', { p: params(), frame: cf, pattern: shot.plate })); const fi = pv.frameTex.get(cf); dist = (skipActive() && fi.hdist) || fi.dist; }
       pv.simTo(f, p, simStepKey(p));
       const r = pv.renderDust(f, p, W0, H0, dist, vw.hold ? cf : 0);
       const read = (tex) => { gl.bindFramebuffer(gl.FRAMEBUFFER, pv.fb);
@@ -1080,6 +1111,11 @@ function drawTrack() {
     const x = X(f); tctx.fillRect(x, 6 * dpr, 1, 5 * dpr);
     if (W > 320 * dpr) tctx.fillText(f, x + 2 * dpr, 9 * dpr);
   }
+  if (curTab === 'Shapes' && shp.sel >= 0) {            // the selected shape's keys
+    const sh = mfShapes({ shapes: rawShapes() }, true)[shp.sel];
+    if (sh) { tctx.fillStyle = SHAPE_COLS[sh.mode]; for (const k of sh.keys) { if (k.f < a || k.f > b) continue; const kx = X(k.f), ky = H / 2;
+      tctx.beginPath(); tctx.moveTo(kx, ky - 5 * dpr); tctx.lineTo(kx + 4 * dpr, ky); tctx.lineTo(kx, ky + 5 * dpr); tctx.lineTo(kx - 4 * dpr, ky); tctx.fill(); } }
+  }
   const x = X(frame);
   tctx.fillStyle = '#f7931e'; tctx.fillRect(x - dpr, 0, 2 * dpr, H);
   tctx.beginPath(); tctx.moveTo(x - 5 * dpr, 0); tctx.lineTo(x + 5 * dpr, 0); tctx.lineTo(x, 6 * dpr); tctx.fill();
@@ -1089,6 +1125,7 @@ function setFrame(f, schedule) {
   f = Math.max(a, Math.min(b, Math.round(f)));
   frame = f; $('frameIn').value = f;
   draw(); drawTrack(); v3dirty();
+  if (curTab === 'Shapes' && shp.sel >= 0) { if (playing) updateShapeFields(); else renderShapeEditor(); }
   if (schedule) scheduleLive(220);
 }
 (function () {
@@ -1155,7 +1192,7 @@ async function play() {
 $('tPlay').onclick = () => playing ? stop() : play();
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input,select,textarea')) return;
-  if (e.key === 'Escape' && vw.placing) { vw.placing = null; const b = $('placeEmitter'); if (b) b.classList.remove('on'); setStatus(''); return; }
+  if (e.key === 'Escape' && vw.placing) { vw.placing = null; for (const id of ['placeEmitter', 'pickObj', 'placeShape']) { const b = $(id); if (b) b.classList.remove('on'); } setStatus(''); return; }
   if (e.key === 'ArrowLeft') { stop(); setFrame(frame - 1, true); e.preventDefault(); }
   else if (e.key === 'ArrowRight') { stop(); setFrame(frame + 1, true); e.preventDefault(); }
   else if (e.key === ' ') { playing ? stop() : play(); e.preventDefault(); }
@@ -1220,6 +1257,33 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
       vw.placing = null; const b = $('placeEmitter'); if (b) b.classList.remove('on');
       return;
     }
+    if (vw.placing === 'shape' && e.button === 0 && !e.altKey) {        // put the selected shape's centre on the surface under the click
+      e.preventDefault(); e.stopPropagation();
+      const P = pickSurface(e);
+      if (P && shp.sel >= 0) { setShapeVal(shp.sel, 'c', P, true); setStatus('Shape placed at ' + P.map(v => v.toFixed(0)).join(', ') + '.'); }
+      else setStatus('Nothing there to put the shape on: click a surface.', true);
+      vw.placing = null; const b = $('placeShape'); if (b) b.classList.remove('on');
+      return;
+    }
+    if (curTab === 'Shapes' && e.button === 0 && !e.altKey && dim === '2d' && !vw.free) {      // grab a shape: move it (Shift: scale)
+      const hit = shapeHit(e);
+      if (hit) {
+        e.preventDefault(); st.setPointerCapture(e.pointerId);
+        if (hit.i !== shp.sel) { shp.sel = hit.i; renderShapeEditor(); }
+        const c = vw.pick.cam, th = Math.tan(c.hfov / 2);
+        drag = { mode: 'shape', i: hit.i, id: e.pointerId, x0: hit.x, y0: hit.y, c0: hit.a.c.slice(), s0: hit.a.s.slice(), k: hit.z * 2 * th / (vw.rect.x1 - vw.rect.x0), cam: c };
+        st.style.cursor = 'move'; return;
+      }
+    }
+    if (vw.placing === 'object' && e.button === 0 && !e.altKey) {        // stays on: click more objects, Esc to stop
+      e.preventDefault(); e.stopPropagation();
+      pickObject(e).then(nm => {
+        if (!nm) return setStatus('No named object there (the utility pass needs a Cryptomatte layer or an object-id channel).', true);
+        const on = toggleSkip(nm);
+        setStatus((on ? 'Never holds out: ' : 'Holds out again: ') + nm + '. Click more objects, or Esc to stop.');
+      });
+      return;
+    }
     e.preventDefault();
     st.setPointerCapture(e.pointerId);
     const btn = e.button;                     // 0 left, 1 middle, 2 right
@@ -1245,6 +1309,12 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     }
     if (!drag || e.pointerId !== drag.id) return;
     if (drag.mode === 'handle') { const r = cv3.getBoundingClientRect(); dragHandle(drag, e.clientX - r.left, e.clientY - r.top, e.shiftKey); v3dirty(); return; }
+    if (drag.mode === 'shape') {
+      const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), dx = (e.clientX - r.left) * dpr - drag.x0, dy = (e.clientY - r.top) * dpr - drag.y0;
+      if (e.shiftKey) { const f = Math.exp((dx - dy) * 0.004); setShapeVal(drag.i, 's', drag.s0.map(v => Math.max(v * f, 0.1)), false); }
+      else { const c = drag.cam; setShapeVal(drag.i, 'c', drag.c0.map((v, k) => v + (dx * c.right[k] - dy * c.up[k]) * drag.k), false); }
+      drag.moved = true; draw(); return;
+    }
     const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
     drag.lx = e.clientX; drag.ly = e.clientY;
     if (dim === '2d' && vw.free) moved();
@@ -1267,7 +1337,8 @@ for (const b of $('dimSeg').children) b.onclick = () => setDim(b.dataset.d);
     }
     v3dirty();
   });
-  const end = (e) => { if (drag && e.pointerId === drag.id) { const wasHandle = drag.mode === 'handle'; drag = null; v3.drag = null; st.style.cursor = ''; if (wasHandle) { changed(true); v3dirty(); } } };
+  const end = (e) => { if (drag && e.pointerId === drag.id && drag.mode === 'shape') { const mv = drag.moved; drag = null; st.style.cursor = ''; if (mv) { changed(true); renderShapeEditor(); } return; }
+    if (drag && e.pointerId === drag.id) { const wasHandle = drag.mode === 'handle'; drag = null; v3.drag = null; st.style.cursor = ''; if (wasHandle) { changed(true); v3dirty(); } } };
   st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
   st.addEventListener('dblclick', (e) => {      // free camera: focus on what you double-click
     if (dim !== '2d' || !vw.free || !look) return;
@@ -1685,7 +1756,7 @@ const EMBER_KEYS = ['units', 'first', 'fps', 'seed', 'speed', 'substeps', 'prero
   'ember_rate', 'ember_life', 'ember_rise', 'ember_spread', 'ember_turb', 'ember_flutter', 'ember_wind', 'ember_wind_dir', 'ember_pops', 'ember_pop_size'];
 function simStepKey(p) {
   const push = p.push && moversReady(p);         // pushers join the simulation once the movers are found
-  return JSON.stringify([pvs.initKey, pvs.lightKey, push ? [movers.key, [...moverIds(p)].sort().join(' '), p.push_amount, p.push_radius] : 0, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
+  return JSON.stringify([pvs.initKey, pvs.lightKey, push ? [movers.key, [...moverIds(p)].sort().join(' '), p.push_amount, p.push_radius] : 0, mfPushShapesKey(p), p.push_amount, p.push_radius, ...['speed', 'eddies', 'micro', 'thermal', 'settle', 'substeps', 'preroll', 'first', 'fps',
     'light_az', 'light_el', 'shadows', 'interior'].map(k => p[k])]);
 }
 function kelvinRGB(K) {          // motefield.kelvin_rgb
@@ -1751,7 +1822,7 @@ async function ensurePreview() {
       const lk = lightKey(p);
       if (pvs.lightKey !== lk) {
         if (lightMode(p) === 2) { pvs.lightNote = 'building the light map…'; drawHud(); pv.setLightMap(await call('plight', { p })); }
-        if (lightMode(p) === 1 && pvs.boxes && !pv.boxes) pv.setBoxes(pvs.boxes, pvs.walker);
+        if (lightMode(p) === 1 && pvs.boxes && !pv.boxes) pv.setBoxes(pvs.boxes, pvs.walker, pvs.boxNames, pvs.walkerNames);
         pvs.lightKey = lk; pvs.lightNote = '';
         v3dirty(); continue;
       }
@@ -1777,15 +1848,19 @@ function moverIds(p) {             // motefield.mover_ids
   return new Set((s.match(/\d+/g) || []).map(Number));
 }
 function moversReady(p) { return !!(movers.found && movers.key === pushKey(p)); }
-function applyMovers() {           // the chosen movers' spheres -> the GPU simulation
+function applyMovers() {           // the chosen movers' spheres and the push shapes -> the GPU simulation
   if (!pv || !pv.ok) return;
   const p = params();
-  if (!moversReady(p)) { pv.setPushers(null); return; }
-  const ids = moverIds(p), key = [...ids].sort().join(' ');
-  if (movers.applied === key + movers.key) return;
+  const useM = !!(p.push && moversReady(p)), ids = useM ? moverIds(p) : new Set();
+  const sk = mfPushShapesKey(p);
+  if (sk !== '[]' && !pv.init) return;                       // the push shapes need the scene scale: once the preview is set up
+  const key = (useM ? [...ids].sort().join(' ') + movers.key : '-') + '|' + sk + '|' + [p.first, p.last, p.preroll, p.fps, p.units].join(',');
+  if (movers.applied === key) return;
   const tab = {};
-  for (const [f, rows] of Object.entries(movers.found.frames)) { const sel = rows.filter(q => ids.has(q[0])).map(q => q.slice(1)); if (sel.length) tab[+f] = sel; }
-  pv.setPushers(tab); movers.applied = key + movers.key;
+  if (useM) for (const [f, rows] of Object.entries(movers.found.frames)) { const sel = rows.filter(q => ids.has(q[0])).map(q => q.slice(1)); if (sel.length) tab[+f] = sel; }
+  const sp = sk !== '[]' ? mfShapePushers(p, pv.init.su, Math.round(p.first) - Math.round(p.preroll), Math.round(p.last) + 1) : null;
+  if (sp) for (const [f, rows] of Object.entries(sp)) tab[+f] = (tab[+f] || []).concat(rows);
+  pv.setPushers(Object.keys(tab).length ? tab : null); movers.applied = key;
 }
 function resetMovers() { movers.found = null; movers.key = ''; movers.applied = ''; if (pv && pv.ok) pv.setPushers(null); renderMoverList(); }
 async function findMovers(auto) {
@@ -1843,6 +1918,7 @@ function drawMovers(project) {     // project(P scene units) -> [x, y, z] device
   const w = Math.max(1, Math.round(oc.clientWidth * dpr)), h = Math.max(1, Math.round(oc.clientHeight * dpr));
   if (oc.width !== w || oc.height !== h) { oc.width = w; oc.height = h; }
   const g = oc.getContext('2d'); g.clearRect(0, 0, w, h);
+  drawShapes(g, project, dpr);
   if (project && V.embers && curTab === 'Embers') {        // the ember emitter: its base ring, top ring and sides
     const c = V.ember_pos.map(Number), rr = Number(V.ember_radius), hh = Number(V.ember_height);
     const ring = (y) => { const pts = []; for (let i = 0; i <= 32; i++) { const a = i / 32 * Math.PI * 2; pts.push(project([c[0] + Math.cos(a) * rr, c[1] + y, c[2] + Math.sin(a) * rr])); } return pts; };
@@ -1866,6 +1942,254 @@ function drawMovers(project) {     // project(P scene units) -> [x, y, z] device
   }
   g.setLineDash([]); g.font = (11 * dpr) + 'px ui-monospace, monospace'; g.textAlign = 'center';
   for (const [id, t] of Object.entries(top)) { g.fillStyle = t[3] ? t[2] : '#8a8f96'; g.fillText(id, t[0], t[1] - 4 * dpr); }
+}
+// ---- shapes: spheres and boxes that hide the dust / embers inside or outside them, or push the dust -----------------------
+// stored as JSON in the 'shapes' knob (motefield.parse_shapes); placed, dragged and keyed here
+const shp = { sel: -1, el: null };
+const SHAPE_COLS = { 'hide inside': '#ff6b5a', 'hide outside': '#ffb347', push: '#4fc3f7' };
+function rawShapes() { try { const L = JSON.parse(V.shapes || '[]'); return Array.isArray(L) ? L : []; } catch (e) { return []; } }
+function saveShapes(L, commit) { setKnob('shapes', JSON.stringify(L)); changed(commit); if (commit) renderShapeEditor(); else updateShapeFields(); }
+function shapeNow(i) { const sh = mfShapes({ shapes: rawShapes() }, true)[i]; return sh && sh.keys.length ? mfShapeAt(sh, frame) : null; }
+function addShape(kind) {
+  const L = rawShapes(), bs = (V.box_size || [200, 200, 200]).map(Number), c = (V.box_center || [0, 100, 0]).map(Number);
+  const d = Math.max(Math.min(...bs) * 0.35, 10);
+  L.push({ name: (kind === 'box' ? 'Box ' : 'Sphere ') + (L.length + 1), kind, mode: 'hide inside', target: 'both', falloff: Math.round(d * 0.25), on: true,
+           keys: [{ f: frame, c: c.map(v => +v.toFixed(1)), s: [d, d, d].map(v => +v.toFixed(1)), r: 0 }] });
+  shp.sel = L.length - 1; saveShapes(L, true);
+  setStatus('Added a ' + kind + ' at the dust box centre. Drag it in the viewer (Shift: scale), or Place it on a surface.');
+}
+// change a shape's centre / size / turn: once it's been keyed (anim), on its key at this frame, made if needed (like an
+// animated knob in Nuke); a still shape just moves
+function setShapeVal(i, field, val, commit) {
+  const L = rawShapes(), sh = L[i]; if (!sh) return;
+  sh.keys = (sh.keys || []).slice().sort((a, b) => a.f - b.f);
+  if (!sh.keys.length) sh.keys.push({ f: frame, c: [0, 0, 0], s: [50, 50, 50], r: 0 });
+  const round = (v) => Array.isArray(v) ? v.map(x => +(+x).toFixed(2)) : +(+v).toFixed(2);
+  if (!sh.anim) { sh.keys = [sh.keys[0]]; sh.keys[0][field] = round(val); }
+  else {
+    const now = shapeNow(i) || { c: sh.keys[0].c, s: sh.keys[0].s, r: sh.keys[0].r };
+    let k = sh.keys.find(q => Math.abs(q.f - frame) < 1e-6);
+    if (!k) { k = { f: frame, c: round(now.c), s: round(now.s), r: round(now.r) }; sh.keys.push(k); sh.keys.sort((a, b) => a.f - b.f); }
+    k[field] = round(val);
+  }
+  saveShapes(L, commit);
+}
+function keyShape(i, op) {
+  const L = rawShapes(), sh = L[i]; if (!sh) return;
+  const now = shapeNow(i); sh.keys = sh.keys || [];
+  const at = sh.keys.findIndex(q => Math.abs(q.f - frame) < 1e-6);
+  if (op === 'set' && now) { const k = { f: frame, c: now.c.map(v => +v.toFixed(2)), s: now.s.map(v => +v.toFixed(2)), r: +now.r.toFixed(2) };
+    if (!sh.anim) sh.keys = [];                     // a still shape's one key becomes this frame's
+    else if (at >= 0) sh.keys.splice(at, 1);
+    sh.keys.push(k); sh.anim = true; }
+  if (op === 'del' && at >= 0 && sh.keys.length > 1) sh.keys.splice(at, 1);
+  if (op === 'clear' && now) { sh.keys = [{ f: frame, c: now.c.map(v => +v.toFixed(2)), s: now.s.map(v => +v.toFixed(2)), r: +now.r.toFixed(2) }]; sh.anim = false; }
+  sh.keys.sort((a, b) => a.f - b.f);
+  saveShapes(L, true);
+}
+function buildShapeEditor(pg) {
+  const wrap = document.createElement('div'); wrap.className = 'shape-ed'; pg.appendChild(wrap); shp.el = wrap;
+  renderShapeEditor();
+}
+function renderShapeEditor() {
+  const el = shp.el; if (!el) return;
+  const L = rawShapes(), parsed = mfShapes({ shapes: L }, true);
+  if (shp.sel >= L.length) shp.sel = L.length - 1;
+  el.innerHTML = '';
+  const bar = document.createElement('div'); bar.className = 'btns-row';
+  for (const [kind, lab] of [['sphere', '+ Sphere'], ['box', '+ Box']]) { const b = document.createElement('button'); b.className = 'btn'; b.textContent = lab; b.onclick = () => addShape(kind); bar.appendChild(b); }
+  el.appendChild(bar);
+  const list = document.createElement('div'); list.className = 'shapes'; el.appendChild(list);
+  if (!L.length) { const n = document.createElement('div'); n.className = 'note'; n.textContent = 'No shapes yet.'; list.appendChild(n); }
+  parsed.forEach((sh, i) => {
+    const r = document.createElement('div'); r.className = 'sh' + (i === shp.sel ? ' sel' : '') + (sh.on ? '' : ' off'); r.style.color = SHAPE_COLS[sh.mode];
+    r.innerHTML = '<i class="' + sh.kind + '"></i><span class="nm"></span><span class="md"></span><span class="x" title="Delete this shape">✕</span>';
+    r.querySelector('.nm').textContent = sh.name; r.querySelector('.nm').style.color = '#ddd';
+    r.querySelector('.md').textContent = sh.mode + (sh.keys.length > 1 ? ' · ' + sh.keys.length + ' keys' : '');
+    r.onclick = (e) => { if (e.target.classList.contains('x')) { const M = rawShapes(); M.splice(i, 1); if (shp.sel >= i) shp.sel--; saveShapes(M, true); return; }
+      shp.sel = i === shp.sel ? -1 : i; renderShapeEditor(); draw(); drawTrack(); };
+    list.appendChild(r);
+  });
+  const i = shp.sel, sh = L[i], ps = parsed[i];
+  if (!sh) { drawTrack(); return; }
+  const field = (label, tip) => row(el, label, false, tip);
+  // name, on
+  let c = field('Name'); const nm = document.createElement('input'); nm.className = 'txt'; nm.value = sh.name || ps.name;
+  nm.onchange = () => { const M = rawShapes(); M[i].name = nm.value.trim() || ps.name; saveShapes(M, true); }; c.appendChild(nm);
+  const onl = document.createElement('label'); onl.className = 'chk'; const on = document.createElement('input'); on.type = 'checkbox'; on.checked = sh.on !== false;
+  on.onchange = () => { const M = rawShapes(); M[i].on = on.checked; saveShapes(M, true); }; onl.append(on, 'on'); c.appendChild(onl);
+  const sel = (label, opts, cur, set, tip) => { const cc = field(label, tip), se = document.createElement('select'); se.className = 'nk';
+    for (const [v, t] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = t; se.appendChild(o); }
+    se.value = cur; se.onchange = () => set(se.value); cc.appendChild(se); return se; };
+  sel('Shape', [['sphere', 'sphere'], ['box', 'box']], ps.kind, (v) => { const M = rawShapes(); M[i].kind = v; saveShapes(M, true); });
+  sel('Mode', [['hide inside', 'hide inside'], ['hide outside', 'hide outside'], ['push', 'push the dust']], ps.mode, (v) => { const M = rawShapes(); M[i].mode = v; saveShapes(M, true); },
+      'Hide inside: no dust / embers in it. Hide outside: none anywhere else. Push: moves the dust like a moving thing of its size (key it to sweep through the air).');
+  if (ps.mode !== 'push') {
+    sel('Affects', [['both', 'dust and embers'], ['dust', 'dust'], ['embers', 'embers']], ps.target, (v) => { const M = rawShapes(); M[i].target = v; saveShapes(M, true); });
+    c = field('Soft edge', 'The width of the fade between hidden and not, centred on the shape\'s surface (scene units)');
+    const fin = numInput(() => +(rawShapes()[i] || {}).falloff || 0, (v, commit) => { const M = rawShapes(); M[i].falloff = Math.max(0, +(+v).toFixed(2)); saveShapes(M, commit); fin.value = M[i].falloff; if (fsl) fsl.place(); });
+    fin.value = ps.falloff; c.appendChild(fin);
+    const fsl = makeSlider(0, 300, () => +(rawShapes()[i] || {}).falloff || 0, (v, commit) => { const M = rawShapes(); M[i].falloff = Math.max(0, +(+v).toFixed(1)); saveShapes(M, commit); fin.value = M[i].falloff; });
+    c.appendChild(fsl.el); requestAnimationFrame(fsl.place);
+  }
+  const now = shapeNow(i);
+  const vec = (label, fld, tip) => { const cc = field(label, tip), w = document.createElement('div'); w.className = 'xyz';
+    ['x', 'y', 'z'].forEach((ax, a) => { const sp = document.createElement('span'); sp.textContent = ax;
+      const inp = numInput(() => (shapeNow(i) || now)[fld][a], (v, commit) => { const cur = (shapeNow(i) || now)[fld].slice(); cur[a] = fld === 's' ? Math.max(+v, 0.1) : +v; setShapeVal(i, fld, cur, commit); });
+      inp.dataset.sf = fld + a; inp.value = (+now[fld][a]).toFixed(1); w.append(sp, inp); });
+    cc.appendChild(w); return cc; };
+  vec('Centre', 'c', 'Scene units, on this frame');
+  const pb = document.createElement('button'); pb.className = 'btn' + (vw.placing === 'shape' ? ' on' : ''); pb.textContent = 'Place'; pb.id = 'placeShape';
+  pb.title = 'Click a surface in the viewer (2D) to put the shape\'s centre there';
+  pb.onclick = () => { vw.placing = vw.placing === 'shape' ? null : 'shape'; pb.classList.toggle('on', vw.placing === 'shape'); setStatus(vw.placing ? 'Click where the shape goes (Esc to stop).' : ''); };
+  const pr = field(''); pr.appendChild(pb); const ph = document.createElement('span'); ph.className = 'dim'; ph.style.opacity = '.6'; ph.textContent = 'its centre on the surface you click'; pr.appendChild(ph);
+  vec('Size', 's', ps.kind === 'box' ? 'Edge lengths (scene units)' : 'Diameters (scene units); different ones make an ellipsoid');
+  c = field('Turn (°)', 'About the vertical');
+  const tin = numInput(() => (shapeNow(i) || now).r, (v, commit) => setShapeVal(i, 'r', +v, commit)); tin.dataset.sf = 'r'; tin.value = (+now.r).toFixed(1); c.appendChild(tin);
+  // keys
+  c = field('Keys', 'Smooth (Catmull-Rom) between keys; one key holds the shape still');
+  for (const [lab, op, tip] of [['◆ Key', 'set', 'Key the shape as it is on this frame. Once keyed, moving it on another frame keys that frame.'], ['Delete key', 'del', 'Remove the key on this frame'], ['Clear keys', 'clear', 'Keep it still, as it is on this frame']]) {
+    const b = document.createElement('button'); b.className = 'btn'; b.textContent = lab; b.title = tip; b.onclick = () => keyShape(i, op); c.appendChild(b); }
+  const kl = document.createElement('div'); kl.className = 'shkeys';
+  for (const k of ps.keys) { const sp = document.createElement('span'); sp.textContent = k.f; if (Math.abs(k.f - frame) < 1e-6) sp.className = 'cur'; sp.title = 'Go to this key';
+    sp.onclick = () => setFrame(k.f, true); kl.appendChild(sp); }
+  c = field(''); c.appendChild(kl);
+  const n = document.createElement('div'); n.className = 'note';
+  n.innerHTML = 'In the viewer (2D, shot camera): drag a shape to move it across the view, <b>Shift</b>-drag to scale it. To animate: <b>◆ Key</b> it on one frame; from then on, moving it on another frame keys that frame (like an animated knob in Nuke).';
+  el.appendChild(n);
+  drawTrack();
+}
+function updateShapeFields() {        // live while dragging: the centre / size / turn fields only
+  if (!shp.el || shp.sel < 0) return; const now = shapeNow(shp.sel); if (!now) return;
+  for (const inp of shp.el.querySelectorAll('input[data-sf]')) { const f = inp.dataset.sf; if (document.activeElement === inp) continue;
+    inp.value = (f === 'r' ? +now.r : +now[f[0]][+f[1]]).toFixed(1); }
+}
+function shapeWire(sh, a, project) {   // polylines of a shape on this frame, through project()
+  const th = a.r * Math.PI / 180, ca = Math.cos(th), sa = Math.sin(th), h = a.s.map(v => v / 2);
+  const W = (q) => project([a.c[0] + ca * q[0] + sa * q[2], a.c[1] + q[1], a.c[2] - sa * q[0] + ca * q[2]]);     // local -> world (turn about y)
+  const lines = [];
+  if (sh.kind === 'box') {
+    const C = (i) => [i & 1 ? h[0] : -h[0], i & 2 ? h[1] : -h[1], i & 4 ? h[2] : -h[2]];
+    for (const [i, j] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) {
+      const pts = []; for (let t = 0; t <= 8; t++) { const u = t / 8, p0 = C(i), p1 = C(j); pts.push(W(p0.map((v, k) => v + (p1[k] - v) * u))); } lines.push(pts); }
+  } else {
+    for (const pl of [[0, 1], [1, 2], [0, 2]]) { const pts = [];
+      for (let t = 0; t <= 48; t++) { const u = t / 48 * Math.PI * 2, q = [0, 0, 0]; q[pl[0]] = Math.cos(u) * h[pl[0]]; q[pl[1]] = Math.sin(u) * h[pl[1]]; pts.push(W(q)); }
+      lines.push(pts); }
+  }
+  return lines;
+}
+function drawShapes(g, project, dpr) {
+  if (curTab !== 'Shapes' || !project) return;
+  mfShapes({ shapes: rawShapes() }, true).forEach((sh, i) => {
+    if (!sh.keys.length) return;
+    const a = mfShapeAt(sh, frame), sel = i === shp.sel, col = SHAPE_COLS[sh.mode];
+    g.strokeStyle = col; g.globalAlpha = sh.on ? (sel ? 1 : 0.6) : 0.3; g.lineWidth = (sel ? 2 : 1.2) * dpr;
+    g.setLineDash(sh.mode === 'hide outside' ? [6 * dpr, 4 * dpr] : []);
+    for (const pts of shapeWire(sh, a, project)) { g.beginPath(); let on = false; for (const q of pts) { if (!q) { on = false; continue; } if (on) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); on = true; } g.stroke(); }
+    const q = project(a.c);
+    if (q && sh.kind === 'sphere' && project.rpx) {          // its outline as the camera sees it (the rings alone read flat face-on)
+      const rr = project.rpx(a.c, Math.max(...a.s) / 2); g.globalAlpha *= 0.55; g.beginPath(); g.arc(q[0], q[1], rr, 0, Math.PI * 2); g.stroke(); g.globalAlpha = sh.on ? (sel ? 1 : 0.6) : 0.3; }
+    if (q) { g.setLineDash([]); g.fillStyle = col; g.beginPath(); g.arc(q[0], q[1], (sel ? 4 : 3) * dpr, 0, Math.PI * 2); g.fill();
+      g.font = (11 * dpr) + 'px ui-monospace, monospace'; g.textAlign = 'left'; g.fillText(sh.name, q[0] + 7 * dpr, q[1] - 6 * dpr);
+      if (sh.mode === 'push' && Math.hypot(...a.dc) > 1e-6) { const e = project(a.c.map((v, k) => v + a.dc[k] * 6)); if (e) { g.beginPath(); g.moveTo(q[0], q[1]); g.lineTo(e[0], e[1]); g.stroke(); } } }
+  });
+  g.globalAlpha = 1; g.setLineDash([]);
+}
+// the 2D viewer: which shape is under the mouse, and dragging it
+window.__shapeScreen = (i) => {        // tests: where shape i's centre is on the page (CSS px)
+  const k = vw.pick; if (!k || !vw.rect) return null;
+  const sh = mfShapes({ shapes: rawShapes() }, true)[i]; if (!sh) return null;
+  const q = camProjector(k.cam, k.W0, k.H0, vw.rect)(mfShapeAt(sh, frame).c); if (!q) return null;
+  const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2); return [r.left + q[0] / dpr, r.top + q[1] / dpr];
+};
+function shapeHit(e) {
+  const k = vw.pick; if (!k || !vw.rect || dim !== '2d' || vw.free) return null;
+  const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), x = (e.clientX - r.left) * dpr, y = (e.clientY - r.top) * dpr;
+  const pj = camProjector(k.cam, k.W0, k.H0, vw.rect);
+  let best = null;
+  mfShapes({ shapes: rawShapes() }, true).forEach((sh, i) => { if (!sh.keys.length) return;
+    const a = mfShapeAt(sh, frame), q = pj(a.c); if (!q) return;
+    const rp = Math.max(pj.rpx(a.c, Math.min(...a.s) / 2), 12 * dpr), d = Math.hypot(x - q[0], y - q[1]);
+    if (d <= rp && (!best || (i === shp.sel ? -1 : d) < best.d)) best = { i, d: i === shp.sel ? -1 : d, a, z: q[2], x, y }; });
+  return best;
+}
+// ---- objects that never hold out (holdout_skip): names from the utility pass's Cryptomatte, or the stand-in's boxes ----
+const objs = { key: '', names: [], ok: true };
+function globRe(q) { return new RegExp('^' + q.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$'); }
+function matchNames(spec, names) {          // motefield.match_names
+  const pats = String(spec || '').replace(/\n/g, ',').split(',').map(w => w.trim()).filter(Boolean).map(globRe);
+  return names.filter(n => pats.some(r => r.test(n)));
+}
+function standinNames() { return [...new Set([...(pvs.boxNames || []), ...(pvs.walkerNames || [])])].sort(); }
+function skipActive() { return !!(V.holdout && String(V.holdout_skip || '').trim()); }
+function applySkip() {                      // the GPU stand-in: flag the boxes whose names are listed
+  if (pv && pv.boxes) pv.setSkip(skipActive() ? matchNames(V.holdout_skip, standinNames()) : []);
+}
+// the distance image holdouts use: like the set's, but objects that never hold out are see-through
+function holdDist(cf, distTex, W, H, wf) {
+  applySkip();
+  if (!skipActive()) return distTex;
+  if (shot.standin && pv.boxes && pvs.plateLight) { pv.standinPlate(cf, W, H, pvs.plateLight, wf === undefined ? cf : wf); return pv.pl.dist; }
+  const fi = pv.frameTex.get(cf); return fi ? fi.hdist || fi.dist : distTex;
+}
+function toggleSkip(nm) {
+  const cur = String(V.holdout_skip || '').split(',').map(w => w.trim()).filter(Boolean);
+  const names = objs.names.length ? objs.names : [nm];
+  const on = !matchNames(V.holdout_skip, [nm]).length;
+  let next;
+  if (on) next = cur.concat([nm]);
+  else next = cur.filter(w => !matchNames(w, [nm]).length);        // drops a wildcard that caught it too
+  setKnob('holdout_skip', next.join(', ')); if (!V.holdout) setKnob('holdout', true);
+  changed(true); renderObjList(); return on;
+}
+function renderObjList() {
+  const el = $('objList'); if (!el) return;
+  el.innerHTML = '';
+  if (!objs.names.length) { const d = document.createElement('div'); d.className = 'none';
+    d.textContent = shot.utility ? (objs.ok ? 'Looking for objects…' : 'No Cryptomatte layer or object-id channel in this utility pass.') : ''; el.appendChild(d); return; }
+  const sel = new Set(matchNames(V.holdout_skip, objs.names));
+  for (const nm of objs.names) {
+    const c = document.createElement('span'); c.className = 'obj' + (sel.has(nm) ? ' on' : ''); c.textContent = nm;
+    c.title = sel.has(nm) ? 'Never holds out (click to hold out again)' : 'Click: the dust shows through this';
+    c.onclick = () => toggleSkip(nm);
+    el.appendChild(c);
+  }
+}
+async function refreshObjects(force) {
+  if (!shot.utility) { objs.names = []; renderObjList(); return; }
+  const key = shot.standin ? 'standin|' + shot.utility : shot.utility + '|' + camFrame();
+  if (!force && objs.key === key) return renderObjList();
+  objs.key = key;
+  if (shot.standin) { objs.names = standinNames(); objs.ok = true; return renderObjList(); }
+  objs.names = []; renderObjList();
+  try { const r = await call('objects', { p: params(), frame: camFrame() }); objs.names = r.names || []; objs.ok = !!r.ok; }
+  catch (e) { objs.names = []; objs.ok = false; }
+  renderObjList();
+}
+function hitBox(O, D, B) {                  // nearest of boxes [{mn, mx}] along a ray: [t, index]
+  let best = Infinity, bi = -1;
+  B.forEach((b, k) => { let a = -Infinity, c = Infinity;
+    for (let i = 0; i < 3; i++) { const d = Math.abs(D[i]) < 1e-9 ? 1e-9 : D[i], t1 = (b.mn[i] - O[i]) / d, t2 = (b.mx[i] - O[i]) / d; a = Math.max(a, Math.min(t1, t2)); c = Math.min(c, Math.max(t1, t2)); }
+    if (c >= Math.max(a, 1e-4) && a > 1e-4 && a < best) { best = a; bi = k; } });
+  return [best, bi];
+}
+async function pickObject(e) {               // the name of the object under the mouse in the 2D viewer
+  const k = vw.pick; if (!k || !vw.rect || dim !== '2d') return null;
+  const r = cv3.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2), R = vw.rect;
+  const u = ((e.clientX - r.left) * dpr - R.x0) / (R.x1 - R.x0), v = ((e.clientY - r.top) * dpr - R.yTop) / (R.yBot - R.yTop);
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+  if (shot.standin && pvs.boxes) {
+    const c = k.cam, th = Math.tan(c.hfov / 2), tv = th * k.H0 / k.W0, x = (u * 2 - 1) * th, y = (1 - v * 2) * tv;
+    const D = [0, 1, 2].map(i => -c.back[i] + x * c.right[i] + y * c.up[i]);
+    const B = pvs.boxes.map(b => ({ mn: b.slice(0, 3), mx: b.slice(3, 6) })), names = (pvs.boxNames || []).slice();
+    const ws = pv.walkerBoxes ? pv.walkerBoxes(frame) : null;
+    if (ws) ws.forEach((w, i) => { B.push(w); names.push((pvs.walkerNames || [])[i] || 'walker'); });
+    const [, bi] = hitBox(c.pos, D, B);
+    return bi >= 0 ? names[bi] : null;
+  }
+  try { const res = await call('objects', { p: params(), frame: camFrame(), u, v }); if (res.names && res.names.length) { objs.names = res.names; } return res.hit || null; }
+  catch (err) { return null; }
 }
 function pickSurface(e) {          // the world point (scene units) under the mouse in the 2D viewer, from the shown depth
   const k = vw.pick; if (!k || !k.dist || !vw.rect || dim !== '2d') return null;
@@ -1896,7 +2220,7 @@ function camProjector(cam, W0, H0, rect) {      // a shot / free camera onto the
 }
 // picked utility passes: each frame's distance image (holdouts) and plate, read once in the background
 // what the per-frame images depend on: the shot, the plate, and (when the set is shaded from the utility pass) the light
-function frameKey() { return pvs.camsKey + '|' + shot.plate + (shot.plate ? '' : '|' + ['light_az', 'light_el', 'light_int', 'light_k', 'light_rgb', 'bounce', 'shadows', 'interior'].map(k => V[k]).join(',')); }
+function frameKey() { return pvs.camsKey + '|' + shot.plate + '|' + (V.holdout ? V.holdout_skip || '' : '') + (shot.plate ? '' : '|' + ['light_az', 'light_el', 'light_int', 'light_k', 'light_rgb', 'bounce', 'shadows', 'interior'].map(k => V[k]).join(',')); }
 async function prefetchFrames() {
   const key = frameKey();
   if (pvs.fetchKey === key) return;
@@ -2048,7 +2372,7 @@ function scheduleWarmLater() { clearTimeout(warmLaterT); warmLaterT = setTimeout
 function scheduleWarm(delay) {
   clearTimeout(warmT);
   warmT = setTimeout(() => {
-    if (playing || busy || dim !== '2d' || vw.free || !shot.standin || !look || !pv || !pv.boxes || !pv.init || !pv.cams || !vw.warmSize || !previewReady() || pvs.camsKey !== camsKeyNow()) { if (!playing) scheduleWarmLater(); return; }
+    if (window.__mfNoPaint || playing || busy || dim !== '2d' || vw.free || !shot.standin || !look || !pv || !pv.boxes || !pv.init || !pv.cams || !vw.warmSize || !previewReady() || pvs.camsKey !== camsKeyNow()) { if (!playing) scheduleWarmLater(); return; }
     const [WS, HS] = vw.warmSize, key = [WS, HS, vw.haze, pvs.camsKey].join('|');
     const a = Math.round(V.first), b = Math.round(V.last);
     for (let k = 0; k <= b - a; k++) {
@@ -2081,8 +2405,8 @@ function foSize() { const [SW, SH] = pvs.size, sc = Math.max(Math.min(Number(V.p
 function foRender(f) {            // render frame f the farm's way and keep it
   const p = foParams(), [SW, SH] = pvs.size;
   let dist = null;
-  if (shot.standin && pv.boxes && pvs.plateLight) { pv.standinPlate(f, SW, SH, pvs.plateLight, f); dist = pv.pl.dist; }
-  else { const fi = pv.frameTex.get(f); dist = fi ? fi.dist : null; }
+  if (shot.standin && pv.boxes && pvs.plateLight) { applySkip(); pv.standinPlate(f, SW, SH, pvs.plateLight, f); dist = pv.pl.dist; }
+  else { const fi = pv.frameTex.get(f); dist = fi ? (skipActive() && fi.hdist) || fi.dist : null; }
   pv.simTo(f, p, simStepKey(p));
   const r = pv.renderDust(f, p, SW, SH, dist, 0, true);
   const need = layer === 'heldout' ? ['held', 'free'] : [layer === 'noholdout' ? 'free' : 'held'];
@@ -2129,7 +2453,7 @@ async function foCacheAll() {     // play in Final output: render the frames it 
 function paintPreview2d() {
   v3.raf = 0;
   const gl = v3.gl;
-  if (!gl || dim !== '2d' || !pv || !pv.ok) return;
+  if (!gl || dim !== '2d' || !pv || !pv.ok || window.__mfNoPaint) return;       // __mfNoPaint: tests that drive the GPU themselves
   if (!look) { try { look = new MFLook(pv); } catch (e) { console.error(e); pvs.err = 'viewer: ' + e.message; drawHud(); return; } }
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const cw = Math.max(1, Math.round(cv3.clientWidth * dpr)), ch = Math.max(1, Math.round(cv3.clientHeight * dpr));
@@ -2177,7 +2501,7 @@ function paintPreview2d() {
       dustSrc = { tex: layer === 'noholdout' ? e.free : e.held, flip: 1, free: layer === 'heldout' ? e.free : null };
     } else if (quality === 'preview' && previewReady()) {
       pv.simTo(frame, p, simStepKey(p));
-      pv.renderDust(frame, p, W0, H0, distTex, vw.hold ? cf : 0);
+      pv.renderDust(frame, p, W0, H0, holdDist(cf, distTex, WS, HS, frame), vw.hold ? cf : 0);
       dustSrc = { tex: layer === 'noholdout' ? pv.acc.free : pv.acc.held, flip: 1, free: layer === 'heldout' ? pv.acc.free : null };
     } else if (quality === 'final' && fin) dustSrc = { tex: uploadFinal(fin), flip: 0 };
     const cam = pv.camAt(cf), L = pv.init ? pv.lens(p, cam, W0) : { focal: 35, film: 36, fstop: 4, focusM: 5, su: 0.01, front: 1, back: 1, dof: false, maxR: 0 };
@@ -2229,7 +2553,7 @@ function bootFail(msg) { $('boot').classList.add('err'); $('bootMsg').textConten
   } catch (e) { bootFail(e.message); console.error(e.detail || e); }
 })();
 window.__mfdbg = { boxHandles, toScreen, get v3() { return v3; } };
-window.__fo = fo; window.__mfweb = { get look() { return look; }, get pv() { return pv; }, get pvs() { return pvs; }, get movers() { return movers; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
+window.__fo = fo; window.__mfweb = { holdDist, applySkip, applyMovers, refreshObjects, get objs() { return objs; }, get look() { return look; }, get pv() { return pv; }, get pvs() { return pvs; }, get movers() { return movers; }, simStepKey, get shot() { return shot; }, previewReady, pparams, setQuality, setDim, get V() { return V; }, get frame() { return frame; }, get busy() { return busy; }, get rangeRunning() { return rangeRunning; }, dust, plates, params, setFrame, onButton, renderFrame, setKnob, call };
 </script>
 </body>
 </html>
