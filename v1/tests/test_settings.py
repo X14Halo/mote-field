@@ -102,7 +102,7 @@ class Keys(unittest.TestCase):
         base = stack()
         cases = {  # setting: (prep changes, sim changes, cache changes)
             'light_az': (True, True, True),
-            'push_min': (True, True, True),
+            'interior': (True, True, True),
             'density': (False, True, True),
             'master_amount': (False, True, True),
             'master_air': (False, True, True),
@@ -117,7 +117,7 @@ class Keys(unittest.TestCase):
             'hold_frame': (False, False, False),
             'plate': (False, False, False),
         }
-        new = {'light_az': 40.0, 'push_min': 1.0, 'density': 99.0, 'master_amount': 2.0, 'master_air': 2.0,
+        new = {'light_az': 40.0, 'interior': False, 'density': 99.0, 'master_amount': 2.0, 'master_air': 2.0,
                'light_int': 2.0, 'brightness': 2.0, 'fstop': 2.8, 'steady': 0.5, 'fade': 10.0, 'cache': '/tmp/x',
                'output_mode': 'holdout check', 'dof_view': False, 'hold_frame': 1010, 'plate': '/p.####.exr'}
         for k, (prep, sim, cache) in cases.items():
@@ -254,7 +254,7 @@ class Migrate(unittest.TestCase):
             if k in schema.BY_KEY and k not in ('shadows', 'shapes', 'utility'):
                 want = tuple(v) if isinstance(v, list) else v
                 self.assertEqual(s[k], schema.coerce(k, want), k)
-        self.assertTrue(any('bake again' in n for n in notes))
+        self.assertTrue(any('no longer needed' in n for n in notes))
         self.assertTrue(any('viewer-only' in n for n in notes))
 
     def test_a_real_utility_pass_keeps_its_path(self):

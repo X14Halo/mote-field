@@ -86,8 +86,6 @@ Generated from `motefield/schema.py`; do not edit by hand (`python -m motefield 
 | Air | Vertical drift | `lift` | 0 | cm/s | sim | look | advanced |
 | Air | Settling | `settle` | 0.5 | cm/s | sim | look | advanced |
 | Air | Speed | `speed` | 1 | x | sim | look | advanced |
-| Air | Pre-roll | `preroll` | 48 | frames | sim | look | advanced |
-| Air | Steps per frame | `substeps` | 2 |  | sim | show | advanced |
 | Embers | Embers per second | `ember_rate` | 20 | /s | sim | look | basic |
 | Embers | Plume speed | `ember_rise` | 2.2 | m/s | sim | look | basic |
 | Embers | Turbulence | `ember_turb` | 0.9 |  | sim | look | basic |
@@ -113,12 +111,6 @@ Generated from `motefield/schema.py`; do not edit by hand (`python -m motefield 
 | Holdouts | Never hold out | `holdout_skip` |  |  | render | shot | basic |
 | Holdouts | No holdout nearer than | `fg_near` | 0 | scene | render | shot | advanced |
 | Holdouts | Full holdout beyond | `fg_far` | 0 | scene | render | shot | advanced |
-| Moving things | Moving things push the dust | `push` | off |  | sim | shot | basic |
-| Moving things | Use movers | `movers` |  |  | sim | shot | advanced |
-| Moving things | Push strength | `push_amount` | 1 | x | sim | shot | advanced |
-| Moving things | Push reach | `push_radius` | 1 | x | sim | shot | advanced |
-| Moving things | Ignore motion slower than | `push_min` | 0.25 | m/s | prep | shot | advanced |
-| Moving things | Motion vector scale | `mv_scale` | 1 |  | prep | show | advanced |
 | Lens | Defocus | `dof` | on |  | render | shot | basic |
 | Lens | Motion blur | `mb` | on |  | render | shot | basic |
 | Lens | Focal length | `focal` | 0 | mm | render | shot | advanced |
@@ -145,13 +137,13 @@ Generated from `motefield/schema.py`; do not edit by hand (`python -m motefield 
 | Section | Setting | Key | Default | Unit | Affects | Layer | Level |
 |---|---|---|---|---|---|---|---|
 | Output | Node output | `output_mode` | dust only |  | node | shot | basic |
-| Output | Cache folder | `cache` |  |  | node | shot | basic |
+| Output | Alpha | `alpha` | none |  | render | shot | basic |
+| Output | Matte strength | `matte_gain` | 1 | x | render | shot | advanced |
+| Output | Cache folder | `cache` |  |  | node | shot | advanced |
 | Output | Resolution | `proxy` | 1 | x | render | shot | advanced |
-| Layers | noholdout layer | `out_noholdout` | on |  | render | show | advanced |
-| Layers | embers layer | `out_embers` | on |  | render | show | advanced |
-| Layers | dustmatte layer | `out_dustmatte` | on |  | render | show | advanced |
-| Layers | dust_key and dust_fill layers | `out_keyfill` | off |  | render | show | advanced |
-| Layers | 32-bit float | `out_float` | off |  | render | show | advanced |
+| Channels | noholdout channels | `out_noholdout` | on |  | render | show | advanced |
+| Channels | embers channels | `out_embers` | on |  | render | show | advanced |
+| Channels | dust_key and dust_fill channels | `out_keyfill` | off |  | render | show | advanced |
 
 ## View
 
@@ -159,7 +151,6 @@ Generated from `motefield/schema.py`; do not edit by hand (`python -m motefield 
 |---|---|---|---|---|---|---|---|
 | Viewer | Defocus in the viewer | `dof_view` | on |  | view | shot | advanced |
 | Viewer | Motion blur in the viewer | `mb_view` | on |  | view | shot | advanced |
-| Viewer | Show moving things | `show_movers` | on |  | view | shot | advanced |
 | Viewer | Hold camera on frame | `hold_frame` | 0 |  | view | shot | advanced |
 
 ## Master dials

@@ -11,8 +11,10 @@ from motefield.schema import BY_KEY, SettingError, coerce
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures')
 
 # 0.8 settings that are gone on purpose (migrate.py says what happens to each)
-V08_GONE = {'fade_xn', 'fade_xp', 'fade_yn', 'fade_yp', 'fade_zn', 'fade_zp', 'standin_view', 'standin_json', 'fg_fade',
-            'movers_baked', 'sim_checkpoints'}
+from motefield import migrate  # noqa: E402
+
+V08_GONE = {'fade_xn', 'fade_xp', 'fade_yn', 'fade_yp', 'fade_zn', 'fade_zp', 'standin_view'} | set(migrate.DROPPED) | \
+    set(migrate.LATER)
 
 
 class SchemaTable(unittest.TestCase):

@@ -343,11 +343,18 @@ class Shot(object):
                 self._layers[f] = survey(fr.files, self.layer_names)
         return self._layers[f]
 
+    def nearest(self, f):
+        """f if it is on disk, else the nearest frame that is (the camera holds outside the frames there are)."""
+        if not self.frames or f in self.frames:
+            return f
+        return min(self.frames, key=lambda x: (abs(x - f), x))
+
     def camera(self, f):
         fi = int(np.floor(f))
-        if f != fi:
-            a, b = self.camera(fi), self.camera(fi + 1) if (fi + 1) in self.frames or not self.frames else None
-            return a if b is None else a.lerp(b, f - fi)
+        if f != fi:                          # between frames (the shutter): blend the neighbours
+            a, b = self.camera(fi), self.camera(fi + 1)
+            return a if a is b else a.lerp(b, f - fi)
+        fi = self.nearest(fi)
         if fi not in self._cams:
             with self.open(fi) as fr:
                 cam = _camera.from_headers([h for fl in fr.files for h in fl.headers], self.camera_keys)

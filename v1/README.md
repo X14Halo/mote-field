@@ -1,10 +1,12 @@
 # MoteField v1
 
-Floating dust motes and fire embers for a shot, added in comp from the shot's utility pass. A rebuild of MoteField 0.8
-(`../nuke/`), which stays live alongside for comparison.
+Floating dust motes and fire embers for a shot, added in comp from the shot's utility pass. The node shows them in the
+Nuke viewer as an ordinary image, with depth of field and motion blur, to plus or over onto the comp. A rebuild of
+MoteField 0.8 (`../nuke/`), which stays live alongside for comparison.
 
-**Status: phase 1 of 7, foundations.** Settings, the settings files and the randomness are done and tested. There is
-nothing to render yet; phase 2 (the Python core) starts writing EXRs.
+**Status: phase 2 of 8, the Python core.** Settings, the shot loader and shot check, the motion, the light and the
+renderer work and are tested; next is the node's frame cache, then the Nuke node itself. Progress page:
+https://x14halo.github.io/mote-field/v1/
 
 ## Layout
 
@@ -15,6 +17,16 @@ motefield/            the Python package: plain Python 3.10+ and numpy 1.23+ (Nu
   migrate.py          reading MoteField 0.8 settings files
   rng.py              integer-hash randomness and the dust's starting state
   curves.py           keyed values (Catmull-Rom), shared by animated settings and shapes
+  exr.py              EXR reading (multi-part scanline; a library for the rest) and writing
+  camera.py           the shot camera and lens, from the EXR header
+  shot.py             the utility pass: layers by role, coverage, premultiplied edges, unfiltered depth
+  check.py            the shot check
+  standin.py          the built-in stand-in room, made in memory
+  place.py            Fit box, and what is under a pixel
+  light.py            the key light: shadows, light map, bounce lights
+  motion.py           where every mote is at any time, with no simulation state
+  splat.py            drawing blurred points with the lens's bokeh
+  render.py           a frame of dust through the shot's lens
   cli.py              python -m motefield ...
 viewer/js/
   mfseed.js           the JavaScript twin of rng.py (bit-identical)
@@ -70,15 +82,17 @@ python -m motefield keys S      its cache keys
 python -m motefield diff A B    what differs, and which keys that changes
 python -m motefield snapshot S  freeze for the farm
 python -m motefield migrate OLD [--split]   convert a 0.8 settings file
+python -m motefield check P     the shot check on a utility pass (P: a frame pattern or a shot settings file)
 python -m motefield doctor      what this Python has
+python tools/build_page.py      run the tests, then rebuild index.html (the progress page)
 ```
 
 ## Next
 
-2. Python core: EXR reading (coverage-aware P), shot check, prep, dust simulation, CPU renderer (stamping + tiled
-   FFT), output layers, `render`.
-3. GPU renderer and the Python/GPU parity tests.
-4. Viewer UX.
-5. Embers, shapes, moving things.
-6. The Nuke node, live link, stale-cache badge, pipeline hooks, farm bake.
-7. The browser demo page, artist quick start, TD guide.
+2. Python core: the node's frame cache (named by the cache key, so never stale) and a `render` command.
+3. The Nuke node: the dust as an image in the node graph, rendered as you scrub and when the comp renders.
+4. The GPU live viewer, matched to the render.
+5. Ease of use: first run, clicking on the plate, diagnostic views, presets, undo.
+6. Embers and shapes.
+7. Moving things pushing the dust.
+8. The browser demo page, artist quick start, TD guide.

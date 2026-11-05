@@ -178,8 +178,8 @@ with _section('place', 'Key light', 'shot', 'prep'):
 
 with _section('place', 'Shapes', 'shot', 'look'):
     _p('shapes', 'json', [], 'Shapes',
-       'Spheres and boxes that hide dust or embers inside or outside them, or push the dust as they move. Added and '
-       'keyed in the viewer.', level='basic')
+       'Spheres and boxes that hide dust or embers inside or outside them, with a soft edge. Added and keyed in the '
+       'viewer.', level='basic')
 
 # ---------------------------------------------------------------------------------------------------------------------
 #  Look: what the dust and embers look like and how the air moves (the shareable look file)
@@ -251,10 +251,6 @@ with _section('look', 'Air', 'look', 'sim'):
        hard=(0, 1e4))
     _p('speed', 'float', 1.0, 'Speed', 'Plays the whole simulation faster or slower.', unit='x', soft=(0, 3),
        hard=(0, 100))
-    _p('preroll', 'int', 48, 'Pre-roll', 'Frames simulated before the first frame so the air is already moving.',
-       unit='frames', soft=(0, 200), hard=(0, 100000))
-    _p('substeps', 'int', 2, 'Steps per frame', 'Simulation steps per frame.', soft=(1, 8), hard=(1, 64),
-       layer='show')
 
 with _section('look', 'Embers', 'look', 'sim'):
     _p('ember_rate', 'float', 20.0, 'Embers per second', 'How many embers the fire gives off (before Amount).',
@@ -300,22 +296,6 @@ with _section('match', 'Holdouts', 'shot', 'render'):
        'character can be held out in comp with its own matte.', unit='scene', soft=(0, 2000), hard=(0, 1e9))
     _p('fg_far', 'float', 0.0, 'Full holdout beyond', 'Surfaces beyond this hide dust fully.', unit='scene',
        soft=(0, 2000), hard=(0, 1e9))
-
-with _section('match', 'Moving things', 'shot', 'sim'):
-    _p('push', 'bool', False, 'Moving things push the dust',
-       'Things moving in the shot push the dust aside and leave a swirling wake. They are found from the backward '
-       'motion vectors with Find moving things.', level='basic')
-    _p('movers', 'text', '', 'Use movers',
-       'Which moving things push the dust: blank = the suggested ones, "all", "none", or their numbers, e.g. "1 3".')
-    _p('push_amount', 'float', 1.0, 'Push strength', 'How hard moving things push the dust.', unit='x',
-       soft=(0, 4), hard=(0, 100))
-    _p('push_radius', 'float', 1.0, 'Push reach', 'Scales the size of the spheres that push.', unit='x',
-       soft=(0.3, 3), hard=(0.01, 100))
-    _p('push_min', 'float', 0.25, 'Ignore motion slower than', 'Slower motion is treated as noise.', unit='m/s',
-       soft=(0, 2), hard=(0, 1000), affects='prep')
-    _p('mv_scale', 'float', 1.0, 'Motion vector scale',
-       'Use -1 if the motion vectors point forward rather than backward.', soft=(-2, 2), affects='prep',
-       layer='show')
 
 with _section('match', 'Lens', 'shot', 'render'):
     _p('dof', 'bool', True, 'Defocus', 'Depth of field, matched to the shot camera.', level='basic')
@@ -367,18 +347,23 @@ with _section('deliver', 'Output', 'shot', 'node'):
        'What the Nuke node outputs: the dust alone (to merge with plus), the dust merged over the plate, or a '
        'holdout check (what holdouts take away, in red).', level='basic',
        options=['dust only', 'merged over plate', 'holdout check'])
-    _p('cache', 'path', '', 'Cache folder', 'Where the dust frames are written. Each node needs its own folder.',
-       level='basic')
+    _p('alpha', 'enum', 'none', 'Alpha',
+       'none: the dust only adds light, for a plus merge (the comp\'s alpha is left alone). matte: alpha follows the '
+       'dust\'s brightness, for an over merge, so bright motes and embers cover what is behind them.',
+       level='basic', options=['none', 'matte'], affects='render')
+    _p('matte_gain', 'float', 1.0, 'Matte strength', 'With Alpha set to matte: how quickly alpha rises with brightness.',
+       unit='x', soft=(0.1, 10), hard=(0.0, 1000), affects='render')
+    _p('cache', 'path', '', 'Cache folder',
+       'Where the node keeps the frames it renders. Blank = a temporary folder it manages itself.')
     _p('proxy', 'float', 1.0, 'Resolution', 'Renders at a fraction of the shot resolution.', unit='x',
        soft=(0.1, 1), hard=(0.05, 4), affects='render')
 
-with _section('deliver', 'Layers', 'show', 'render'):
-    _p('out_noholdout', 'bool', True, 'noholdout layer', 'The dust with no holdouts, for holding out in comp.')
-    _p('out_embers', 'bool', True, 'embers layer', 'The embers on their own (held out).')
-    _p('out_dustmatte', 'bool', True, 'dustmatte layer', 'A matte of the dust\'s brightness, to grade through.')
-    _p('out_keyfill', 'bool', False, 'dust_key and dust_fill layers',
-       'The dust lit by the key light and by bounce light, separately. dust_key + dust_fill + embers = RGBA.')
-    _p('out_float', 'bool', False, '32-bit float', 'Writes 32-bit float instead of half float (twice the size).')
+with _section('deliver', 'Channels', 'show', 'render'):
+    _p('out_noholdout', 'bool', True, 'noholdout channels',
+       'The dust with no holdouts, for holding out in comp with your own mattes.')
+    _p('out_embers', 'bool', True, 'embers channels', 'The embers on their own (held out).')
+    _p('out_keyfill', 'bool', False, 'dust_key and dust_fill channels',
+       'The dust lit by the key light and by bounce light, separately. dust_key + dust_fill + embers = rgb.')
 
 # ---------------------------------------------------------------------------------------------------------------------
 #  View: the viewer only. Never saved into a render.
@@ -387,7 +372,6 @@ with _section('view', 'Viewer', 'shot', 'view'):
     _p('dof_view', 'bool', True, 'Defocus in the viewer', 'Turn off to make the viewer faster. Renders keep Defocus.')
     _p('mb_view', 'bool', True, 'Motion blur in the viewer',
        'Turn off if a camera move plays slowly. Renders keep Motion blur.')
-    _p('show_movers', 'bool', True, 'Show moving things', 'Draws the spheres that stand in for moving things.')
     _p('hold_frame', 'int', 0, 'Hold camera on frame',
        'Review aid: the camera, plate and holdouts stay on this frame while the dust keeps moving (0 = off).',
        hard=(0, 10 ** 7))

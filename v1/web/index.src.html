@@ -66,8 +66,9 @@ ul.tight li { margin: 6px 0; }
 .stat b { display: block; font-family: var(--display); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
 .stat span { font-size: 12.5px; color: var(--dim); }
 /* phases */
-ol.phases { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
-@media (max-width: 900px) { ol.phases { grid-template-columns: repeat(2, 1fr); } }
+ol.phases { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+@media (max-width: 980px) { ol.phases { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 560px) { ol.phases { grid-template-columns: repeat(2, 1fr); } }
 ol.phases li { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 11px 12px; position: relative; }
 ol.phases li .n { font-family: var(--mono); font-size: 12px; color: var(--faint); }
 ol.phases li b { display: block; font-family: var(--display); font-size: 16px; font-weight: 600; margin: 2px 0 4px; }
@@ -132,6 +133,12 @@ ol.phases li.now .n::after { content: " in progress"; color: var(--accent); }
 .item.ok .lv { color: var(--ok); } .item.note .lv { color: var(--render); } .item.warn .lv { color: var(--warn); } .item.problem .lv { color: var(--heavy); }
 .item .tp { color: var(--dim); font-size: 13px; }
 @media (max-width: 640px) { .item { grid-template-columns: 1fr; gap: 2px; } }
+.shots { display: grid; gap: 22px; margin-top: 20px; }
+.shots figure { margin: 0; }
+.shots img { display: block; width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--line); background: #000; }
+.shots figcaption { margin-top: 8px; color: var(--dim); font-size: 14px; max-width: 760px; }
+.shots figcaption b { color: var(--text); font-weight: 500; }
+.shots figcaption .mono { color: var(--faint); font-size: 12.5px; margin-left: 4px; }
 footer { padding: 28px 0 48px; color: var(--faint); font-size: 13.5px; }
 footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -141,7 +148,7 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
 <header class="top">
   <div class="wrap">
     <div class="mark"><i aria-hidden="true"></i>MoteField v1</div>
-    <span class="chip live" id="phaseChip">Phase 2 of 7 in progress</span>
+    <span class="chip live" id="phaseChip">Phase 2 of 8 in progress</span>
     <span class="sp"></span>
     <a href="../nuke/">MoteField 0.8.3</a>
     <a href="https://github.com/X14Halo/mote-field/tree/main/v1">Code</a>
@@ -152,26 +159,26 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
     <div class="wrap">
       <div class="read">
         <h1>Dust motes and embers for comp, rebuilt</h1>
-        <p class="lede">MoteField adds floating dust and fire embers to a shot in Nuke from the lighting department's utility pass, with no 3D particle render. This page tracks the rebuild. There is no renderer yet: what you can try below is the new settings panel and the shot check.</p>
+        <p class="lede">MoteField adds floating dust and fire embers to a shot in Nuke from the lighting department's utility pass, with no 3D particle render. It shows up in the Nuke viewer as an ordinary image, with depth of field and motion blur, to plus or over onto the comp. This page tracks the rebuild.</p>
       </div>
       <div class="grid2">
         <div class="card">
           <h3>This update · <!--UPDATED--></h3>
           <ul class="tight">
-            <li><b>Reads production utility passes.</b> Multi-part EXRs, with position, depth, unfiltered depth, coverage, motion vectors and object IDs found by name, across several files a frame (a mattes pass for surface colour and ID mattes).</li>
-            <li><b>Fixes edges.</b> Filtered passes store edge pixels premultiplied, so their positions streak toward the world origin. They are detected and divided by coverage: on a production pass, edge pixels went from 507 px off to 0.27 px.</li>
-            <li><b>Reads the whole lens.</b> Blade count, cat-eye, field curvature and full aperture now come from the render camera in the header, so the dust's bokeh can match the plate. 0.8.3 missed them.</li>
-            <li><b>The shot check.</b> One report on what is in a pass and what MoteField will do with it (below).</li>
+            <li><b>The first frames.</b> The new renderer draws the dust through the shot's own lens: depth of field with the header's blades and cat-eye, motion blur with the studio shutter, and holdouts weighted by coverage. About 1 second for a full HD frame (below).</li>
+            <li><b>Motion without a simulation.</b> Each mote's path is worked out directly from the time, so any frame renders on its own: scrub anywhere, render on the farm in any order, no pre-roll. 0.8.3 needed 24 s to reach a frame mid-shot; v1 needs about 1.</li>
+            <li><b>The same look.</b> Side by side with 0.8.3 on the same frame: the same beam and density, with total light within 3%.</li>
+            <li><b>Built for the Nuke viewer.</b> No files to manage: the node keeps its own frame cache, named after its settings, so what you see is never stale. Alpha can be none (for plus) or a matte (for over). Moving things pushing the dust come last.</li>
           </ul>
         </div>
         <div class="card">
           <h3>Checked</h3>
           <div class="stats">
             <div class="stat"><b id="nTests">77</b><span>tests passing</span></div>
-            <div class="stat"><b>2</b><span>numpy versions, Nuke 15's 1.23.5 and 2.5</span></div>
-            <div class="stat"><b>0</b><span>bytes differing, Python vs JavaScript starting dust</span></div>
+            <div class="stat"><b>~1 s</b><span>a full HD frame on one CPU core</span></div>
+            <div class="stat"><b>0</b><span>pixels differing between Nuke 15's numpy and numpy 2</span></div>
           </div>
-          <p style="margin:12px 0 0;color:var(--dim);font-size:13.5px">The shot check was also run on a production utility pass, which stays private: camera reprojection 0.11 px, every layer found.</p>
+          <p style="margin:12px 0 0;color:var(--dim);font-size:13.5px">Also run on a production utility pass, which stays private: every layer found, the camera reprojects to 0.11 px, and a frame renders in 0.4 s once the pass is read.</p>
         </div>
       </div>
     </div>
@@ -182,13 +189,27 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
       <h2>Where the rebuild is</h2>
       <ol class="phases">
         <li class="done"><span class="n">1</span><b>Foundations</b><p>One settings table, show, look and shot files, cache keys, hash randomness.</p></li>
-        <li class="now"><span class="n">2</span><b>Python core</b><p>EXR reading, shot check, simulation, the CPU renderer, render command.</p></li>
-        <li><span class="n">3</span><b>GPU renderer</b><p>The same maths in WebGL2, checked against the Python.</p></li>
-        <li><span class="n">4</span><b>Viewer</b><p>First run, clicking on the plate, diagnostic views, presets, undo.</p></li>
-        <li><span class="n">5</span><b>Embers, shapes, movers</b><p>Ported and checked for parity.</p></li>
-        <li><span class="n">6</span><b>Nuke node</b><p>Live link, stale-cache badge, pipeline hooks, farm bake.</p></li>
-        <li><span class="n">7</span><b>Release</b><p>The browser demo, artist quick start, TD guide.</p></li>
+        <li class="now"><span class="n">2</span><b>Python core</b><p>EXR reading, shot check, motion, light, the renderer. Next: its frame cache.</p></li>
+        <li><span class="n">3</span><b>Nuke node</b><p>The image in the node graph, rendered as you scrub and on the farm.</p></li>
+        <li><span class="n">4</span><b>GPU viewer</b><p>Real-time placing and tuning, matched to the render.</p></li>
+        <li><span class="n">5</span><b>Ease of use</b><p>First run, clicking on the plate, diagnostic views, presets, undo.</p></li>
+        <li><span class="n">6</span><b>Embers, shapes</b><p>Fire embers, and shapes that hide dust.</p></li>
+        <li><span class="n">7</span><b>Moving things</b><p>Characters and keyed shapes pushing the dust.</p></li>
+        <li><span class="n">8</span><b>Release</b><p>The browser demo, artist quick start, TD guide.</p></li>
       </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h2>First frames</h2>
+        <p class="lede">The built-in stand-in room, frame 1024, at full HD. The plate under the dust is a plain clay render of the set; the dust is MoteField's, added with plus.</p>
+      </div>
+      <div class="shots">
+        <figure><img src="<!--IMG_WIDE-->" alt="A dim room with a sunbeam through the window, dust motes glittering in the beam" width="1280" height="536"><figcaption><b>Wide.</b> A slow camera move across the room. Motes glitter in the sunbeam and fade to faint bounce light outside it; the table and bookcase hold them out. <span class="mono"><!--T_WIDE--></span></figcaption></figure>
+        <figure><img src="<!--IMG_CLOSE-->" alt="Close to the lens in the sunbeam: large soft seven-sided bokeh from motes near the camera" width="1280" height="536"><figcaption><b>Close-up.</b> Standing in the beam at f/2.8: motes near the lens open into large seven-bladed bokeh, with cat-eye toward the edges, from the lens details in the header. <span class="mono"><!--T_CLOSE--></span></figcaption></figure>
+      </div>
     </div>
   </section>
 

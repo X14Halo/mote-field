@@ -11,7 +11,10 @@ What changes on the way:
     shadows 'stand-in geometry'   -> 'auto' (which picks the stand-in geometry for stand-in shots)
     hold_frame                    -> kept, but it is now a viewer-only review aid: renders never hold the camera
     fg_fade, standin_json         -> dropped (0.8 internals)
-    movers_baked, sim_checkpoints -> dropped: baked data, not settings. Bake again for the farm.
+    movers_baked, sim_checkpoints -> dropped: baked data, not settings
+    preroll, substeps             -> dropped: motion is worked out directly for each frame, with no pre-roll
+    push, movers, push_*, mv_scale, show_movers -> dropped for now: moving things pushing the dust come in a later
+                                     version
 """
 
 import os
@@ -21,7 +24,8 @@ from .schema import BY_KEY, SettingError
 from .settings import Layer
 
 V08_MARKERS = ('box_center', 'box_size', 'density', 'light_az')
-DROPPED = ('fg_fade', 'standin_json', 'movers_baked', 'sim_checkpoints')
+DROPPED = ('fg_fade', 'standin_json', 'movers_baked', 'sim_checkpoints', 'preroll', 'substeps')
+LATER = ('push', 'movers', 'push_amount', 'push_radius', 'push_min', 'mv_scale', 'show_movers')
 
 
 def looks_like_v08(d):
@@ -52,7 +56,11 @@ def from_v08(d, split=False, name=''):
         if k in d:
             d.pop(k)
             if k in ('movers_baked', 'sim_checkpoints'):
-                notes.append('%s was baked data, not a setting: bake again for the farm.' % k)
+                notes.append('%s was baked data, not a setting, and is no longer needed.' % k)
+    if any(d.pop(k, None) for k in LATER):
+        notes.append('Moving things pushing the dust come in a later version; that setup was left out for now.')
+    for k in LATER:
+        d.pop(k, None)
     if d.get('hold_frame'):
         notes.append('Hold camera on frame is now a viewer-only review aid; renders never hold the camera.')
     for k, v in d.items():

@@ -48,7 +48,7 @@ class Commands(unittest.TestCase):
         self.assertEqual(code, 0, out)
         shot = os.path.join(self.dir, 'sh020_v1.json')
         self.assertTrue(os.path.exists(shot))
-        self.assertIn('bake again', out)
+        self.assertIn('no longer needed', out)
         code, out = run('show', shot)
         self.assertEqual(code, 0, out)
         self.assertIn('density', out)
