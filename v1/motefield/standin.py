@@ -333,8 +333,10 @@ def open_shot(e):
     """The shot for engine values e: the stand-in if one is chosen and there is no utility pass, else the real one."""
     if e['standin'] != 'none' and not e['utility']:
         return StandinShot(e['standin'] if e['standin'] in VIEWS else 'wide')
+    from . import pipeline
     from .shot import Shot
-    return Shot(e['utility'], extra=e.get('extra_passes', ''))
+    return Shot(e['utility'], extra=e.get('extra_passes', ''), camera_keys=pipeline.CAMERA_KEYS,
+                layer_names=pipeline.LAYER_NAMES)
 
 
 __all__ = ['StandinShot', 'open_shot', 'camera', 'room_boxes', 'Surface']

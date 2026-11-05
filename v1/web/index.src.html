@@ -66,8 +66,8 @@ ul.tight li { margin: 6px 0; }
 .stat b { display: block; font-family: var(--display); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
 .stat span { font-size: 12.5px; color: var(--dim); }
 /* phases */
-ol.phases { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
-@media (max-width: 980px) { ol.phases { grid-template-columns: repeat(4, 1fr); } }
+ol.phases { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(9, 1fr); gap: 7px; }
+@media (max-width: 1040px) { ol.phases { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 560px) { ol.phases { grid-template-columns: repeat(2, 1fr); } }
 ol.phases li { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 11px 12px; position: relative; }
 ol.phases li .n { font-family: var(--mono); font-size: 12px; color: var(--faint); }
@@ -133,6 +133,11 @@ ol.phases li.now .n::after { content: " in progress"; color: var(--accent); }
 .item.ok .lv { color: var(--ok); } .item.note .lv { color: var(--render); } .item.warn .lv { color: var(--warn); } .item.problem .lv { color: var(--heavy); }
 .item .tp { color: var(--dim); font-size: 13px; }
 @media (max-width: 640px) { .item { grid-template-columns: 1fr; gap: 2px; } }
+ol.steps { margin: 18px 0 0; padding: 0; list-style: none; counter-reset: st; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (max-width: 760px) { ol.steps { grid-template-columns: 1fr; } }
+ol.steps li { counter-increment: st; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px 12px 44px; position: relative; font-size: 14.5px; color: var(--dim); }
+ol.steps li::before { content: counter(st); position: absolute; left: 14px; top: 11px; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 600 12px/20px var(--body); text-align: center; }
+ol.steps li b { color: var(--text); font-weight: 500; }
 .shots { display: grid; gap: 22px; margin-top: 20px; }
 .shots figure { margin: 0; }
 .shots img { display: block; width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--line); background: #000; }
@@ -148,7 +153,7 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
 <header class="top">
   <div class="wrap">
     <div class="mark"><i aria-hidden="true"></i>MoteField v1</div>
-    <span class="chip live" id="phaseChip">Phase 2 of 8 in progress</span>
+    <span class="chip live" id="phaseChip">Phase 3 of 9 in progress</span>
     <span class="sp"></span>
     <a href="../nuke/">MoteField 0.8.3</a>
     <a href="https://github.com/X14Halo/mote-field/tree/main/v1">Code</a>
@@ -165,10 +170,10 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
         <div class="card">
           <h3>This update · <!--UPDATED--></h3>
           <ul class="tight">
-            <li><b>The first frames.</b> The new renderer draws the dust through the shot's own lens: depth of field with the header's blades and cat-eye, motion blur with the studio shutter, and holdouts weighted by coverage. About 1 second for a full HD frame (below).</li>
-            <li><b>Motion without a simulation.</b> Each mote's path is worked out directly from the time, so any frame renders on its own: scrub anywhere, render on the farm in any order, no pre-roll. 0.8.3 needed 24 s to reach a frame mid-shot; v1 needs about 1.</li>
-            <li><b>The same look.</b> Side by side with 0.8.3 on the same frame: the same beam and density, with total light within 3%.</li>
-            <li><b>Built for the Nuke viewer.</b> No files to manage: the node keeps its own frame cache, named after its settings, so what you see is never stale. Alpha can be none (for plus) or a matte (for over). Moving things pushing the dust come last.</li>
+            <li><b>The Nuke node.</b> A MoteField node whose output is the dust as an image: view it, then plus or over it onto the comp. Its knobs come from the settings table: a first tab with the shot, the four dials and the output, then Place, Look, Match and Deliver.</li>
+            <li><b>Frames appear as you work.</b> A background renderer starts at the frame on screen and works outward, refreshing the viewer as frames arrive. Any render of the comp, in the GUI or on the farm, makes the frames it needs first. No buttons, nothing stale.</li>
+            <li><b>Look files in the node.</b> Knobs show the sequence's look until you change them in the node; your changes survive reloading the look. <i>Save look...</i> shares a node's look.</li>
+            <li><b>Not yet run in Nuke itself.</b> Tested against a stand-in for Nuke's Python, including the background renderer and a render filling the cache. The steps to try it are below.</li>
           </ul>
         </div>
         <div class="card">
@@ -188,15 +193,32 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
     <div class="wrap">
       <h2>Where the rebuild is</h2>
       <ol class="phases">
-        <li class="done"><span class="n">1</span><b>Foundations</b><p>One settings table, show, look and shot files, cache keys, hash randomness.</p></li>
-        <li class="now"><span class="n">2</span><b>Python core</b><p>EXR reading, shot check, motion, light, the renderer. Next: its frame cache.</p></li>
-        <li><span class="n">3</span><b>Nuke node</b><p>The image in the node graph, rendered as you scrub and on the farm.</p></li>
+        <li class="done"><span class="n">1</span><b>Foundations</b><p>Settings table and files, cache keys, hash randomness.</p></li>
+        <li class="done"><span class="n">2</span><b>Python core</b><p>EXR reading, shot check, motion, light, renderer, frame cache.</p></li>
+        <li class="now"><span class="n">3</span><b>Nuke node</b><p>Built and tested here. Next: trying it in Nuke 15.</p></li>
         <li><span class="n">4</span><b>GPU viewer</b><p>Real-time placing and tuning, matched to the render.</p></li>
         <li><span class="n">5</span><b>Ease of use</b><p>First run, clicking on the plate, diagnostic views, presets, undo.</p></li>
-        <li><span class="n">6</span><b>Embers, shapes</b><p>Fire embers, and shapes that hide dust.</p></li>
-        <li><span class="n">7</span><b>Moving things</b><p>Characters and keyed shapes pushing the dust.</p></li>
-        <li><span class="n">8</span><b>Release</b><p>The browser demo, artist quick start, TD guide.</p></li>
+        <li><span class="n">6</span><b>Matched edges, haze</b><p>Holdouts blurred like the plate's edges; optional light shafts.</p></li>
+        <li><span class="n">7</span><b>Embers, shapes</b><p>Fire embers, and shapes that hide dust.</p></li>
+        <li><span class="n">8</span><b>Moving things</b><p>Characters and keyed shapes pushing the dust.</p></li>
+        <li><span class="n">9</span><b>Release</b><p>The browser demo, artist quick start, TD guide.</p></li>
       </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h2>In Nuke 15</h2>
+        <p class="lede">It needs only the Python and numpy Nuke ships with.</p>
+      </div>
+      <ol class="steps">
+        <li><b>Install.</b> Add the repository's <code>v1</code> folder to <code>NUKE_PATH</code>. It adds <i>Other &gt; MoteField</i> to the Nodes menu and the render callback, in the GUI and on the farm.</li>
+        <li><b>Try the stand-in.</b> Create the node, set <i>Stand-in shot</i> to <i>wide</i> and view it. The frame you're on appears in a second or two, then the frames around it.</li>
+        <li><b>Your shot.</b> Connect the utility pass Read to the node's <i>utility</i> input and put the mattes pass in <i>Extra passes</i>. Then <i>Shot check</i>, <i>Fit box to shot</i>, set the light's heading, and tune with the dials.</li>
+        <li><b>Comp it.</b> Plus the node onto the comp, or set <i>Alpha</i> to <i>matte</i> and merge over. Writes render any missing frames first.</li>
+      </ol>
+      <p style="color:var(--dim);font-size:14px;margin:14px 0 0">The full guide, and what to report back, is <a href="https://github.com/X14Halo/mote-field/blob/main/v1/docs/NUKE.md">docs/NUKE.md</a>.</p>
     </div>
   </section>
 

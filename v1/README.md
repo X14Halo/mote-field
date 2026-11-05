@@ -4,9 +4,12 @@ Floating dust motes and fire embers for a shot, added in comp from the shot's ut
 Nuke viewer as an ordinary image, with depth of field and motion blur, to plus or over onto the comp. A rebuild of
 MoteField 0.8 (`../nuke/`), which stays live alongside for comparison.
 
-**Status: phase 2 of 8, the Python core.** Settings, the shot loader and shot check, the motion, the light and the
-renderer work and are tested; next is the node's frame cache, then the Nuke node itself. Progress page:
-https://x14halo.github.io/mote-field/v1/
+**Status: phase 3 of 9, the Nuke node.** The Python core (settings, shot loader and check, motion, light, renderer,
+frame cache) is done and tested; the Nuke node is built and tested against a stand-in for Nuke's Python, and next
+needs trying in Nuke 15 ([docs/NUKE.md](docs/NUKE.md)). Progress page: https://x14halo.github.io/mote-field/v1/
+
+**In Nuke:** add this folder to `NUKE_PATH`. Its `init.py` and `menu.py` add *Other > MoteField* and the callback that
+renders frames during renders.
 
 ## Layout
 
@@ -27,11 +30,17 @@ motefield/            the Python package: plain Python 3.10+ and numpy 1.23+ (Nu
   motion.py           where every mote is at any time, with no simulation state
   splat.py            drawing blurred points with the lens's bokeh
   render.py           a frame of dust through the shot's lens
+  cache.py            the node's frame cache: folders named after the settings and inputs
+  nodelink.py         knobs, look files and the artist's edits -> settings (no Nuke needed)
+  nuke_node.py        the Nuke node: knobs, internal graph, background renderer, render callback
+  pipeline.py         studio hooks (cache root, header and layer names), overridable from motefield_pipeline
   cli.py              python -m motefield ...
+init.py, menu.py      what Nuke runs when this folder is on NUKE_PATH
 viewer/js/
   mfseed.js           the JavaScript twin of rng.py (bit-identical)
   schema.json         generated from schema.py for the viewer's panel
 docs/SETTINGS.md      generated settings reference
+docs/NUKE.md          installing and trying the node in Nuke 15
 tests/                python -m pytest tests   (or: python -m unittest discover -s tests)
 ```
 
@@ -83,16 +92,17 @@ python -m motefield diff A B    what differs, and which keys that changes
 python -m motefield snapshot S  freeze for the farm
 python -m motefield migrate OLD [--split]   convert a 0.8 settings file
 python -m motefield check P     the shot check on a utility pass (P: a frame pattern or a shot settings file)
+python -m motefield render S    render frames into the node's cache (e.g. to fill it ahead on the farm)
 python -m motefield doctor      what this Python has
 python tools/build_page.py      run the tests, then rebuild index.html (the progress page)
 ```
 
 ## Next
 
-2. Python core: the node's frame cache (named by the cache key, so never stale) and a `render` command.
-3. The Nuke node: the dust as an image in the node graph, rendered as you scrub and when the comp renders.
+3. The Nuke node: try it in Nuke 15 and fix what real Nuke disagrees with.
 4. The GPU live viewer, matched to the render.
 5. Ease of use: first run, clicking on the plate, diagnostic views, presets, undo.
-6. Embers and shapes.
-7. Moving things pushing the dust.
-8. The browser demo page, artist quick start, TD guide.
+6. Matched edges (holdouts blurred like the plate's own edges) and optional haze / light shafts.
+7. Embers and shapes.
+8. Moving things pushing the dust.
+9. The browser demo page, artist quick start, TD guide.

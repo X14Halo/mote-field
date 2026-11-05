@@ -10,7 +10,7 @@
 
     check     the shot check: what's in a utility pass and what MoteField will do with it
 
-Later phases add: render, preflight.
+    render    render frames into the node's cache (or another folder), e.g. to fill it ahead on a farm
 """
 
 import argparse
@@ -129,6 +129,40 @@ def cmd_check(a):
     return 1 if any(level == check.PROBLEM for level, _, _ in rep['items']) else 0
 
 
+def frames_arg(text, first, last):
+    """'1001-1048', '1001,1010-1012' or '' (the shot's frames) -> a list of frames."""
+    import re
+    if not text:
+        return list(range(first, last + 1))
+    out = []
+    for part in str(text).replace(' ', '').split(','):
+        if not part:
+            continue
+        m = re.match(r'^(-?\d+)(?:-(-?\d+))?$', part)
+        if not m:
+            raise settings.SettingError('frames: %r is not a frame or a range like 1001-1048' % part)
+        a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+        out.extend(range(a, b + 1))
+    return out
+
+
+def cmd_render(a):
+    import time
+    from . import cache, render
+    s = settings.load(a.settings)
+    frames = frames_arg(a.frames, s['first'], s['last'])
+    r = render.Renderer(s)
+    fc = cache.FrameCache(s, r.shot, root=a.cache)
+    print('rendering %d frames into %s' % (len(frames), fc.pattern()))
+    t0 = time.time()
+    for f in frames:
+        t = time.time()
+        made = not fc.has(f) or a.force
+        fc.render(f, r, force=a.force)
+        print('  %d  %s' % (f, '%.2f s' % (time.time() - t) if made else 'already there'))
+    print('done in %.1f s' % (time.time() - t0))
+
+
 def cmd_doctor(a):
     ok = True
     print('MoteField %s (model %d)' % (__version__, MODEL_VERSION))
@@ -187,6 +221,11 @@ def main(argv=None):
     p.add_argument('--units', choices=list(schema.UNITS))
     p.add_argument('--frame', type=int)
     p.add_argument('--json', action='store_true')
+    p = sub.add_parser('render', help="render frames into the node's cache")
+    p.add_argument('settings')
+    p.add_argument('--frames', help='e.g. 1001-1048 or 1001,1010-1012 (default: the shot\'s frames)')
+    p.add_argument('--cache', help='folder to render into (default: the settings\' cache folder)')
+    p.add_argument('--force', action='store_true', help='render frames that are already there again')
     sub.add_parser('doctor', help='check this Python')
     a = ap.parse_args(argv)
     if not a.cmd:
