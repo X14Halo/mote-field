@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoteField v1</title>
+<meta name="description" content="MoteField v1, rebuilt: progress, the new settings panel and the shot check.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* One visual world: a comp tool at night. Graphite with a warm bias, one amber accent (light catching dust),
+   semantic colours only for cost and status. Layout: a narrow reading column on top, the panel preview below. */
+:root {
+  --bg: #16171a;
+  --panel: #1f2125;
+  --raise: #2a2d32;
+  --line: #34373d;
+  --text: #e4e2dd;
+  --dim: #a3a19c;
+  --faint: #75736f;
+  --accent: #f0b35a;
+  --accent-ink: #2b1d07;
+  --heavy: #e5705f;
+  --sim: #e9a63c;
+  --render: #6fa8dc;
+  --quiet: #8b8a86;
+  --ok: #7fbf7a;
+  --warn: #e9b44c;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 15px/1.55 var(--body); }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: .01em; text-wrap: balance; margin: 0; }
+h1 { font-size: 34px; line-height: 1.1; }
+h2 { font-size: 22px; }
+h3 { font-size: 15px; font-weight: 600; color: var(--dim); text-transform: none; }
+code, .mono { font-family: var(--mono); font-size: 13px; }
+.wrap { max-width: 1060px; margin: 0 auto; padding: 0 20px; }
+.read { max-width: 680px; }
+header.top { border-bottom: 1px solid var(--line); background: var(--panel); }
+header.top .wrap { display: flex; align-items: center; gap: 16px; height: 52px; }
+.mark { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 600; font-size: 19px; }
+.mark i { width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ffe2a8, var(--accent) 45%, #9a6420); box-shadow: 0 0 14px #f0b35a66; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 99px; font-size: 12.5px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+.chip.live { color: var(--accent); border-color: #f0b35a55; }
+.sp { flex: 1; }
+header.top a { color: var(--dim); text-decoration: none; font-size: 14px; }
+header.top a:hover { color: var(--text); }
+main section { padding: 34px 0; border-bottom: 1px solid var(--line); }
+.lede { color: var(--dim); font-size: 16.5px; margin: 10px 0 0; }
+.grid2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 28px; margin-top: 22px; }
+@media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.card h3 { margin-bottom: 10px; }
+ul.tight { margin: 0; padding-left: 18px; }
+ul.tight li { margin: 6px 0; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.stat { background: var(--raise); border-radius: 6px; padding: 10px 12px; }
+.stat b { display: block; font-family: var(--display); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.stat span { font-size: 12.5px; color: var(--dim); }
+/* phases */
+ol.phases { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+@media (max-width: 900px) { ol.phases { grid-template-columns: repeat(2, 1fr); } }
+ol.phases li { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 11px 12px; position: relative; }
+ol.phases li .n { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+ol.phases li b { display: block; font-family: var(--display); font-size: 16px; font-weight: 600; margin: 2px 0 4px; }
+ol.phases li p { margin: 0; font-size: 12.5px; color: var(--dim); line-height: 1.4; }
+ol.phases li.done { border-color: #7fbf7a44; }
+ol.phases li.done .n::after { content: " done"; color: var(--ok); }
+ol.phases li.now { border-color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+ol.phases li.now .n::after { content: " in progress"; color: var(--accent); }
+/* panel preview */
+.app { margin-top: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.dials { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+@media (max-width: 700px) { .dials { grid-template-columns: repeat(2, 1fr); } }
+.dial { background: var(--raise); padding: 12px 14px 10px; }
+.dial label { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); }
+.dial label b { font-family: var(--mono); font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.dial input { width: 100%; accent-color: var(--accent); margin: 8px 0 2px; }
+.dial small { display: block; font-size: 11.5px; color: var(--faint); line-height: 1.35; }
+.tabs { display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { background: none; border: 0; color: var(--dim); font: 500 14px var(--body); padding: 8px 14px 9px; border-radius: 6px 6px 0 0; cursor: pointer; white-space: nowrap; }
+.tabs button:hover { color: var(--text); background: #ffffff08; }
+.tabs button[aria-selected="true"] { color: var(--text); background: var(--bg); box-shadow: inset 0 2px 0 var(--accent); }
+.tools { display: flex; gap: 14px; align-items: center; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 13px; color: var(--dim); flex-wrap: wrap; }
+.tools label { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; }
+.tools input { accent-color: var(--accent); }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; }
+.cost { display: inline-block; font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 99px; white-space: nowrap; border: 1px solid; }
+.cost.shot, .cost.prep { color: var(--heavy); border-color: #e5705f66; }
+.cost.sim { color: var(--sim); border-color: #e9a63c66; }
+.cost.render, .cost.look { color: var(--render); border-color: #6fa8dc66; }
+.cost.node, .cost.view { color: var(--quiet); border-color: #8b8a8666; }
+.pane { padding: 6px 16px 14px; background: var(--bg); min-height: 280px; }
+.sec { margin-top: 14px; }
+.sec h3 { font-size: 13px; letter-spacing: .04em; color: var(--faint); font-family: var(--body); font-weight: 600; text-transform: uppercase; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: minmax(150px, 230px) 1fr auto; gap: 14px; align-items: center; padding: 7px 4px; border-bottom: 1px solid #ffffff08; border-radius: 4px; }
+.row:hover, .row:focus-within { background: #ffffff06; }
+@media (max-width: 640px) { .row { grid-template-columns: 1fr; gap: 4px; } }
+.row .lab { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+.row .lab .dot { width: 7px; height: 7px; border-radius: 50%; background: transparent; flex: none; }
+.row.changed .lab .dot { background: var(--accent); }
+.row .lab .anim { color: var(--faint); font-size: 12px; }
+.row .lab .layer { font-family: var(--mono); font-size: 10.5px; color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.ctl { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ctl input[type=range] { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.ctl input[type=number], .ctl input[type=text], .ctl select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 7px; font: 13px var(--mono); min-width: 0; }
+.ctl input[type=number] { width: 86px; }
+.ctl input[type=text] { flex: 1; }
+.ctl .v { font-family: var(--mono); font-size: 13px; min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+.ctl .unit { color: var(--faint); font-size: 12.5px; min-width: 34px; }
+.ctl .swatch { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--line); }
+.ctl .muted { color: var(--faint); font-size: 13px; }
+.status { display: flex; gap: 12px; align-items: baseline; padding: 10px 16px; background: var(--raise); border-top: 1px solid var(--line); font-size: 13.5px; min-height: 42px; }
+.status .what { color: var(--dim); flex: 1; }
+.status .what b { color: var(--text); font-weight: 500; }
+/* shot check */
+.report { margin-top: 18px; display: grid; gap: 6px; }
+.item { display: grid; grid-template-columns: 64px 96px 1fr; gap: 12px; align-items: baseline; background: var(--panel); border: 1px solid var(--line); border-left-width: 3px; border-radius: 0; padding: 8px 12px; font-size: 14px; }
+.item.ok { border-left-color: var(--ok); }
+.item.note { border-left-color: var(--render); }
+.item.warn { border-left-color: var(--warn); }
+.item.problem { border-left-color: var(--heavy); }
+.item .lv { font-family: var(--mono); font-size: 12px; text-transform: uppercase; }
+.item.ok .lv { color: var(--ok); } .item.note .lv { color: var(--render); } .item.warn .lv { color: var(--warn); } .item.problem .lv { color: var(--heavy); }
+.item .tp { color: var(--dim); font-size: 13px; }
+@media (max-width: 640px) { .item { grid-template-columns: 1fr; gap: 2px; } }
+footer { padding: 28px 0 48px; color: var(--faint); font-size: 13.5px; }
+footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="mark"><i aria-hidden="true"></i>MoteField v1</div>
+    <span class="chip live" id="phaseChip">Phase 2 of 7 in progress</span>
+    <span class="sp"></span>
+    <a href="../nuke/">MoteField 0.8.3</a>
+    <a href="https://github.com/X14Halo/mote-field/tree/main/v1">Code</a>
+  </div>
+</header>
+<main>
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h1>Dust motes and embers for comp, rebuilt</h1>
+        <p class="lede">MoteField adds floating dust and fire embers to a shot in Nuke from the lighting department's utility pass, with no 3D particle render. This page tracks the rebuild. There is no renderer yet: what you can try below is the new settings panel and the shot check.</p>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h3>This update · <!--UPDATED--></h3>
+          <ul class="tight">
+            <li><b>Reads production utility passes.</b> Multi-part EXRs, with position, depth, unfiltered depth, coverage, motion vectors and object IDs found by name, across several files a frame (a mattes pass for surface colour and ID mattes).</li>
+            <li><b>Fixes edges.</b> Filtered passes store edge pixels premultiplied, so their positions streak toward the world origin. They are detected and divided by coverage: on a production pass, edge pixels went from 507 px off to 0.27 px.</li>
+            <li><b>Reads the whole lens.</b> Blade count, cat-eye, field curvature and full aperture now come from the render camera in the header, so the dust's bokeh can match the plate. 0.8.3 missed them.</li>
+            <li><b>The shot check.</b> One report on what is in a pass and what MoteField will do with it (below).</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Checked</h3>
+          <div class="stats">
+            <div class="stat"><b id="nTests">77</b><span>tests passing</span></div>
+            <div class="stat"><b>2</b><span>numpy versions, Nuke 15's 1.23.5 and 2.5</span></div>
+            <div class="stat"><b>0</b><span>bytes differing, Python vs JavaScript starting dust</span></div>
+          </div>
+          <p style="margin:12px 0 0;color:var(--dim);font-size:13.5px">The shot check was also run on a production utility pass, which stays private: camera reprojection 0.11 px, every layer found.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Where the rebuild is</h2>
+      <ol class="phases">
+        <li class="done"><span class="n">1</span><b>Foundations</b><p>One settings table, show, look and shot files, cache keys, hash randomness.</p></li>
+        <li class="now"><span class="n">2</span><b>Python core</b><p>EXR reading, shot check, simulation, the CPU renderer, render command.</p></li>
+        <li><span class="n">3</span><b>GPU renderer</b><p>The same maths in WebGL2, checked against the Python.</p></li>
+        <li><span class="n">4</span><b>Viewer</b><p>First run, clicking on the plate, diagnostic views, presets, undo.</p></li>
+        <li><span class="n">5</span><b>Embers, shapes, movers</b><p>Ported and checked for parity.</p></li>
+        <li><span class="n">6</span><b>Nuke node</b><p>Live link, stale-cache badge, pipeline hooks, farm bake.</p></li>
+        <li><span class="n">7</span><b>Release</b><p>The browser demo, artist quick start, TD guide.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h2>The new settings panel</h2>
+        <p class="lede">Built from the settings table, as the Nuke node and the viewer will be. Four dials stay on screen, the tabs follow the order you work in, and each tab shows its basic settings until you ask for all of them. The tag on each setting says what changing it costs. Change something to see; double-click a setting's name to reset it.</p>
+      </div>
+      <div class="app" id="app">
+        <div class="dials" id="dials"></div>
+        <div class="tabs" role="tablist" id="tabs"></div>
+        <div class="tools">
+          <label><input type="checkbox" id="showAll"> Show all settings</label>
+          <span class="sp"></span>
+          <span class="legend" aria-label="What a change costs">
+            <span class="cost prep">reloads the shot</span><span class="cost sim">re-simulates</span><span class="cost render">re-renders only</span><span class="cost view">no render</span>
+          </span>
+        </div>
+        <div class="pane" id="pane" role="tabpanel"></div>
+        <div class="status" aria-live="polite"><span class="what" id="what">Hover a setting to read what it does.</span><span id="count" class="mono" style="color:var(--faint)"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h2>The shot check</h2>
+        <p class="lede">What MoteField reports when it opens a shot, here on the built-in stand-in pass. On your shots: <code>python -m motefield check /path/util.####.exr --extra /path/mattes.####.exr</code></p>
+      </div>
+      <div class="report" id="report"></div>
+    </div>
+  </section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>MoteField <span id="ver"></span> · model <span id="model"></span></span>
+    <a href="../nuke/">The 0.8.3 tool</a>
+    <a href="https://github.com/X14Halo/mote-field/tree/main/v1">Code and tests</a>
+  </div>
+</footer>
+<script id="schema" type="application/json"><!--SCHEMA--></script>
+<script id="check" type="application/json"><!--CHECK--></script>
+<script>
+(function () {
+  const S = JSON.parse(document.getElementById('schema').textContent);
+  const REPORT = JSON.parse(document.getElementById('check').textContent);
+  const P = S.params, BY = {};
+  P.forEach((p) => { BY[p.key] = p; });
+  const val = {};
+  P.forEach((p) => { val[p.key] = p.default; });
+  const COST = { shot: 'reloads the shot', prep: 're-preps and re-simulates', sim: 're-simulates', render: 're-renders only',
+                 look: 're-renders only', node: 'node only', view: 'viewer only' };
+  const COSTCLS = { shot: 'prep', prep: 'prep', sim: 'sim', render: 'render', look: 'render', node: 'view', view: 'view' };
+  const TABS = [['place', 'Place'], ['look', 'Look'], ['match', 'Match'], ['deliver', 'Deliver'], ['shot', 'Shot'], ['view', 'Viewer']];
+  let tab = 'place';
+  try { const t = localStorage.getItem('mf1.tab'); if (t && TABS.some((x) => x[0] === t)) tab = t; } catch (e) { /* no storage */ }
+  const el = (tag, attrs, kids) => {
+    const n = document.createElement(tag);
+    for (const k in attrs || {}) {
+      if (k === 'class') n.className = attrs[k]; else if (k === 'text') n.textContent = attrs[k];
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2), attrs[k]); else n.setAttribute(k, attrs[k]);
+    }
+    (kids || []).forEach((c) => c && n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+    return n;
+  };
+  const fmt = (p, v) => {
+    if (typeof v !== 'number') return String(v);
+    if (p.type === 'int') return String(v);
+    const a = Math.abs(v);
+    return a >= 1000 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2);
+  };
+  const unitText = (u) => (u === 'scene' ? 'cm' : u === 'x' ? '×' : u);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function tell(p, changed) {
+    const w = document.getElementById('what');
+    w.textContent = '';
+    w.appendChild(el('b', { text: p.label + (p.unit && p.unit !== 'x' ? ' (' + unitText(p.unit) + ')' : '') + ': ' }));
+    w.appendChild(document.createTextNode(p.help + (changed ? '  Changing it ' + COST[p.affects] + '.' : '')));
+  }
+  function setVal(p, v, row) {
+    val[p.key] = v;
+    row.classList.toggle('changed', !same(v, p.default));
+    tell(p, true);
+    count();
+    if (p.ws === 'masters' || p.key === 'steady') drawDials();
+  }
+  function control(p, row) {
+    const c = el('div', { class: 'ctl' });
+    const id = 'k_' + p.key;
+    const v = val[p.key];
+    if (p.type === 'float' || p.type === 'int') {
+      const lo = p.soft ? p.soft[0] : (p.hard ? p.hard[0] : 0), hi = p.soft ? p.soft[1] : (p.hard ? Math.min(p.hard[1], 1e5) : 100);
+      if (p.soft) {
+        const out = el('span', { class: 'v', text: fmt(p, v) });
+        const r = el('input', { type: 'range', id, min: lo, max: hi, step: p.type === 'int' ? 1 : (hi - lo) / 400, value: v,
+          'aria-label': p.label, oninput: (e) => { const x = p.type === 'int' ? parseInt(e.target.value, 10) : parseFloat(e.target.value); out.textContent = fmt(p, x); setVal(p, x, row); } });
+        c.append(r, out);
+      } else {
+        c.append(el('input', { type: 'number', id, value: v, step: p.type === 'int' ? 1 : 'any', 'aria-label': p.label,
+          onchange: (e) => setVal(p, p.type === 'int' ? parseInt(e.target.value, 10) : parseFloat(e.target.value), row) }));
+      }
+    } else if (p.type === 'bool') {
+      c.append(el('input', { type: 'checkbox', id, 'aria-label': p.label, onchange: (e) => setVal(p, e.target.checked, row) }));
+      c.lastChild.checked = !!v;
+    } else if (p.type === 'enum') {
+      const s = el('select', { id, 'aria-label': p.label, onchange: (e) => setVal(p, e.target.value, row) },
+        p.options.map((o) => el('option', { value: o, text: o })));
+      s.value = v;
+      c.append(s);
+    } else if (p.type === 'xyz' || p.type === 'rgb') {
+      const cur = v.slice();
+      ['x', 'y', 'z'].forEach((ax, i) => c.append(el('input', { type: 'number', id: id + '_' + ax, value: cur[i], step: 'any',
+        'aria-label': p.label + ' ' + (p.type === 'rgb' ? 'RGB'[i] : ax), onchange: (e) => { cur[i] = parseFloat(e.target.value); setVal(p, cur.slice(), row); } })));
+      if (p.type === 'rgb') {
+        const sw = el('span', { class: 'swatch' });
+        sw.style.background = 'rgb(' + cur.map((x) => Math.round(Math.min(1, x) * 255)).join(',') + ')';
+        c.append(sw);
+      }
+    } else if (p.type === 'json') {
+      c.append(el('span', { class: 'muted', text: 'Added and keyed in the viewer.' }));
+    } else {
+      c.append(el('input', { type: 'text', id, value: v, placeholder: p.type === 'path' ? '/path/to/frames.####.exr' : '',
+        'aria-label': p.label, onchange: (e) => setVal(p, e.target.value, row) }));
+    }
+    if (p.type === 'float' || p.type === 'int' || p.type === 'xyz') c.append(el('span', { class: 'unit', text: p.unit && p.unit !== 'x' ? unitText(p.unit) : (p.unit === 'x' ? '×' : '') }));
+    return c;
+  }
+  function row(p) {
+    const r = el('div', { class: 'row' + (same(val[p.key], p.default) ? '' : ' changed'), title: p.help });
+    const lab = el('div', { class: 'lab' }, [el('span', { class: 'dot', 'aria-hidden': 'true' }),
+      el('label', { for: 'k_' + p.key + (p.type === 'xyz' || p.type === 'rgb' ? '_x' : ''), text: p.label }),
+      p.anim ? el('span', { class: 'anim', title: 'Can be keyed over the shot', text: '✎' }) : null,
+      el('span', { class: 'layer', title: 'Normally lives in the ' + p.layer + ' settings file', text: p.layer })]);
+    lab.addEventListener('dblclick', () => { val[p.key] = p.default; draw(); tell(p, false); });
+    r.append(lab, control(p, r), el('span', { class: 'cost ' + COSTCLS[p.affects], text: COST[p.affects] }));
+    r.addEventListener('mouseenter', () => tell(p, false));
+    r.addEventListener('focusin', () => tell(p, false));
+    return r;
+  }
+  function drawDials() {
+    const box = document.getElementById('dials');
+    box.textContent = '';
+    S.dials.forEach((k) => {
+      const p = BY[k];
+      const v = val[k];
+      const scales = S.masters[k] ? 'Multiplies ' + S.masters[k].map((x) => BY[x].label.toLowerCase()).join(', ') : 'Calms popping and flicker';
+      const out = el('b', { text: k === 'steady' ? v.toFixed(2) : v.toFixed(2) + '×' });
+      const inp = el('input', { type: 'range', id: 'd_' + k, min: p.soft[0], max: p.soft[1], step: 0.01, value: v, 'aria-label': p.label,
+        oninput: (e) => { val[k] = parseFloat(e.target.value); out.textContent = k === 'steady' ? val[k].toFixed(2) : val[k].toFixed(2) + '×'; tell(p, true); count(); } });
+      box.append(el('div', { class: 'dial' }, [el('label', { for: 'd_' + k }, [p.label, out]), inp, el('small', { text: scales + (p.anim ? '. Can be keyed.' : '.') })]));
+    });
+  }
+  function count() {
+    const n = P.filter((p) => !same(val[p.key], p.default)).length;
+    document.getElementById('count').textContent = n ? n + ' changed' : '';
+  }
+  function draw() {
+    const all = document.getElementById('showAll').checked;
+    const tabs = document.getElementById('tabs');
+    tabs.textContent = '';
+    TABS.forEach(([k, name]) => {
+      const n = P.filter((p) => p.ws === k).length;
+      const b = el('button', { role: 'tab', 'aria-selected': String(k === tab), text: name + (all ? '  ' + n : ''),
+        onclick: () => { tab = k; try { localStorage.setItem('mf1.tab', k); } catch (e) { /* no storage */ } draw(); } });
+      tabs.append(b);
+    });
+    const pane = document.getElementById('pane');
+    pane.textContent = '';
+    const secs = [];
+    P.filter((p) => p.ws === tab && (all || p.level === 'basic')).forEach((p) => {
+      let s = secs.find((x) => x.name === p.section);
+      if (!s) { s = { name: p.section, ps: [] }; secs.push(s); }
+      s.ps.push(p);
+    });
+    const hidden = P.filter((p) => p.ws === tab && p.level !== 'basic').length;
+    secs.forEach((s) => pane.append(el('div', { class: 'sec' }, [el('h3', { text: s.name })].concat(s.ps.map(row)))));
+    if (!all && hidden) pane.append(el('p', { class: 'muted', style: 'color:var(--faint);font-size:13px;margin:14px 4px 0', text: hidden + ' more settings on this tab with Show all settings.' }));
+    count();
+  }
+  document.getElementById('showAll').addEventListener('change', draw);
+  drawDials();
+  draw();
+  // the shot check
+  const rep = document.getElementById('report');
+  REPORT.items.forEach(([lv, topic, msg]) => rep.append(el('div', { class: 'item ' + lv }, [
+    el('span', { class: 'lv', text: lv === 'problem' ? 'fix' : lv }), el('span', { class: 'tp', text: topic }), el('span', { text: msg })])));
+  document.getElementById('ver').textContent = S.version;
+  document.getElementById('model').textContent = S.model;
+})();
+</script>
+</body>
+</html>

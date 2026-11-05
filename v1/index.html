@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoteField v1</title>
+<meta name="description" content="MoteField v1, rebuilt: progress, the new settings panel and the shot check.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* One visual world: a comp tool at night. Graphite with a warm bias, one amber accent (light catching dust),
+   semantic colours only for cost and status. Layout: a narrow reading column on top, the panel preview below. */
+:root {
+  --bg: #16171a;
+  --panel: #1f2125;
+  --raise: #2a2d32;
+  --line: #34373d;
+  --text: #e4e2dd;
+  --dim: #a3a19c;
+  --faint: #75736f;
+  --accent: #f0b35a;
+  --accent-ink: #2b1d07;
+  --heavy: #e5705f;
+  --sim: #e9a63c;
+  --render: #6fa8dc;
+  --quiet: #8b8a86;
+  --ok: #7fbf7a;
+  --warn: #e9b44c;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 15px/1.55 var(--body); }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: .01em; text-wrap: balance; margin: 0; }
+h1 { font-size: 34px; line-height: 1.1; }
+h2 { font-size: 22px; }
+h3 { font-size: 15px; font-weight: 600; color: var(--dim); text-transform: none; }
+code, .mono { font-family: var(--mono); font-size: 13px; }
+.wrap { max-width: 1060px; margin: 0 auto; padding: 0 20px; }
+.read { max-width: 680px; }
+header.top { border-bottom: 1px solid var(--line); background: var(--panel); }
+header.top .wrap { display: flex; align-items: center; gap: 16px; height: 52px; }
+.mark { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 600; font-size: 19px; }
+.mark i { width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ffe2a8, var(--accent) 45%, #9a6420); box-shadow: 0 0 14px #f0b35a66; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 99px; font-size: 12.5px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+.chip.live { color: var(--accent); border-color: #f0b35a55; }
+.sp { flex: 1; }
+header.top a { color: var(--dim); text-decoration: none; font-size: 14px; }
+header.top a:hover { color: var(--text); }
+main section { padding: 34px 0; border-bottom: 1px solid var(--line); }
+.lede { color: var(--dim); font-size: 16.5px; margin: 10px 0 0; }
+.grid2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 28px; margin-top: 22px; }
+@media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.card h3 { margin-bottom: 10px; }
+ul.tight { margin: 0; padding-left: 18px; }
+ul.tight li { margin: 6px 0; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.stat { background: var(--raise); border-radius: 6px; padding: 10px 12px; }
+.stat b { display: block; font-family: var(--display); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.stat span { font-size: 12.5px; color: var(--dim); }
+/* phases */
+ol.phases { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+@media (max-width: 900px) { ol.phases { grid-template-columns: repeat(2, 1fr); } }
+ol.phases li { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 11px 12px; position: relative; }
+ol.phases li .n { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+ol.phases li b { display: block; font-family: var(--display); font-size: 16px; font-weight: 600; margin: 2px 0 4px; }
+ol.phases li p { margin: 0; font-size: 12.5px; color: var(--dim); line-height: 1.4; }
+ol.phases li.done { border-color: #7fbf7a44; }
+ol.phases li.done .n::after { content: " done"; color: var(--ok); }
+ol.phases li.now { border-color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+ol.phases li.now .n::after { content: " in progress"; color: var(--accent); }
+/* panel preview */
+.app { margin-top: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.dials { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+@media (max-width: 700px) { .dials { grid-template-columns: repeat(2, 1fr); } }
+.dial { background: var(--raise); padding: 12px 14px 10px; }
+.dial label { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); }
+.dial label b { font-family: var(--mono); font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.dial input { width: 100%; accent-color: var(--accent); margin: 8px 0 2px; }
+.dial small { display: block; font-size: 11.5px; color: var(--faint); line-height: 1.35; }
+.tabs { display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { background: none; border: 0; color: var(--dim); font: 500 14px var(--body); padding: 8px 14px 9px; border-radius: 6px 6px 0 0; cursor: pointer; white-space: nowrap; }
+.tabs button:hover { color: var(--text); background: #ffffff08; }
+.tabs button[aria-selected="true"] { color: var(--text); background: var(--bg); box-shadow: inset 0 2px 0 var(--accent); }
+.tools { display: flex; gap: 14px; align-items: center; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 13px; color: var(--dim); flex-wrap: wrap; }
+.tools label { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; }
+.tools input { accent-color: var(--accent); }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; }
+.cost { display: inline-block; font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 99px; white-space: nowrap; border: 1px solid; }
+.cost.shot, .cost.prep { color: var(--heavy); border-color: #e5705f66; }
+.cost.sim { color: var(--sim); border-color: #e9a63c66; }
+.cost.render, .cost.look { color: var(--render); border-color: #6fa8dc66; }
+.cost.node, .cost.view { color: var(--quiet); border-color: #8b8a8666; }
+.pane { padding: 6px 16px 14px; background: var(--bg); min-height: 280px; }
+.sec { margin-top: 14px; }
+.sec h3 { font-size: 13px; letter-spacing: .04em; color: var(--faint); font-family: var(--body); font-weight: 600; text-transform: uppercase; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: minmax(150px, 230px) 1fr auto; gap: 14px; align-items: center; padding: 7px 4px; border-bottom: 1px solid #ffffff08; border-radius: 4px; }
+.row:hover, .row:focus-within { background: #ffffff06; }
+@media (max-width: 640px) { .row { grid-template-columns: 1fr; gap: 4px; } }
+.row .lab { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+.row .lab .dot { width: 7px; height: 7px; border-radius: 50%; background: transparent; flex: none; }
+.row.changed .lab .dot { background: var(--accent); }
+.row .lab .anim { color: var(--faint); font-size: 12px; }
+.row .lab .layer { font-family: var(--mono); font-size: 10.5px; color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.ctl { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ctl input[type=range] { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.ctl input[type=number], .ctl input[type=text], .ctl select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 7px; font: 13px var(--mono); min-width: 0; }
+.ctl input[type=number] { width: 86px; }
+.ctl input[type=text] { flex: 1; }
+.ctl .v { font-family: var(--mono); font-size: 13px; min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+.ctl .unit { color: var(--faint); font-size: 12.5px; min-width: 34px; }
+.ctl .swatch { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--line); }
+.ctl .muted { color: var(--faint); font-size: 13px; }
+.status { display: flex; gap: 12px; align-items: baseline; padding: 10px 16px; background: var(--raise); border-top: 1px solid var(--line); font-size: 13.5px; min-height: 42px; }
+.status .what { color: var(--dim); flex: 1; }
+.status .what b { color: var(--text); font-weight: 500; }
+/* shot check */
+.report { margin-top: 18px; display: grid; gap: 6px; }
+.item { display: grid; grid-template-columns: 64px 96px 1fr; gap: 12px; align-items: baseline; background: var(--panel); border: 1px solid var(--line); border-left-width: 3px; border-radius: 0; padding: 8px 12px; font-size: 14px; }
+.item.ok { border-left-color: var(--ok); }
+.item.note { border-left-color: var(--render); }
+.item.warn { border-left-color: var(--warn); }
+.item.problem { border-left-color: var(--heavy); }
+.item .lv { font-family: var(--mono); font-size: 12px; text-transform: uppercase; }
+.item.ok .lv { color: var(--ok); } .item.note .lv { color: var(--render); } .item.warn .lv { color: var(--warn); } .item.problem .lv { color: var(--heavy); }
+.item .tp { color: var(--dim); font-size: 13px; }
+@media (max-width: 640px) { .item { grid-template-columns: 1fr; gap: 2px; } }
+footer { padding: 28px 0 48px; color: var(--faint); font-size: 13.5px; }
+footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="mark"><i aria-hidden="true"></i>MoteField v1</div>
+    <span class="chip live" id="phaseChip">Phase 2 of 7 in progress</span>
+    <span class="sp"></span>
+    <a href="../nuke/">MoteField 0.8.3</a>
+    <a href="https://github.com/X14Halo/mote-field/tree/main/v1">Code</a>
+  </div>
+</header>
+<main>
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h1>Dust motes and embers for comp, rebuilt</h1>
+        <p class="lede">MoteField adds floating dust and fire embers to a shot in Nuke from the lighting department's utility pass, with no 3D particle render. This page tracks the rebuild. There is no renderer yet: what you can try below is the new settings panel and the shot check.</p>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h3>This update · 5 November 2026</h3>
+          <ul class="tight">
+            <li><b>Reads production utility passes.</b> Multi-part EXRs, with position, depth, unfiltered depth, coverage, motion vectors and object IDs found by name, across several files a frame (a mattes pass for surface colour and ID mattes).</li>
+            <li><b>Fixes edges.</b> Filtered passes store edge pixels premultiplied, so their positions streak toward the world origin. They are detected and divided by coverage: on a production pass, edge pixels went from 507 px off to 0.27 px.</li>
+            <li><b>Reads the whole lens.</b> Blade count, cat-eye, field curvature and full aperture now come from the render camera in the header, so the dust's bokeh can match the plate. 0.8.3 missed them.</li>
+            <li><b>The shot check.</b> One report on what is in a pass and what MoteField will do with it (below).</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Checked</h3>
+          <div class="stats">
+            <div class="stat"><b id="nTests">77</b><span>tests passing</span></div>
+            <div class="stat"><b>2</b><span>numpy versions, Nuke 15's 1.23.5 and 2.5</span></div>
+            <div class="stat"><b>0</b><span>bytes differing, Python vs JavaScript starting dust</span></div>
+          </div>
+          <p style="margin:12px 0 0;color:var(--dim);font-size:13.5px">The shot check was also run on a production utility pass, which stays private: camera reprojection 0.11 px, every layer found.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Where the rebuild is</h2>
+      <ol class="phases">
+        <li class="done"><span class="n">1</span><b>Foundations</b><p>One settings table, show, look and shot files, cache keys, hash randomness.</p></li>
+        <li class="now"><span class="n">2</span><b>Python core</b><p>EXR reading, shot check, simulation, the CPU renderer, render command.</p></li>
+        <li><span class="n">3</span><b>GPU renderer</b><p>The same maths in WebGL2, checked against the Python.</p></li>
+        <li><span class="n">4</span><b>Viewer</b><p>First run, clicking on the plate, diagnostic views, presets, undo.</p></li>
+        <li><span class="n">5</span><b>Embers, shapes, movers</b><p>Ported and checked for parity.</p></li>
+        <li><span class="n">6</span><b>Nuke node</b><p>Live link, stale-cache badge, pipeline hooks, farm bake.</p></li>
+        <li><span class="n">7</span><b>Release</b><p>The browser demo, artist quick start, TD guide.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h2>The new settings panel</h2>
+        <p class="lede">Built from the settings table, as the Nuke node and the viewer will be. Four dials stay on screen, the tabs follow the order you work in, and each tab shows its basic settings until you ask for all of them. The tag on each setting says what changing it costs. Change something to see; double-click a setting's name to reset it.</p>
+      </div>
+      <div class="app" id="app">
+        <div class="dials" id="dials"></div>
+        <div class="tabs" role="tablist" id="tabs"></div>
+        <div class="tools">
+          <label><input type="checkbox" id="showAll"> Show all settings</label>
+          <span class="sp"></span>
+          <span class="legend" aria-label="What a change costs">
+            <span class="cost prep">reloads the shot</span><span class="cost sim">re-simulates</span><span class="cost render">re-renders only</span><span class="cost view">no render</span>
+          </span>
+        </div>
+        <div class="pane" id="pane" role="tabpanel"></div>
+        <div class="status" aria-live="polite"><span class="what" id="what">Hover a setting to read what it does.</span><span id="count" class="mono" style="color:var(--faint)"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="read">
+        <h2>The shot check</h2>
+        <p class="lede">What MoteField reports when it opens a shot, here on the built-in stand-in pass. On your shots: <code>python -m motefield check /path/util.####.exr --extra /path/mattes.####.exr</code></p>
+      </div>
+      <div class="report" id="report"></div>
+    </div>
+  </section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>MoteField <span id="ver"></span> · model <span id="model"></span></span>
+    <a href="../nuke/">The 0.8.3 tool</a>
+    <a href="https://github.com/X14Halo/mote-field/tree/main/v1">Code and tests</a>
+  </div>
+</footer>
+<script id="schema" type="application/json">{"version": "1.0.0a1", "model": 1, "affects": ["shot", "prep", "sim", "render", "look", "node", "view"], "hashed": ["shot", "prep", "sim", "render", "look"], "layers": ["show", "look", "shot"], "workspaces": ["shot", "masters", "place", "look", "match", "deliver", "view"], "masters": {"master_amount": ["density", "ember_rate"], "master_brightness": ["brightness", "ember_gain"], "master_air": ["drift", "lift", "eddies", "micro", "thermal", "tumble", "ember_turb", "ember_flutter"]}, "dials": ["master_amount", "master_brightness", "master_air", "steady"], "params": [{"key": "utility", "type": "path", "default": "", "label": "Utility pass", "help": "Frame pattern of the utility pass (world position, normals, depth, motion vectors, Cryptomatte; the camera in the header). Use #### for the frame number. Blank in Nuke = the Read on the utility input.", "ws": "shot", "section": "Shot", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "shot", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "extra_passes", "type": "path", "default": "", "label": "Extra passes", "help": "Other utility files for the same frames, such as a mattes pass with surface colour and ID mattes. Separate several with ;. Layers are taken from the utility pass first.", "ws": "shot", "section": "Shot", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "shot", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "plate", "type": "path", "default": "", "label": "Plate", "help": "Frame pattern of the plate, for the viewer and the merged output. Never changes the dust.", "ws": "shot", "section": "Shot", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "node", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "standin", "type": "enum", "default": "none", "label": "Stand-in shot", "help": "A built-in stand-in shot instead of a utility pass, for trying the tool and for demos.", "ws": "shot", "section": "Shot", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "shot", "layer": "shot", "anim": false, "options": ["none", "wide", "close-up", "walker", "campfire"], "aliases": {}}, {"key": "first", "type": "int", "default": 1001, "label": "First frame", "help": "First frame of the shot.", "ws": "shot", "section": "Shot", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "shot", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "last", "type": "int", "default": 1048, "label": "Last frame", "help": "Last frame of the shot.", "ws": "shot", "section": "Shot", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "shot", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "fps", "type": "float", "default": 24.0, "label": "Frame rate", "help": "Frames per second.", "ws": "shot", "section": "Shot", "level": "advanced", "unit": "fps", "soft": [12, 60], "hard": [1, 240], "affects": "shot", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "units", "type": "enum", "default": "centimetres", "label": "Scene units", "help": "The units the utility pass positions are in.", "ws": "shot", "section": "Shot", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "shot", "layer": "show", "anim": false, "options": ["centimetres", "metres", "millimetres", "inches", "feet"], "aliases": {}}, {"key": "up_axis", "type": "enum", "default": "Y", "label": "Up axis", "help": "Which world axis points up in the utility pass.", "ws": "shot", "section": "Shot", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "shot", "layer": "show", "anim": false, "options": ["Y", "Z"], "aliases": {}}, {"key": "master_amount", "type": "float", "default": 1.0, "label": "Amount", "help": "More or fewer motes and embers. Multiplies Density and Embers per second.", "ws": "masters", "section": "Masters", "level": "basic", "unit": "x", "soft": [0, 3], "hard": [0, 20], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "master_brightness", "type": "float", "default": 1.0, "label": "Brightness", "help": "Brighter or dimmer dust and embers. Multiplies Dust brightness and Ember brightness. Can be keyed to fade.", "ws": "masters", "section": "Masters", "level": "basic", "unit": "x", "soft": [0, 3], "hard": [0, 100], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "master_air", "type": "float", "default": 1.0, "label": "Air", "help": "Calmer or livelier air. Multiplies drift, eddies, micro-turbulence, rising warm air, tumbling and ember turbulence together.", "ws": "masters", "section": "Masters", "level": "basic", "unit": "x", "soft": [0, 3], "hard": [0, 20], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "box_center", "type": "xyz", "default": [-60.0, 175.0, -130.0], "label": "Box centre", "help": "Centre of the box the dust lives in. Easiest to set with Fit box or the handles in the viewer.", "ws": "place", "section": "Dust volume", "level": "advanced", "unit": "scene", "soft": null, "hard": null, "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "box_size", "type": "xyz", "default": [760.0, 330.0, 900.0], "label": "Box size", "help": "Width, height and depth of the dust box.", "ws": "place", "section": "Dust volume", "level": "advanced", "unit": "scene", "soft": null, "hard": [0, 1000000000.0], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "box_rot", "type": "float", "default": 0.0, "label": "Box rotate Y", "help": "Turns the box about the vertical.", "ws": "place", "section": "Dust volume", "level": "advanced", "unit": "°", "soft": [-180, 180], "hard": null, "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "fade", "type": "float", "default": 45.0, "label": "Edge softness", "help": "How far in from each face of the box the dust fades out, so the box never shows.", "ws": "place", "section": "Dust volume", "level": "basic", "unit": "scene", "soft": [0, 200], "hard": [0, 1000000000.0], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "fade_neg", "type": "xyz", "default": [1.0, 1.0, 1.0], "label": "Edge softness  -X -Y -Z", "help": "Multiplies the edge softness at the -X, -Y and -Z faces (0 = a hard edge, e.g. on the floor).", "ws": "place", "section": "Dust volume", "level": "advanced", "unit": "", "soft": [0, 3], "hard": [0, 100], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "fade_pos", "type": "xyz", "default": [1.0, 1.0, 1.0], "label": "Edge softness  +X +Y +Z", "help": "Multiplies the edge softness at the +X, +Y and +Z faces.", "ws": "place", "section": "Dust volume", "level": "advanced", "unit": "", "soft": [0, 3], "hard": [0, 100], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "embers", "type": "bool", "default": false, "label": "Embers", "help": "A second emitter for fire: embers rise from a disc you place on the fire, cool from yellow-orange to dull red and pop in bursts.", "ws": "place", "section": "Ember emitter", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "ember_pos", "type": "xyz", "default": [-150.0, 0.0, -250.0], "label": "Emitter position", "help": "The base of the fire. Easiest to set with Place in the viewer: click the logs.", "ws": "place", "section": "Ember emitter", "level": "advanced", "unit": "scene", "soft": null, "hard": null, "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "ember_radius", "type": "float", "default": 30.0, "label": "Emitter radius", "help": "Size of the fire.", "ws": "place", "section": "Ember emitter", "level": "basic", "unit": "scene", "soft": [1, 200], "hard": [0.01, 1000000000.0], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "ember_height", "type": "float", "default": 55.0, "label": "Emission height", "help": "How high above the base embers start.", "ws": "place", "section": "Ember emitter", "level": "advanced", "unit": "scene", "soft": [0, 150], "hard": [0, 1000000000.0], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "light_az", "type": "float", "default": 25.0, "label": "Light heading", "help": "Direction the light travels, around the vertical (0 = toward +X, 90 = toward +Z). Easiest to set with Aim light in the viewer.", "ws": "place", "section": "Key light", "level": "basic", "unit": "°", "soft": [-180, 180], "hard": null, "affects": "prep", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "light_el", "type": "float", "default": 33.0, "label": "Light elevation", "help": "Height of the light above the horizon.", "ws": "place", "section": "Key light", "level": "basic", "unit": "°", "soft": [0, 90], "hard": [-90, 90], "affects": "prep", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "light_int", "type": "float", "default": 6.0, "label": "Light intensity", "help": "Brightness of the key light.", "ws": "place", "section": "Key light", "level": "basic", "unit": "", "soft": [0, 20], "hard": [0, 1000000.0], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "light_k", "type": "float", "default": 5000.0, "label": "Colour temperature", "help": "Warmth of the key light.", "ws": "place", "section": "Key light", "level": "basic", "unit": "K", "soft": [2500, 10000], "hard": [1000, 40000], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "light_rgb", "type": "rgb", "default": [1.0, 1.0, 1.0], "label": "Light colour", "help": "Multiplies the colour from the temperature.", "ws": "place", "section": "Key light", "level": "advanced", "unit": "", "soft": null, "hard": [0, 1000000.0], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "bounce", "type": "float", "default": 1.0, "label": "Bounce light", "help": "Light bounced off the sunlit parts of the set onto motes outside the beam.", "ws": "place", "section": "Key light", "level": "advanced", "unit": "x", "soft": [0, 5], "hard": [0, 100], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "shadows", "type": "enum", "default": "auto", "label": "Shadows from", "help": "Where shadows come from: the utility pass (what the camera saw), the stand-in geometry, or none. Auto picks the stand-in geometry for stand-in shots and the utility pass otherwise.", "ws": "place", "section": "Key light", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "prep", "layer": "shot", "anim": false, "options": ["auto", "utility pass", "stand-in geometry", "none"], "aliases": {}}, {"key": "interior", "type": "bool", "default": true, "label": "Light only through openings", "help": "Interiors: light gets in only where the camera saw sky, such as a window.", "ws": "place", "section": "Key light", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "prep", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "shadow_soft", "type": "float", "default": 3.0, "label": "Shadow edge softness", "help": "Width of the soft edge of shadows on the dust.", "ws": "place", "section": "Key light", "level": "advanced", "unit": "cm", "soft": [0, 20], "hard": [0, 10000.0], "affects": "look", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "shapes", "type": "json", "default": [], "label": "Shapes", "help": "Spheres and boxes that hide dust or embers inside or outside them, or push the dust as they move. Added and keyed in the viewer.", "ws": "place", "section": "Shapes", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "look", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "density", "type": "float", "default": 180.0, "label": "Density", "help": "Motes per cubic metre (before Amount).", "ws": "look", "section": "Dust", "level": "advanced", "unit": "/m³", "soft": [1, 1000], "hard": [0, 1000000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "seed", "type": "int", "default": 1, "label": "Seed", "help": "A different arrangement of the same dust.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "", "soft": null, "hard": [0, 2147483647], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "flakes", "type": "float", "default": 18.0, "label": "Flakes", "help": "Share of motes that are skin and paper flakes, which tumble and glint.", "ws": "look", "section": "Dust", "level": "basic", "unit": "%", "soft": [0, 60], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "fibers", "type": "float", "default": 1.2, "label": "Lint fibres", "help": "Share of motes that are lint fibres, long and slow.", "ws": "look", "section": "Dust", "level": "basic", "unit": "%", "soft": [0, 12], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "fluff", "type": "float", "default": 0.4, "label": "Fluff", "help": "Share of motes that are fluff balls, big, soft and floaty.", "ws": "look", "section": "Dust", "level": "basic", "unit": "%", "soft": [0, 6], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "size_min", "type": "float", "default": 4.0, "label": "Finest grit", "help": "Diameter of the smallest grit.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "µm", "soft": [1, 30], "hard": [0.1, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "size_max", "type": "float", "default": 60.0, "label": "Coarsest grit", "help": "Diameter of the largest grit.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "µm", "soft": [20, 300], "hard": [0.1, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "size_bias", "type": "float", "default": 2.4, "label": "Fine-grit bias", "help": "Higher = more of the grit is fine.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "", "soft": [0.5, 4], "hard": [0.05, 20], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "flake_scale", "type": "float", "default": 1.0, "label": "Flake size", "help": "Scales the size of flakes.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "x", "soft": [0.3, 3], "hard": [0.01, 100], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "fiber_scale", "type": "float", "default": 1.0, "label": "Fibre length", "help": "Scales the length of lint fibres.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "x", "soft": [0.3, 3], "hard": [0.01, 100], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "fluff_scale", "type": "float", "default": 0.6, "label": "Fluff size", "help": "Scales the size of fluff.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "x", "soft": [0.15, 2], "hard": [0.01, 100], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "max_motes", "type": "int", "default": 150000, "label": "Max motes", "help": "A ceiling on the number of motes, whatever the density.", "ws": "look", "section": "Dust", "level": "advanced", "unit": "", "soft": [1000, 500000], "hard": [0, 5000000], "affects": "sim", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "brightness", "type": "float", "default": 1.0, "label": "Dust brightness", "help": "Brightness of the dust (before the Brightness dial).", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "x", "soft": [0, 4], "hard": [0, 10000.0], "affects": "look", "layer": "look", "anim": true, "options": null, "aliases": {}}, {"key": "forward", "type": "float", "default": 0.65, "label": "Forward scatter", "help": "How much brighter motes look when you look toward the light, as real dust does.", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "", "soft": [0, 0.9], "hard": [0, 0.98], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "shadow_fill", "type": "float", "default": 0.35, "label": "Shadow-side fill", "help": "Light on motes from the room, outside the beam.", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "", "soft": [0, 2], "hard": [0, 100], "affects": "look", "layer": "look", "anim": true, "options": null, "aliases": {}}, {"key": "glint", "type": "float", "default": 0.4, "label": "Flake glints", "help": "Sparkle of flakes catching the light as they tumble.", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "", "soft": [0, 1], "hard": [0, 100], "affects": "look", "layer": "look", "anim": true, "options": null, "aliases": {}}, {"key": "tumble", "type": "float", "default": 1.0, "label": "Tumble rate", "help": "How fast flakes and fibres turn over.", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "x", "soft": [0, 3], "hard": [0, 100], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "tint", "type": "rgb", "default": [1.0, 1.0, 1.0], "label": "Tint", "help": "Colours the dust.", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "", "soft": null, "hard": [0, 10000.0], "affects": "look", "layer": "look", "anim": true, "options": null, "aliases": {}}, {"key": "steady", "type": "float", "default": 0.0, "label": "Steady", "help": "Calms motes that pop or flicker: steadier flakes, no glints, softer shadow edges, a touch of blur on tiny motes, and holdouts averaged over each mote so it slides behind an edge instead of blinking off.", "ws": "look", "section": "Dust look", "level": "basic", "unit": "", "soft": [0, 1], "hard": [0, 1], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "cam_fade_near", "type": "float", "default": 0.0, "label": "Hidden nearer than", "help": "Motes nearer the camera than this are hidden (with Fully visible from; both 0 = off).", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "scene", "soft": [0, 2000], "hard": [0, 1000000000.0], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "cam_fade_far", "type": "float", "default": 0.0, "label": "Fully visible from", "help": "Motes are at full strength from this distance on.", "ws": "look", "section": "Dust look", "level": "advanced", "unit": "scene", "soft": [0, 2000], "hard": [0, 1000000000.0], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "drift", "type": "float", "default": 1.2, "label": "Drift", "help": "A steady breeze through the room.", "ws": "look", "section": "Air", "level": "basic", "unit": "cm/s", "soft": [0, 20], "hard": [0, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "drift_dir", "type": "float", "default": 200.0, "label": "Drift heading", "help": "Which way the breeze blows (0 = toward +X, 90 = toward +Z).", "ws": "look", "section": "Air", "level": "basic", "unit": "°", "soft": [0, 360], "hard": null, "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "eddies", "type": "float", "default": 3.0, "label": "Eddies", "help": "Large slow swirls in the air.", "ws": "look", "section": "Air", "level": "basic", "unit": "cm/s", "soft": [0, 15], "hard": [0, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "eddy_size", "type": "float", "default": 1.4, "label": "Eddy size", "help": "Size of the large swirls.", "ws": "look", "section": "Air", "level": "advanced", "unit": "m", "soft": [0.2, 4], "hard": [0.05, 1000], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "micro", "type": "float", "default": 0.8, "label": "Micro-turbulence", "help": "Small fast jitter in the air.", "ws": "look", "section": "Air", "level": "advanced", "unit": "cm/s", "soft": [0, 5], "hard": [0, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "thermal", "type": "float", "default": 1.5, "label": "Rising warm air", "help": "Air rising where the sun warms it.", "ws": "look", "section": "Air", "level": "advanced", "unit": "cm/s", "soft": [0, 6], "hard": [-10000.0, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "lift", "type": "float", "default": 0.0, "label": "Vertical drift", "help": "A steady upward (or, negative, downward) drift.", "ws": "look", "section": "Air", "level": "advanced", "unit": "cm/s", "soft": [-20, 20], "hard": [-10000.0, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "settle", "type": "float", "default": 0.5, "label": "Settling", "help": "How fast heavier motes sink.", "ws": "look", "section": "Air", "level": "advanced", "unit": "cm/s", "soft": [0, 4], "hard": [0, 10000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "speed", "type": "float", "default": 1.0, "label": "Speed", "help": "Plays the whole simulation faster or slower.", "ws": "look", "section": "Air", "level": "advanced", "unit": "x", "soft": [0, 3], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "preroll", "type": "int", "default": 48, "label": "Pre-roll", "help": "Frames simulated before the first frame so the air is already moving.", "ws": "look", "section": "Air", "level": "advanced", "unit": "frames", "soft": [0, 200], "hard": [0, 100000], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "substeps", "type": "int", "default": 2, "label": "Steps per frame", "help": "Simulation steps per frame.", "ws": "look", "section": "Air", "level": "advanced", "unit": "", "soft": [1, 8], "hard": [1, 64], "affects": "sim", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "ember_rate", "type": "float", "default": 20.0, "label": "Embers per second", "help": "How many embers the fire gives off (before Amount).", "ws": "look", "section": "Embers", "level": "basic", "unit": "/s", "soft": [0, 1500], "hard": [0, 1000000.0], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_rise", "type": "float", "default": 2.2, "label": "Plume speed", "help": "How fast the hot air rises off the fire.", "ws": "look", "section": "Embers", "level": "basic", "unit": "m/s", "soft": [0, 6], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_turb", "type": "float", "default": 0.9, "label": "Turbulence", "help": "Swirl in the plume.", "ws": "look", "section": "Embers", "level": "basic", "unit": "", "soft": [0, 3], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_pops", "type": "float", "default": 0.1, "label": "Pops per second", "help": "How often the wood crackles and throws out a burst.", "ws": "look", "section": "Embers", "level": "basic", "unit": "/s", "soft": [0, 3], "hard": [0, 1000], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_pop_size", "type": "float", "default": 0.12, "label": "Pop size", "help": "How many sparks a pop throws.", "ws": "look", "section": "Embers", "level": "advanced", "unit": "", "soft": [0, 1], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_life", "type": "float", "default": 1.0, "label": "Lifetime", "help": "How long embers glow.", "ws": "look", "section": "Embers", "level": "advanced", "unit": "s", "soft": [0.2, 4], "hard": [0.01, 1000], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_spread", "type": "float", "default": 1.0, "label": "Launch spread", "help": "How widely embers fly out as they leave the fire.", "ws": "look", "section": "Embers", "level": "advanced", "unit": "", "soft": [0, 2], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_flutter", "type": "float", "default": 1.0, "label": "Flutter", "help": "Ash flakes spiralling as they rise.", "ws": "look", "section": "Embers", "level": "advanced", "unit": "", "soft": [0, 2], "hard": [0, 100], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_wind", "type": "float", "default": 0.3, "label": "Wind", "help": "A breeze bending the plume.", "ws": "look", "section": "Embers", "level": "advanced", "unit": "m/s", "soft": [0, 5], "hard": [0, 1000], "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_wind_dir", "type": "float", "default": 200.0, "label": "Wind heading", "help": "Which way the wind blows (0 = toward +X, 90 = toward +Z).", "ws": "look", "section": "Embers", "level": "advanced", "unit": "°", "soft": [0, 360], "hard": null, "affects": "sim", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_gain", "type": "float", "default": 1.0, "label": "Ember brightness", "help": "Brightness of the embers (before the Brightness dial).", "ws": "look", "section": "Ember look", "level": "basic", "unit": "x", "soft": [0, 20], "hard": [0, 10000.0], "affects": "look", "layer": "look", "anim": true, "options": null, "aliases": {}}, {"key": "ember_temp", "type": "float", "default": 1300.0, "label": "Start temperature", "help": "How hot (and how yellow) embers are as they leave.", "ws": "look", "section": "Ember look", "level": "advanced", "unit": "K", "soft": [900, 1700], "hard": [500, 5000], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_size", "type": "float", "default": 0.6, "label": "Ember size", "help": "Size of the glowing embers.", "ws": "look", "section": "Ember look", "level": "advanced", "unit": "mm", "soft": [0.1, 3], "hard": [0.01, 100], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_twinkle", "type": "float", "default": 0.6, "label": "Twinkle", "help": "Flicker of embers as they burn.", "ws": "look", "section": "Ember look", "level": "advanced", "unit": "", "soft": [0, 1], "hard": [0, 1], "affects": "look", "layer": "look", "anim": false, "options": null, "aliases": {}}, {"key": "ember_fade_near", "type": "float", "default": 0.0, "label": "Embers hidden nearer than", "help": "Embers nearer the camera than this are hidden (with Embers fully visible from; both 0 = off).", "ws": "look", "section": "Ember look", "level": "advanced", "unit": "scene", "soft": [0, 2000], "hard": [0, 1000000000.0], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "ember_fade_far", "type": "float", "default": 0.0, "label": "Embers fully visible from", "help": "Embers are at full strength from here on.", "ws": "look", "section": "Ember look", "level": "advanced", "unit": "scene", "soft": [0, 2000], "hard": [0, 1000000000.0], "affects": "look", "layer": "shot", "anim": true, "options": null, "aliases": {}}, {"key": "holdout", "type": "bool", "default": true, "label": "Depth holdouts", "help": "Dust behind the set is hidden by it.", "ws": "match", "section": "Holdouts", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "holdout_skip", "type": "text", "default": "", "label": "Never hold out", "help": "Objects that never hide dust, by Cryptomatte name (comma separated, * wildcards). Easiest with Pick in the viewer.", "ws": "match", "section": "Holdouts", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "fg_near", "type": "float", "default": 0.0, "label": "No holdout nearer than", "help": "Surfaces nearer than this never hide dust (with Full holdout beyond; both 0 = off), so a foreground character can be held out in comp with its own matte.", "ws": "match", "section": "Holdouts", "level": "advanced", "unit": "scene", "soft": [0, 2000], "hard": [0, 1000000000.0], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "fg_far", "type": "float", "default": 0.0, "label": "Full holdout beyond", "help": "Surfaces beyond this hide dust fully.", "ws": "match", "section": "Holdouts", "level": "advanced", "unit": "scene", "soft": [0, 2000], "hard": [0, 1000000000.0], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "push", "type": "bool", "default": false, "label": "Moving things push the dust", "help": "Things moving in the shot push the dust aside and leave a swirling wake. They are found from the backward motion vectors with Find moving things.", "ws": "match", "section": "Moving things", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "movers", "type": "text", "default": "", "label": "Use movers", "help": "Which moving things push the dust: blank = the suggested ones, \"all\", \"none\", or their numbers, e.g. \"1 3\".", "ws": "match", "section": "Moving things", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "push_amount", "type": "float", "default": 1.0, "label": "Push strength", "help": "How hard moving things push the dust.", "ws": "match", "section": "Moving things", "level": "advanced", "unit": "x", "soft": [0, 4], "hard": [0, 100], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "push_radius", "type": "float", "default": 1.0, "label": "Push reach", "help": "Scales the size of the spheres that push.", "ws": "match", "section": "Moving things", "level": "advanced", "unit": "x", "soft": [0.3, 3], "hard": [0.01, 100], "affects": "sim", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "push_min", "type": "float", "default": 0.25, "label": "Ignore motion slower than", "help": "Slower motion is treated as noise.", "ws": "match", "section": "Moving things", "level": "advanced", "unit": "m/s", "soft": [0, 2], "hard": [0, 1000], "affects": "prep", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "mv_scale", "type": "float", "default": 1.0, "label": "Motion vector scale", "help": "Use -1 if the motion vectors point forward rather than backward.", "ws": "match", "section": "Moving things", "level": "advanced", "unit": "", "soft": [-2, 2], "hard": null, "affects": "prep", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "dof", "type": "bool", "default": true, "label": "Defocus", "help": "Depth of field, matched to the shot camera.", "ws": "match", "section": "Lens", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "mb", "type": "bool", "default": true, "label": "Motion blur", "help": "Motion blur with the shot shutter.", "ws": "match", "section": "Lens", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "focal", "type": "float", "default": 0.0, "label": "Focal length", "help": "0 = from the camera in the utility pass.", "ws": "match", "section": "Lens", "level": "advanced", "unit": "mm", "soft": [0, 200], "hard": [0, 100000.0], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "film", "type": "float", "default": 0.0, "label": "Film back width", "help": "0 = from the camera in the utility pass.", "ws": "match", "section": "Lens", "level": "advanced", "unit": "mm", "soft": [0, 60], "hard": [0, 10000.0], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "fstop", "type": "float", "default": 0.0, "label": "f-stop", "help": "0 = from the camera in the utility pass.", "ws": "match", "section": "Lens", "level": "advanced", "unit": "", "soft": [0, 22], "hard": [0, 10000.0], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "focus", "type": "float", "default": 0.0, "label": "Focus distance", "help": "0 = from the camera in the utility pass.", "ws": "match", "section": "Lens", "level": "advanced", "unit": "scene", "soft": [0, 5000], "hard": [0, 1000000000.0], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "front_mult", "type": "float", "default": 1.0, "label": "Front defocus", "help": "Scales the blur in front of the focus.", "ws": "match", "section": "Lens", "level": "advanced", "unit": "x", "soft": [0, 5], "hard": [0, 100], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "back_mult", "type": "float", "default": 1.0, "label": "Back defocus", "help": "Scales the blur behind the focus.", "ws": "match", "section": "Lens", "level": "advanced", "unit": "x", "soft": [0, 5], "hard": [0, 100], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "max_bokeh", "type": "float", "default": 110.0, "label": "Largest bokeh", "help": "Caps the blur of motes right in front of the lens.", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "px", "soft": [10, 300], "hard": [1, 2000], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "blades", "type": "int", "default": 0, "label": "Blade count", "help": "0 = from the camera; below 3 = round.", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "", "soft": [0, 12], "hard": [0, 64], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "cateye", "type": "float", "default": 0.0, "label": "Cat-eye", "help": "Lemon-shaped bokeh toward the frame edges (added to the camera's).", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "", "soft": [0, 1], "hard": [0, 10], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "anamorphic", "type": "float", "default": 0.0, "label": "Anamorphic aspect", "help": "Oval bokeh (added to the camera's).", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "", "soft": [-0.5, 1.5], "hard": [-0.95, 10], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "field_curv", "type": "float", "default": 0.0, "label": "Field curvature", "help": "Focus that curves toward the frame edges (added to the camera's).", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "", "soft": [-0.5, 0.5], "hard": [-10, 10], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "fstop_full", "type": "float", "default": 0.0, "label": "f-stop full aperture", "help": "The lens wide open, for cat-eye (0 = from the camera).", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "", "soft": [0, 8], "hard": [0, 10000.0], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "bokeh_image", "type": "path", "default": "", "label": "Custom bokeh shape", "help": "An image of the aperture (EXR or PNG, white = open). Replaces the blades.", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "bokeh_rot", "type": "float", "default": 0.0, "label": "Bokeh rotation", "help": "Turns the bokeh shape.", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "°", "soft": [-180, 180], "hard": null, "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "bokeh_falloff", "type": "float", "default": 0.0, "label": "Bokeh centre / rim", "help": "Positive = brighter centre, negative = brighter rim.", "ws": "match", "section": "Bokeh", "level": "advanced", "unit": "", "soft": [-1, 1], "hard": [-1, 1], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "shutter", "type": "float", "default": 180.0, "label": "Shutter angle", "help": "How long the shutter is open, in degrees of a frame.", "ws": "match", "section": "Shutter", "level": "advanced", "unit": "°", "soft": [0, 360], "hard": [0, 3600], "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "shutter_mode", "type": "enum", "default": "backward", "label": "Shutter timing", "help": "When the shutter is open relative to the frame.", "ws": "match", "section": "Shutter", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": ["backward", "centred", "forward"], "aliases": {}}, {"key": "shutter_shape", "type": "enum", "default": "backwardsShape", "label": "Shutter shape", "help": "backwardsShape: opens gradually toward the frame, like the studio cameras. box: fully open throughout.", "ws": "match", "section": "Shutter", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": ["backwardsShape", "box"], "aliases": {}}, {"key": "output_mode", "type": "enum", "default": "dust only", "label": "Node output", "help": "What the Nuke node outputs: the dust alone (to merge with plus), the dust merged over the plate, or a holdout check (what holdouts take away, in red).", "ws": "deliver", "section": "Output", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "node", "layer": "shot", "anim": false, "options": ["dust only", "merged over plate", "holdout check"], "aliases": {}}, {"key": "cache", "type": "path", "default": "", "label": "Cache folder", "help": "Where the dust frames are written. Each node needs its own folder.", "ws": "deliver", "section": "Output", "level": "basic", "unit": "", "soft": null, "hard": null, "affects": "node", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "proxy", "type": "float", "default": 1.0, "label": "Resolution", "help": "Renders at a fraction of the shot resolution.", "ws": "deliver", "section": "Output", "level": "advanced", "unit": "x", "soft": [0.1, 1], "hard": [0.05, 4], "affects": "render", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "out_noholdout", "type": "bool", "default": true, "label": "noholdout layer", "help": "The dust with no holdouts, for holding out in comp.", "ws": "deliver", "section": "Layers", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "out_embers", "type": "bool", "default": true, "label": "embers layer", "help": "The embers on their own (held out).", "ws": "deliver", "section": "Layers", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "out_dustmatte", "type": "bool", "default": true, "label": "dustmatte layer", "help": "A matte of the dust's brightness, to grade through.", "ws": "deliver", "section": "Layers", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "out_keyfill", "type": "bool", "default": false, "label": "dust_key and dust_fill layers", "help": "The dust lit by the key light and by bounce light, separately. dust_key + dust_fill + embers = RGBA.", "ws": "deliver", "section": "Layers", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "out_float", "type": "bool", "default": false, "label": "32-bit float", "help": "Writes 32-bit float instead of half float (twice the size).", "ws": "deliver", "section": "Layers", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "render", "layer": "show", "anim": false, "options": null, "aliases": {}}, {"key": "dof_view", "type": "bool", "default": true, "label": "Defocus in the viewer", "help": "Turn off to make the viewer faster. Renders keep Defocus.", "ws": "view", "section": "Viewer", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "view", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "mb_view", "type": "bool", "default": true, "label": "Motion blur in the viewer", "help": "Turn off if a camera move plays slowly. Renders keep Motion blur.", "ws": "view", "section": "Viewer", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "view", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "show_movers", "type": "bool", "default": true, "label": "Show moving things", "help": "Draws the spheres that stand in for moving things.", "ws": "view", "section": "Viewer", "level": "advanced", "unit": "", "soft": null, "hard": null, "affects": "view", "layer": "shot", "anim": false, "options": null, "aliases": {}}, {"key": "hold_frame", "type": "int", "default": 0, "label": "Hold camera on frame", "help": "Review aid: the camera, plate and holdouts stay on this frame while the dust keeps moving (0 = off).", "ws": "view", "section": "Viewer", "level": "advanced", "unit": "", "soft": null, "hard": [0, 10000000], "affects": "view", "layer": "shot", "anim": false, "options": null, "aliases": {}}]}</script>
+<script id="check" type="application/json">{"pattern": "standin_utility.####.exr", "frame": 101, "items": [["ok", "Files", "1 frame on disk, 101-101."], ["ok", "Layers", "Found world position, normals, depth, unfiltered depth, coverage, backward motion vectors, object IDs."], ["note", "Layers", "No surface colour. Bounce light is grey instead of taking the colour of what it bounces off."], ["ok", "Camera", "Found: 32.0 mm lens, 50.0° wide, f/4, focus 620; 192 x 108."], ["ok", "Camera", "Lens details from the header (the dust's bokeh uses them): 7 blades, cat-eye 0.25, field curvature 0.1, full aperture f/1.4."], ["ok", "Camera", "Shutter from the header: 180°, backward."], ["ok", "Camera", "Positions reproject through the header camera to 0.00 px (median)."], ["ok", "Edges", "Coverage: from the alpha; 9.2% of pixels are empty, 148 are edge pixels."], ["ok", "Edges", "World position is premultiplied by coverage (edge pixels reproject 31 px off); divided by coverage they reproject to 0.25 px, so that is what MoteField uses."], ["ok", "Edges", "Depth is distance along the ray, premultiplied (divided by coverage)."], ["ok", "Edges", "Unfiltered depth is distance along the ray."], ["ok", "Holdouts", "Holdouts use the unfiltered depth, weighted by coverage."], ["note", "Edges", "1% of fully covered pixels mix two surfaces (hair, leaves, motion blur...): they are left out of the light map, Fit box and bounce light."], ["ok", "Units", "In centimetres, what the camera sees spans about 8.70 m x 2.48 m x 5.83 m, and is mostly 9.05 m from the camera; focus is at 6.20 m."], ["ok", "Motion", "Backward motion vectors: 0.0 px typical, 0 px at most (99th percentile). Their direction is checked against the camera on the first Find moving things."], ["ok", "Objects", "3 objects in the object ID layer: they can be picked in the viewer to never hold out."]]}</script>
+<script>
+(function () {
+  const S = JSON.parse(document.getElementById('schema').textContent);
+  const REPORT = JSON.parse(document.getElementById('check').textContent);
+  const P = S.params, BY = {};
+  P.forEach((p) => { BY[p.key] = p; });
+  const val = {};
+  P.forEach((p) => { val[p.key] = p.default; });
+  const COST = { shot: 'reloads the shot', prep: 're-preps and re-simulates', sim: 're-simulates', render: 're-renders only',
+                 look: 're-renders only', node: 'node only', view: 'viewer only' };
+  const COSTCLS = { shot: 'prep', prep: 'prep', sim: 'sim', render: 'render', look: 'render', node: 'view', view: 'view' };
+  const TABS = [['place', 'Place'], ['look', 'Look'], ['match', 'Match'], ['deliver', 'Deliver'], ['shot', 'Shot'], ['view', 'Viewer']];
+  let tab = 'place';
+  try { const t = localStorage.getItem('mf1.tab'); if (t && TABS.some((x) => x[0] === t)) tab = t; } catch (e) { /* no storage */ }
+  const el = (tag, attrs, kids) => {
+    const n = document.createElement(tag);
+    for (const k in attrs || {}) {
+      if (k === 'class') n.className = attrs[k]; else if (k === 'text') n.textContent = attrs[k];
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2), attrs[k]); else n.setAttribute(k, attrs[k]);
+    }
+    (kids || []).forEach((c) => c && n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+    return n;
+  };
+  const fmt = (p, v) => {
+    if (typeof v !== 'number') return String(v);
+    if (p.type === 'int') return String(v);
+    const a = Math.abs(v);
+    return a >= 1000 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2);
+  };
+  const unitText = (u) => (u === 'scene' ? 'cm' : u === 'x' ? '×' : u);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function tell(p, changed) {
+    const w = document.getElementById('what');
+    w.textContent = '';
+    w.appendChild(el('b', { text: p.label + (p.unit && p.unit !== 'x' ? ' (' + unitText(p.unit) + ')' : '') + ': ' }));
+    w.appendChild(document.createTextNode(p.help + (changed ? '  Changing it ' + COST[p.affects] + '.' : '')));
+  }
+  function setVal(p, v, row) {
+    val[p.key] = v;
+    row.classList.toggle('changed', !same(v, p.default));
+    tell(p, true);
+    count();
+    if (p.ws === 'masters' || p.key === 'steady') drawDials();
+  }
+  function control(p, row) {
+    const c = el('div', { class: 'ctl' });
+    const id = 'k_' + p.key;
+    const v = val[p.key];
+    if (p.type === 'float' || p.type === 'int') {
+      const lo = p.soft ? p.soft[0] : (p.hard ? p.hard[0] : 0), hi = p.soft ? p.soft[1] : (p.hard ? Math.min(p.hard[1], 1e5) : 100);
+      if (p.soft) {
+        const out = el('span', { class: 'v', text: fmt(p, v) });
+        const r = el('input', { type: 'range', id, min: lo, max: hi, step: p.type === 'int' ? 1 : (hi - lo) / 400, value: v,
+          'aria-label': p.label, oninput: (e) => { const x = p.type === 'int' ? parseInt(e.target.value, 10) : parseFloat(e.target.value); out.textContent = fmt(p, x); setVal(p, x, row); } });
+        c.append(r, out);
+      } else {
+        c.append(el('input', { type: 'number', id, value: v, step: p.type === 'int' ? 1 : 'any', 'aria-label': p.label,
+          onchange: (e) => setVal(p, p.type === 'int' ? parseInt(e.target.value, 10) : parseFloat(e.target.value), row) }));
+      }
+    } else if (p.type === 'bool') {
+      c.append(el('input', { type: 'checkbox', id, 'aria-label': p.label, onchange: (e) => setVal(p, e.target.checked, row) }));
+      c.lastChild.checked = !!v;
+    } else if (p.type === 'enum') {
+      const s = el('select', { id, 'aria-label': p.label, onchange: (e) => setVal(p, e.target.value, row) },
+        p.options.map((o) => el('option', { value: o, text: o })));
+      s.value = v;
+      c.append(s);
+    } else if (p.type === 'xyz' || p.type === 'rgb') {
+      const cur = v.slice();
+      ['x', 'y', 'z'].forEach((ax, i) => c.append(el('input', { type: 'number', id: id + '_' + ax, value: cur[i], step: 'any',
+        'aria-label': p.label + ' ' + (p.type === 'rgb' ? 'RGB'[i] : ax), onchange: (e) => { cur[i] = parseFloat(e.target.value); setVal(p, cur.slice(), row); } })));
+      if (p.type === 'rgb') {
+        const sw = el('span', { class: 'swatch' });
+        sw.style.background = 'rgb(' + cur.map((x) => Math.round(Math.min(1, x) * 255)).join(',') + ')';
+        c.append(sw);
+      }
+    } else if (p.type === 'json') {
+      c.append(el('span', { class: 'muted', text: 'Added and keyed in the viewer.' }));
+    } else {
+      c.append(el('input', { type: 'text', id, value: v, placeholder: p.type === 'path' ? '/path/to/frames.####.exr' : '',
+        'aria-label': p.label, onchange: (e) => setVal(p, e.target.value, row) }));
+    }
+    if (p.type === 'float' || p.type === 'int' || p.type === 'xyz') c.append(el('span', { class: 'unit', text: p.unit && p.unit !== 'x' ? unitText(p.unit) : (p.unit === 'x' ? '×' : '') }));
+    return c;
+  }
+  function row(p) {
+    const r = el('div', { class: 'row' + (same(val[p.key], p.default) ? '' : ' changed'), title: p.help });
+    const lab = el('div', { class: 'lab' }, [el('span', { class: 'dot', 'aria-hidden': 'true' }),
+      el('label', { for: 'k_' + p.key + (p.type === 'xyz' || p.type === 'rgb' ? '_x' : ''), text: p.label }),
+      p.anim ? el('span', { class: 'anim', title: 'Can be keyed over the shot', text: '✎' }) : null,
+      el('span', { class: 'layer', title: 'Normally lives in the ' + p.layer + ' settings file', text: p.layer })]);
+    lab.addEventListener('dblclick', () => { val[p.key] = p.default; draw(); tell(p, false); });
+    r.append(lab, control(p, r), el('span', { class: 'cost ' + COSTCLS[p.affects], text: COST[p.affects] }));
+    r.addEventListener('mouseenter', () => tell(p, false));
+    r.addEventListener('focusin', () => tell(p, false));
+    return r;
+  }
+  function drawDials() {
+    const box = document.getElementById('dials');
+    box.textContent = '';
+    S.dials.forEach((k) => {
+      const p = BY[k];
+      const v = val[k];
+      const scales = S.masters[k] ? 'Multiplies ' + S.masters[k].map((x) => BY[x].label.toLowerCase()).join(', ') : 'Calms popping and flicker';
+      const out = el('b', { text: k === 'steady' ? v.toFixed(2) : v.toFixed(2) + '×' });
+      const inp = el('input', { type: 'range', id: 'd_' + k, min: p.soft[0], max: p.soft[1], step: 0.01, value: v, 'aria-label': p.label,
+        oninput: (e) => { val[k] = parseFloat(e.target.value); out.textContent = k === 'steady' ? val[k].toFixed(2) : val[k].toFixed(2) + '×'; tell(p, true); count(); } });
+      box.append(el('div', { class: 'dial' }, [el('label', { for: 'd_' + k }, [p.label, out]), inp, el('small', { text: scales + (p.anim ? '. Can be keyed.' : '.') })]));
+    });
+  }
+  function count() {
+    const n = P.filter((p) => !same(val[p.key], p.default)).length;
+    document.getElementById('count').textContent = n ? n + ' changed' : '';
+  }
+  function draw() {
+    const all = document.getElementById('showAll').checked;
+    const tabs = document.getElementById('tabs');
+    tabs.textContent = '';
+    TABS.forEach(([k, name]) => {
+      const n = P.filter((p) => p.ws === k).length;
+      const b = el('button', { role: 'tab', 'aria-selected': String(k === tab), text: name + (all ? '  ' + n : ''),
+        onclick: () => { tab = k; try { localStorage.setItem('mf1.tab', k); } catch (e) { /* no storage */ } draw(); } });
+      tabs.append(b);
+    });
+    const pane = document.getElementById('pane');
+    pane.textContent = '';
+    const secs = [];
+    P.filter((p) => p.ws === tab && (all || p.level === 'basic')).forEach((p) => {
+      let s = secs.find((x) => x.name === p.section);
+      if (!s) { s = { name: p.section, ps: [] }; secs.push(s); }
+      s.ps.push(p);
+    });
+    const hidden = P.filter((p) => p.ws === tab && p.level !== 'basic').length;
+    secs.forEach((s) => pane.append(el('div', { class: 'sec' }, [el('h3', { text: s.name })].concat(s.ps.map(row)))));
+    if (!all && hidden) pane.append(el('p', { class: 'muted', style: 'color:var(--faint);font-size:13px;margin:14px 4px 0', text: hidden + ' more settings on this tab with Show all settings.' }));
+    count();
+  }
+  document.getElementById('showAll').addEventListener('change', draw);
+  drawDials();
+  draw();
+  // the shot check
+  const rep = document.getElementById('report');
+  REPORT.items.forEach(([lv, topic, msg]) => rep.append(el('div', { class: 'item ' + lv }, [
+    el('span', { class: 'lv', text: lv === 'problem' ? 'fix' : lv }), el('span', { class: 'tp', text: topic }), el('span', { text: msg })])));
+  document.getElementById('ver').textContent = S.version;
+  document.getElementById('model').textContent = S.model;
+})();
+</script>
+</body>
+</html>
