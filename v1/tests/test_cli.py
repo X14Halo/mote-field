@@ -22,11 +22,11 @@ def run(*argv):
 
 
 class GeneratedFilesAreCurrent(unittest.TestCase):
-    """viewer/js/schema.json and docs/SETTINGS.md are generated from schema.py: regenerate them with
+    """docs/schema.json and docs/SETTINGS.md are generated from schema.py: regenerate them with
     python -m motefield schema whenever the schema changes."""
 
-    def test_viewer_schema(self):
-        with open(os.path.join(ROOT, 'viewer', 'js', 'schema.json'), encoding='utf-8') as fh:
+    def test_schema_json(self):
+        with open(os.path.join(ROOT, 'docs', 'schema.json'), encoding='utf-8') as fh:
             self.assertEqual(fh.read(), schema.to_json() + '\n', 'run: python -m motefield schema')
 
     def test_docs(self):

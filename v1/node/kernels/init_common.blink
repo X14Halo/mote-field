@@ -1,0 +1,11 @@
+    Wf = float(surf.bounds.width());
+    Hf = float(surf.bounds.height());
+    count = mote_count();
+    bsize = float3(max(box_size.x * su, 0.02f), max(box_size.y * su, 0.02f), max(box_size.z * su, 0.02f));
+    bcenter = box_center * su;
+    rc = cos(box_rot * 0.0174532925f);
+    rs = sin(box_rot * 0.0174532925f);
+    float dir_a = drift_dir * 0.0174532925f;
+    wind = float3(cos(dir_a) * drift, lift, sin(dir_a) * drift) * 0.01f;
+    t = (frame - first) / fps * speed;
+    spf = speed / fps;

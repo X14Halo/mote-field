@@ -1,0 +1,104 @@
+// MoteField: the extent of the set the camera sees (world, scene units), from clean pixels on a grid of samples:
+// pixel 0 = low corner, pixel 1 = high corner, each the 0.5 / 99.5 percentile along each axis, so a few stray
+// far-away pixels don't stretch it. 'Light only through openings' follows rays out of this box.
+kernel MFBounds : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    float Wf;
+    float Hf;
+
+  void define() {
+//@define
+  }
+
+//@params cam_pos cam_right cam_up cam_back cam_th
+//@include lib_math
+//@include lib_cam
+
+  void init() {
+    Wf = float(surf.bounds.width());
+    Hf = float(surf.bounds.height());
+  }
+
+  float coord(float3 P, int axis) {
+    return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);
+  }
+
+  void process(int2 xy) {
+    int gx = 160;
+    int gy = 90;
+    float lo3[3];
+    float hi3[3];
+    for (int axis = 0; axis < 3; axis++) {
+      float mn = 1e30f;
+      float mx = -1e30f;
+      float n = 0.0f;
+      for (int j = 0; j < gy; j++) {
+        for (int i = 0; i < gx; i++) {
+          float px = (float(i) + 0.5f) * Wf / float(gx);
+          float py = (float(j) + 0.5f) * Hf / float(gy);
+          float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+          if (s.w < 0.5f || s.z <= 0.0f) {
+            continue;
+          }
+          float c = coord(cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * s.z, axis);
+          mn = min(mn, c);
+          mx = max(mx, c);
+          n += 1.0f;
+        }
+      }
+      if (n < 1.0f) {
+        lo3[axis] = 0.0f;
+        hi3[axis] = 0.0f;
+        continue;
+      }
+      float hist[256];
+      for (int b = 0; b < 256; b++) {
+        hist[b] = 0.0f;
+      }
+      float span = max(mx - mn, 1e-6f);
+      for (int j = 0; j < gy; j++) {
+        for (int i = 0; i < gx; i++) {
+          float px = (float(i) + 0.5f) * Wf / float(gx);
+          float py = (float(j) + 0.5f) * Hf / float(gy);
+          float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+          if (s.w < 0.5f || s.z <= 0.0f) {
+            continue;
+          }
+          float c = coord(cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * s.z, axis);
+          int b = clampi(int((c - mn) / span * 256.0f), 0, 255);
+          hist[b] += 1.0f;
+        }
+      }
+      float acc = 0.0f;
+      float lo = mn;
+      float hi = mx;
+      bool found_lo = false;
+      for (int b = 0; b < 256; b++) {
+        acc += hist[b];
+        if (!found_lo && acc >= 0.005f * n) {
+          lo = mn + span * float(b) / 256.0f;
+          found_lo = true;
+        }
+        if (acc >= 0.995f * n) {
+          hi = mn + span * float(b + 1) / 256.0f;
+          break;
+        }
+      }
+      lo3[axis] = lo;
+      hi3[axis] = hi;
+    }
+    if (xy.x == 0) {
+      dst() = float4(lo3[0], lo3[1], lo3[2], 1.0f);
+    } else {
+      dst() = float4(hi3[0], hi3[1], hi3[2], 1.0f);
+    }
+  }
+};

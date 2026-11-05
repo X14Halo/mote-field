@@ -1,0 +1,42 @@
+  // ---- the hash: PCG on 32-bit words, kept as two 16-bit halves (x = high, y = low) so no int ever overflows.
+  // The same bits come out on every CPU and GPU, and they match the Python reference (motefield/rng.py).
+  int2 u_add(int2 a, int2 b) {
+    int lo = a.y + b.y;
+    return int2((a.x + b.x + (lo >> 16)) & 65535, lo & 65535);
+  }
+  int mul_lo16(int a, int b) {
+    return (a * (b & 255) + (((a * (b >> 8)) & 255) << 8)) & 65535;
+  }
+  int2 u_mul(int2 a, int2 b) {
+    int p0 = a.y * (b.y & 255);
+    int p1 = a.y * (b.y >> 8);
+    int t = p0 + ((p1 & 255) << 8);
+    int carry = (t >> 16) + (p1 >> 8);
+    return int2((carry + mul_lo16(a.x, b.y) + mul_lo16(a.y, b.x)) & 65535, t & 65535);
+  }
+  int2 u_xor(int2 a, int2 b) {
+    return int2(a.x ^ b.x, a.y ^ b.y);
+  }
+  int2 u_shr(int2 a, int k) {
+    if (k >= 16) {
+      return int2(0, a.x >> (k - 16));
+    }
+    return int2(a.x >> k, ((a.y >> k) | (a.x << (16 - k))) & 65535);
+  }
+  int2 pcg(int2 v) {
+    int2 s = u_add(u_mul(v, int2(11410, 30645)), int2(44118, 19205));
+    int2 w = u_mul(u_xor(u_shr(s, (s.x >> 12) + 4), s), int2(4238, 62169));
+    return u_xor(u_shr(w, 22), w);
+  }
+  int2 word(int v) {
+    return int2((v >> 16) & 65535, v & 65535);
+  }
+  int2 hash1(int2 a) {
+    return pcg(a);
+  }
+  int2 hash_more(int2 h, int2 w) {
+    return pcg(u_add(h, w));
+  }
+  float u01(int2 h) {
+    return float((h.x << 8) | (h.y >> 8)) * (1.0f / 16777216.0f);
+  }

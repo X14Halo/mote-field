@@ -1,0 +1,187 @@
+// MoteField: facts about the utility pass, from a grid of samples (4 x 1 pixels out):
+//   pixel 0: position premultiplied by coverage (1/0), alpha present, position present, depth present + 2 x unfiltered depth present
+//   pixel 1: depth along the view axis (1) or the ray (0), depth premultiplied, the same two for the unfiltered depth
+//   pixel 2: edge samples, fully covered samples, samples, 0
+// Mirrors shot.build_surface in the Python reference: premultiplication is found by reprojecting edge pixels.
+kernel MFFacts : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eRead, eAccessRandom, eEdgeClamped> pos;
+  Image<eRead, eAccessRandom, eEdgeClamped> depth;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    float Wf;
+    float Hf;
+
+  void define() {
+//@define
+  }
+
+//@params cam_pos cam_right cam_up cam_back cam_th
+//@include lib_math
+//@include lib_cam
+
+  void init() {
+    Wf = float(pos.bounds.width());
+    Hf = float(pos.bounds.height());
+  }
+
+  float reproj(float3 P, float px, float py) {
+    float3 p = project_mid(P);
+    if (p.z <= 0.0f) {
+      return 1e9f;
+    }
+    float dx = p.x - px;
+    float dy = p.y - py;
+    return sqrt(dx * dx + dy * dy);
+  }
+
+  void process(int2 xy) {
+    int x0 = pos.bounds.x1;
+    int y0 = pos.bounds.y1;
+    int gx = 160;
+    int gy = 90;
+    float has_a = 0.0f;
+    float has_p = 0.0f;
+    float has_z = 0.0f;
+    float has_zr = 0.0f;
+    float n_edge = 0.0f;
+    float n_full = 0.0f;
+    float votes = 0.0f;
+    for (int j = 0; j < gy; j++) {
+      for (int i = 0; i < gx; i++) {
+        int sx = x0 + int((float(i) + 0.5f) * Wf / float(gx));
+        int sy = y0 + int((float(j) + 0.5f) * Hf / float(gy));
+        float4 p = pos(sx, sy);
+        float4 z = depth(sx, sy);
+        float3 P = float3(p.x, p.y, p.z);
+        if (p.w > 0.0f) {
+          has_a = 1.0f;
+        }
+        if (fabs(p.x) + fabs(p.y) + fabs(p.z) > 0.0f) {
+          has_p = 1.0f;
+        }
+        if (z.x > 0.0f) {
+          has_z = 1.0f;
+        }
+        if (z.y > 0.0f) {
+          has_zr = 1.0f;
+        }
+        if (p.w >= 0.98f) {
+          n_full += 1.0f;
+        }
+        if (p.w > 0.02f && p.w < 0.98f) {
+          n_edge += 1.0f;
+          float px = float(sx) + 0.5f;
+          float py = float(sy) + 0.5f;
+          float e_raw = reproj(P, px, py);
+          float e_div = reproj(P / max(p.w, 1e-6f), px, py);
+          if (e_div < e_raw) {
+            votes += 1.0f;
+          }
+        }
+      }
+    }
+    float premult = (n_edge >= 20.0f && votes > 0.5f * n_edge) ? 1.0f : 0.0f;
+    if (xy.x == 0) {
+      dst() = float4(premult, has_a, has_p, has_z + 2.0f * has_zr);
+      return;
+    }
+    if (xy.x == 2) {
+      dst() = float4(n_edge, n_full, float(gx * gy), 0.0f);
+      return;
+    }
+    if (xy.x != 1 || has_p == 0.0f) {
+      dst() = float4(0.0f);
+      return;
+    }
+    // depth: along the ray or the view axis, and premultiplied or not (checked against the positions)
+    float zk_n = 0.0f;
+    float zk_v = 0.0f;
+    float zp_n = 0.0f;
+    float zp_v = 0.0f;
+    float rk_n = 0.0f;
+    float rk_v = 0.0f;
+    float rp_n = 0.0f;
+    float rp_v = 0.0f;
+    for (int j = 0; j < gy; j++) {
+      for (int i = 0; i < gx; i++) {
+        int sx = x0 + int((float(i) + 0.5f) * Wf / float(gx));
+        int sy = y0 + int((float(j) + 0.5f) * Hf / float(gy));
+        float4 p = pos(sx, sy);
+        float4 z = depth(sx, sy);
+        float cov = has_a > 0.0f ? clamp(p.w, 0.0f, 1.0f) : 1.0f;
+        float3 P = float3(p.x, p.y, p.z);
+        if (premult > 0.0f) {
+          P = P / max(cov, 1e-6f);
+        }
+        if (fabs(p.x) + fabs(p.y) + fabs(p.z) <= 0.0f) {
+          continue;
+        }
+        float ray = len3(P - cam_pos);
+        if (ray <= 0.0f) {
+          continue;
+        }
+        float cosang = fabs(dot(ray_dir(float(sx) + 0.5f, float(sy) + 0.5f), cam_back));
+        if (cov >= 0.98f) {
+          if (z.x > 0.0f) {
+            zk_n += 1.0f;
+            if (fabs(z.x / (ray * cosang) - 1.0f) < fabs(z.x / ray - 1.0f)) {
+              zk_v += 1.0f;
+            }
+          }
+          if (z.y > 0.0f) {
+            rk_n += 1.0f;
+            if (fabs(z.y / (ray * cosang) - 1.0f) < fabs(z.y / ray - 1.0f)) {
+              rk_v += 1.0f;
+            }
+          }
+        }
+      }
+    }
+    float zview = (zk_n >= 20.0f && zk_v > 0.5f * zk_n) ? 1.0f : 0.0f;
+    float rview = (rk_n >= 20.0f && rk_v > 0.5f * rk_n) ? 1.0f : 0.0f;
+    for (int j = 0; j < gy; j++) {
+      for (int i = 0; i < gx; i++) {
+        int sx = x0 + int((float(i) + 0.5f) * Wf / float(gx));
+        int sy = y0 + int((float(j) + 0.5f) * Hf / float(gy));
+        float4 p = pos(sx, sy);
+        float4 z = depth(sx, sy);
+        if (!(has_a > 0.0f && p.w > 0.02f && p.w < 0.98f)) {
+          continue;
+        }
+        float cov = p.w;
+        float3 P = float3(p.x, p.y, p.z);
+        if (premult > 0.0f) {
+          P = P / cov;
+        }
+        float ray = len3(P - cam_pos);
+        if (ray <= 0.0f) {
+          continue;
+        }
+        float cosang = max(fabs(dot(ray_dir(float(sx) + 0.5f, float(sy) + 0.5f), cam_back)), 1e-6f);
+        if (z.x > 0.0f) {
+          float d = zview > 0.0f ? z.x / cosang : z.x;
+          zp_n += 1.0f;
+          if (fabs(d / cov / ray - 1.0f) < fabs(d / ray - 1.0f)) {
+            zp_v += 1.0f;
+          }
+        }
+        if (z.y > 0.0f) {
+          float d = rview > 0.0f ? z.y / cosang : z.y;
+          rp_n += 1.0f;
+          if (fabs(d / cov / ray - 1.0f) < fabs(d / ray - 1.0f)) {
+            rp_v += 1.0f;
+          }
+        }
+      }
+    }
+    float zpre = (zp_n >= 20.0f && zp_v > 0.5f * zp_n) ? 1.0f : 0.0f;
+    float rpre = (rp_n >= 20.0f && rp_v > 0.5f * rp_n) ? 1.0f : 0.0f;
+    dst() = float4(zview, zpre, rview, rpre);
+  }
+};

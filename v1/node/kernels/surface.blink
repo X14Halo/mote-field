@@ -1,0 +1,118 @@
+// MoteField: what each pixel sees, made safe to use (mirrors shot.build_surface in the Python reference):
+//   r = distance from the camera to the surface for holdouts (unfiltered depth if there is one; 0 = nothing there)
+//   g = coverage 0..1
+//   b = distance to the surface from the position pass (or the depth), for shadows and bounce light
+//   a = 1 where one surface fills the pixel (safe to use as a 3D point), else 0
+kernel MFSurface : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessRandom, eEdgeClamped> pos;
+  Image<eRead, eAccessRandom, eEdgeClamped> depth;
+  Image<eRead, eAccessRandom, eEdgeClamped> facts;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    float Wf;
+    float Hf;
+
+  void define() {
+//@define
+  }
+
+//@params cam_pos cam_right cam_up cam_back cam_th p_premult z_kind z_premult
+//@include lib_math
+//@include lib_cam
+
+  void init() {
+    Wf = float(pos.bounds.width());
+    Hf = float(pos.bounds.height());
+  }
+
+  // coverage and distance along the ray from the position pass at a pixel (0 where empty)
+  float2 cov_ray(int x, int y, float has_a, float premult) {
+    float4 p = pos(x, y);
+    float4 z = depth(x, y);
+    bool have = fabs(p.x) + fabs(p.y) + fabs(p.z) > 0.0f || z.x > 0.0f || z.y > 0.0f;
+    float cov = has_a > 0.0f ? clamp(p.w, 0.0f, 1.0f) : (have ? 1.0f : 0.0f);
+    if (cov <= 0.0f || fabs(p.x) + fabs(p.y) + fabs(p.z) <= 0.0f) {
+      return float2(cov, 0.0f);
+    }
+    float3 P = float3(p.x, p.y, p.z);
+    if (premult > 0.0f) {
+      P = P / max(cov, 1e-6f);
+    }
+    return float2(cov, len3(P - cam_pos));
+  }
+
+  void process(int2 xy) {
+    float4 f0 = facts(0, 0);
+    float4 f1 = facts(1, 0);
+    float has_a = f0.y;
+    float has_p = f0.z;
+    float has_z = fmod(f0.w, 2.0f);
+    float has_zr = f0.w >= 2.0f ? 1.0f : 0.0f;
+    float premult = p_premult >= 0 ? float(p_premult) : f0.x;
+    float zview = z_kind >= 0 ? float(z_kind) : f1.x;
+    float rview = z_kind >= 0 ? float(z_kind) : f1.z;
+    float zpre = z_premult >= 0 ? float(z_premult) : f1.y;
+    float rpre = z_premult >= 0 ? float(z_premult) : f1.w;
+    if (has_p == 0.0f) {
+      zpre = 0.0f;
+      rpre = 0.0f;
+      if (z_kind < 0) {
+        zview = 0.0f;
+        rview = 0.0f;
+      }
+    }
+    float2 cr = cov_ray(xy.x, xy.y, has_a, premult);
+    float cov = cr.x;
+    float ray = cr.y;
+    float4 z = depth(xy.x, xy.y);
+    float cosang = max(fabs(dot(ray_dir(float(xy.x) + 0.5f, float(xy.y) + 0.5f), cam_back)), 1e-6f);
+    float zd = 0.0f;
+    float rd = 0.0f;
+    if (cov > 0.0f) {
+      zd = max(z.x, 0.0f);
+      rd = max(z.y, 0.0f);
+      if (zview > 0.0f) {
+        zd = zd / cosang;
+      }
+      if (rview > 0.0f) {
+        rd = rd / cosang;
+      }
+      if (zpre > 0.0f) {
+        zd = zd / max(cov, 1e-6f);
+      }
+      if (rpre > 0.0f) {
+        rd = rd / max(cov, 1e-6f);
+      }
+    }
+    float dist = has_zr > 0.0f ? rd : (has_z > 0.0f ? zd : (cov > 0.0f ? ray : 0.0f));
+    if (has_p == 0.0f) {
+      ray = dist;
+    }
+    // clean: fully covered by one surface (not mixed per the unfiltered depth, no depth jump to a neighbour)
+    float clean = (cov >= 0.98f && ray > 0.0f) ? 1.0f : 0.0f;
+    if (clean > 0.0f && has_zr > 0.0f && has_p > 0.0f && fabs(rd - ray) > 0.02f * max(ray, 1e-6f)) {
+      clean = 0.0f;
+    }
+    if (clean > 0.0f && has_p > 0.0f) {
+      for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+          int nx = xy.x + dx;
+          int ny = xy.y + dy;
+          if ((dx == 0 && dy == 0) || nx < pos.bounds.x1 || ny < pos.bounds.y1 || nx >= pos.bounds.x2 || ny >= pos.bounds.y2) {
+            continue;
+          }
+          float rn = cov_ray(nx, ny, has_a, premult).y;
+          if (fabs(rn - ray) > 0.04f * max(min(rn, ray), 1e-6f)) {
+            clean = 0.0f;
+          }
+        }
+      }
+    }
+    dst() = float4(dist, cov, ray, clean);
+  }
+};

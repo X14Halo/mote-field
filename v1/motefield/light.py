@@ -219,7 +219,7 @@ def _bounce(e, shot, vis, count):
         m = s.clean[::st, ::st]
         P = s.P[::st, ::st][m].astype(np.float64)
         N = N[::st, ::st][m].astype(np.float64)
-        C = np.clip(C[::st, ::st][m].astype(np.float64), 0, 1) if C is not None else np.full_like(P, 0.35)
+        C = np.clip(C[::st, ::st][m].astype(np.float64), 0, 1) if C is not None else np.full_like(P, e.get('albedo', 0.35))
         N = N / np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-6)
         nl = N @ L
         ok = nl > 0

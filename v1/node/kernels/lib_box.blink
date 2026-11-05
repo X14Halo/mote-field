@@ -1,0 +1,10 @@
+  // ---- the dust box: local (metres, box axes, centred) <-> world metres
+  float3 to_world(float3 l) {
+    return float3(rc * l.x + rs * l.z, l.y, -rs * l.x + rc * l.z) + bcenter;
+  }
+  float3 to_local_dir(float3 d) {
+    return float3(rc * d.x - rs * d.z, d.y, rs * d.x + rc * d.z);
+  }
+  float3 wrap_box(float3 l) {
+    return float3(wrap1(l.x, bsize.x), wrap1(l.y, bsize.y), wrap1(l.z, bsize.z));
+  }

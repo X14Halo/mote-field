@@ -1,0 +1,29 @@
+  // ---- the key light
+  float3 kelvin_rgb(float K) {
+    float t = K / 100.0f;
+    float r = 255.0f;
+    float g = 0.0f;
+    float b = 255.0f;
+    if (t <= 66.0f) {
+      g = 99.4708025861f * log(t) - 161.1195681661f;
+    } else {
+      r = 329.698727446f * pow(t - 60.0f, -0.1332047592f);
+      g = 288.1221695283f * pow(t - 60.0f, -0.0755148492f);
+    }
+    if (t < 66.0f) {
+      if (t <= 19.0f) {
+        b = 0.0f;
+      } else {
+        b = 138.5177312231f * log(t - 10.0f) - 305.0447927307f;
+      }
+    }
+    float3 c = float3(pow(clamp(r, 0.0f, 255.0f) / 255.0f, 2.2f), pow(clamp(g, 0.0f, 255.0f) / 255.0f, 2.2f),
+                      pow(clamp(b, 0.0f, 255.0f) / 255.0f, 2.2f));
+    return c / (0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z);
+  }
+  // unit vector toward a directional light (Y up); heading 0 = the light travels toward +X
+  float3 light_dir(float az, float el) {
+    float a = az * 0.0174532925f;
+    float e = el * 0.0174532925f;
+    return float3(-cos(a) * cos(e), sin(e), -sin(a) * cos(e));
+  }

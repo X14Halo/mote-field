@@ -1,0 +1,189 @@
+// MoteField: where every mote is on this frame, worked out straight from the time with no simulation (mirrors
+// motion.DustMotion in the Python reference). Two pixels per mote, 128 apart (mote i: row i / 128, column i % 128):
+//   pixel 0: position (world, scene units) and how much of it shows (box faces, the lens, camera fades; 0 = skip)
+//   pixel 1: velocity (scene units per second of air time) and how much key light reaches it (soft shadows)
+kernel MFPlace : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eRead, eAccessRandom, eEdgeClamped> modes;
+  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> setbox;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    float Wf;
+    float Hf;
+    float3 Ldir;
+    float vis_t0;
+    float vis_grow;
+    float vis_bias;
+    float vis_thick;
+    int count;
+    float3 bsize;
+    float3 bcenter;
+    float rc;
+    float rs;
+    float3 wind;
+    float t;
+    float spf;
+    float size_e;
+    float size_m;
+    float ae;
+    float am;
+    float3 tap_a;
+    float3 tap_b;
+
+  void define() {
+//@define
+  }
+
+//@params frame first fps speed su seed density max_motes box_center box_size box_rot fade fade_neg fade_pos
+//@params flakes fibers fluff size_min size_max size_bias
+//@params drift drift_dir eddies eddy_size micro thermal lift settle
+//@params light_az light_el shadows interior shadow_soft shadow_thick steady cam_fade_near cam_fade_far
+//@params max_bokeh cam_pos cam_right cam_up cam_back cam_th
+//@include lib_hash
+//@include lib_math
+//@include lib_cam
+//@include lib_count
+//@include lib_light
+//@include lib_vis
+//@include lib_box
+
+  void init() {
+//@include init_common
+    vis_setup();
+    size_e = max(eddy_size, 0.05f);
+    size_m = size_e * 0.22f;
+    ae = eddies * 0.01f;
+    am = micro * 0.01f;
+    float3 upv = fabs(Ldir.y) < 0.95f ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+    tap_a = unit3(cross(Ldir, upv));
+    tap_b = cross(Ldir, tap_a);
+  }
+
+  // the key light reaching P (world, scene units), averaged over a small disc across the light (light.soft_visibility)
+  float soft_vis(float3 P, float radius, float3 lo, float3 hi) {
+    float v = vis_at(P, lo, hi);
+    if (radius <= 0.0f) {
+      return v;
+    }
+    for (int k = 0; k < 5; k++) {
+      float a = 6.28318530717959f * float(k) / 5.0f + 0.3f;
+      v += vis_at(P + (tap_a * cos(a) + tap_b * sin(a)) * radius, lo, hi);
+    }
+    return v / 6.0f;
+  }
+
+  void process(int2 xy) {
+    int g = xy.x / @STATE_COLS@;
+    int i = xy.y * @STATE_COLS@ + (xy.x - g * @STATE_COLS@);
+    if (i >= count || g >= 2) {
+      dst() = float4(0.0f);
+      return;
+    }
+//@include body_start
+    float4 b0 = setbox(0, 0);
+    float4 b1 = setbox(1, 0);
+    float3 lo = float3(b0.x, b0.y, b0.z);
+    float3 hi = float3(b1.x, b1.y, b1.z);
+
+    // ---- drift and settling, the eddies and micro-turbulence (exact integrals along the settling path)
+    float3 w0 = to_world(x0);
+    float3 drift_v = float3(wind.x, wind.y - settle_m, wind.z);
+    float3 disp = drift_v * t;
+    float3 vel = drift_v;
+    for (int m = 0; m < @MODES@; m++) {
+      bool is_micro = m >= 40;
+      float amp = is_micro ? am : ae;
+      if (amp <= 0.0f) {
+        continue;
+      }
+      float msize = is_micro ? size_m : size_e;
+      float sweep = is_micro ? am + ae : ae;
+      float4 ma = modes(0, m);
+      float4 mb = modes(1, m);
+      float3 K = float3(ma.x, ma.y, ma.z) / msize;
+      float3 A = float3(mb.x, mb.y, mb.z);
+      float phase0 = dot(w0, K) + ma.w;
+      float omega = mb.w / msize * 0.5f * sweep;
+      float beta = omega - settle_m * K.y;
+      float gain = amp * 0.6f;
+      if (is_micro && kind >= 2) {
+        gain = gain * 1.6f;
+      }
+      float hx = beta * t * 0.5f;
+      float sincv = fabs(hx) < 1e-4f ? 1.0f - hx * hx / 6.0f : sin(hx) / hx;
+      disp += A * (t * sin(phase0 + hx) * sincv * gain);
+      vel += A * (sin(phase0 + beta * t) * gain);
+    }
+    // ---- rising warm air: the light along its drift path, integrated from t = 0 every 0.25 s
+    if (thermal != 0.0f) {
+      float dt = 0.25f;
+      float tt = clamp(t, -64.0f, 64.0f);
+      int kmax = int(floor(fabs(tt) / dt));
+      float sgn = tt < 0.0f ? -1.0f : 1.0f;
+      float cum = 0.0f;
+      float vprev = vis_at(to_world(wrap_box(x0)) / su, lo, hi);
+      float vnext = vprev;
+      for (int k = 0; k <= kmax; k++) {
+        float tk = sgn * float(k + 1) * dt;
+        vnext = vis_at(to_world(wrap_box(x0 + to_local_dir(drift_v * tk))) / su, lo, hi);
+        if (k < kmax) {
+          cum += (vprev + vnext) * 0.5f * dt;
+          vprev = vnext;
+        }
+      }
+      float f = (fabs(tt) - float(kmax) * dt) / dt;
+      float rise = sgn * (cum + (vprev + vnext) * 0.5f * dt * f);
+      float now = vprev + (vnext - vprev) * f;
+      disp.y += rise * thermal * 0.01f;
+      vel.y += now * thermal * 0.01f;
+    }
+    float3 loc = wrap_box(x0 + to_local_dir(disp));
+    float3 P = to_world(loc) / su;
+
+    // ---- how much of it shows: the box faces (Edge softness), right at the lens, the camera fades
+    float3 halfb = bsize * 0.5f;
+    float w = 1.0f;
+    float base = max(fade, 0.0f) * su;
+    for (int ax = 0; ax < 3; ax++) {
+      float lx = ax == 0 ? loc.x : (ax == 1 ? loc.y : loc.z);
+      float hbx = ax == 0 ? halfb.x : (ax == 1 ? halfb.y : halfb.z);
+      float mneg = ax == 0 ? fade_neg.x : (ax == 1 ? fade_neg.y : fade_neg.z);
+      float mpos = ax == 0 ? fade_pos.x : (ax == 1 ? fade_pos.y : fade_pos.z);
+      float fn = base * max(mneg, 0.0f);
+      float fp = base * max(mpos, 0.0f);
+      if (fn > 1e-9f) {
+        w *= smooth01((lx + hbx) / fn);
+      }
+      if (fp > 1e-9f) {
+        w *= smooth01((hbx - lx) / fp);
+      }
+    }
+    float3 dcam = P - cam_pos;
+    float dist = len3(dcam);
+    float zc = -dot(dcam, cam_back);
+    w *= smooth01((zc * su - 0.06f) / 0.24f);
+    if (cam_fade_far > cam_fade_near) {
+      w *= smooth01((dist - cam_fade_near) / (cam_fade_far - cam_fade_near));
+    } else if (cam_fade_near > 0.0f && dist < cam_fade_near) {
+      w = 0.0f;
+    }
+    float3 pm = project_mid(P);
+    float margin = max_bokeh + 40.0f;
+    if (w <= 1e-4f || zc * su <= 0.05f || pm.x < -margin || pm.x > Wf + margin || pm.y < -margin || pm.y > Hf + margin) {
+      w = 0.0f;
+    }
+    if (g == 0) {
+      dst() = float4(P.x, P.y, P.z, w);
+    } else {
+      float3 V = vel / su;
+      float v = w > 0.0f ? soft_vis(P, (shadow_soft + 12.0f * steady) * 0.01f / su, lo, hi) : 0.0f;
+      dst() = float4(V.x, V.y, V.z, v);
+    }
+  }
+};

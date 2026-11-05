@@ -65,6 +65,13 @@ ul.tight li { margin: 6px 0; }
 .stat { background: var(--raise); border-radius: 6px; padding: 10px 12px; }
 .stat b { display: block; font-family: var(--display); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
 .stat span { font-size: 12.5px; color: var(--dim); }
+/* buttons and comparison */
+a.btn { display: inline-block; margin: 4px 8px 14px 0; padding: 9px 16px; border-radius: 6px; background: var(--accent); color: #1a1408; font-weight: 600; text-decoration: none; }
+a.btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+figure.cmp { margin: 18px 0 0; }
+figure.cmp img { width: 100%; height: auto; border-radius: 6px; display: block; }
+figure.cmp figcaption { color: var(--dim); font-size: 13.5px; margin-top: 8px; }
+.cost, .legend { display: none !important; }
 /* phases */
 ol.phases { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(9, 1fr); gap: 7px; }
 @media (max-width: 1040px) { ol.phases { grid-template-columns: repeat(3, 1fr); } }
@@ -153,7 +160,7 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
 <header class="top">
   <div class="wrap">
     <div class="mark"><i aria-hidden="true"></i>MoteField v1</div>
-    <span class="chip live" id="phaseChip">Phase 3 of 9 in progress</span>
+    <span class="chip live" id="phaseChip">Phase 3 of 9: the drop-in node</span>
     <span class="sp"></span>
     <a href="../nuke/">MoteField 0.8.3</a>
     <a href="https://github.com/X14Halo/mote-field/tree/main/v1">Code</a>
@@ -170,20 +177,21 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
         <div class="card">
           <h3>This update · <!--UPDATED--></h3>
           <ul class="tight">
-            <li><b>The Nuke node.</b> A MoteField node whose output is the dust as an image: view it, then plus or over it onto the comp. Its knobs come from the settings table: a first tab with the shot, the four dials and the output, then Place, Look, Match and Deliver.</li>
-            <li><b>Frames appear as you work.</b> A background renderer starts at the frame on screen and works outward, refreshing the viewer as frames arrive. Any render of the comp, in the GUI or on the farm, makes the frames it needs first. No buttons, nothing stale.</li>
-            <li><b>Look files in the node.</b> Knobs show the sequence's look until you change them in the node; your changes survive reloading the look. <i>Save look...</i> shares a node's look.</li>
-            <li><b>Not yet run in Nuke itself.</b> Tested against a stand-in for Nuke's Python, including the background renderer and a render filling the cache. The steps to try it are below.</li>
+            <li><b>One node, nothing to install.</b> MoteField is now a single node you paste or drag into a Nuke 15 script. No <code>NUKE_PATH</code>, nothing in <code>.nuke</code>, and it writes no files. It works in plain Nuke, not just NukeX.</li>
+            <li><b>The rendering lives inside it.</b> BlinkScript kernels do everything on each frame: the motes' motion, the light and shadows, bounce light, holdouts, defocus and motion blur. They run on the GPU when there is one. Plain Nuke runs a kernel saved in a script, and your check node came up green.</li>
+            <li><b>It reads the pass by itself.</b> On connecting, it finds the layers and reads the camera, lens and shutter from the EXR header on every frame. It works out whether positions and depth are premultiplied, then fits the dust box. <i>Check shot</i> reports what it found.</li>
+            <li><b>The same dust as before.</b> The kernels are tested against the Python renderer from the last update: the same random numbers bit for bit, the same motes to half a millimetre, and the same picture.</li>
+            <li><b>Gone:</b> the install, the frame cache, the render callback and the browser viewer. The node renders like any other node, and Nuke's viewer is the live view.</li>
           </ul>
         </div>
         <div class="card">
           <h3>Checked</h3>
           <div class="stats">
             <div class="stat"><b id="nTests">77</b><span>tests passing</span></div>
-            <div class="stat"><b>~1 s</b><span>a full HD frame on one CPU core</span></div>
-            <div class="stat"><b>0</b><span>pixels differing between Nuke 15's numpy and numpy 2</span></div>
+            <div class="stat"><b><!--LIGHT_RATIO--></b><span>light vs the Python renderer, same frame</span></div>
+            <div class="stat"><b>&lt; 0.5 mm</b><span>between each mote and where the reference puts it</span></div>
           </div>
-          <p style="margin:12px 0 0;color:var(--dim);font-size:13.5px">Also run on a production utility pass, which stays private: every layer found, the camera reprojects to 0.11 px, and a frame renders in 0.4 s once the pass is read.</p>
+          <p style="margin:12px 0 0;color:var(--dim);font-size:13.5px">Also run on a production utility pass, which stays private. The kernels read it exactly as the reference does: positions and depth premultiplied, unfiltered depth along the ray, and the same holdout distance and clean-pixel mask on every pixel. The node read the same camera from the header.</p>
         </div>
       </div>
     </div>
@@ -193,15 +201,15 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
     <div class="wrap">
       <h2>Where the rebuild is</h2>
       <ol class="phases">
-        <li class="done"><span class="n">1</span><b>Foundations</b><p>Settings table and files, cache keys, hash randomness.</p></li>
-        <li class="done"><span class="n">2</span><b>Python core</b><p>EXR reading, shot check, motion, light, renderer, frame cache.</p></li>
-        <li class="now"><span class="n">3</span><b>Nuke node</b><p>Built and tested here. Next: trying it in Nuke 15.</p></li>
-        <li><span class="n">4</span><b>GPU viewer</b><p>Real-time placing and tuning, matched to the render.</p></li>
-        <li><span class="n">5</span><b>Ease of use</b><p>First run, clicking on the plate, diagnostic views, presets, undo.</p></li>
+        <li class="done"><span class="n">1</span><b>Foundations</b><p>Settings table, hash randomness, reading 0.8 settings.</p></li>
+        <li class="done"><span class="n">2</span><b>Reference renderer</b><p>EXR reading, shot check, motion, light, the renderer, in Python.</p></li>
+        <li class="now"><span class="n">3</span><b>Drop-in node</b><p>Kernels and node built and tested here. Next: your shots in Nuke 15.</p></li>
+        <li><span class="n">4</span><b>Real shots</b><p>What real Nuke and real passes disagree with; speed on CPU and GPU.</p></li>
+        <li><span class="n">5</span><b>Ease of use</b><p>Aiming the light on the plate, diagnostic views, presets.</p></li>
         <li><span class="n">6</span><b>Matched edges, haze</b><p>Holdouts blurred like the plate's edges; optional light shafts.</p></li>
         <li><span class="n">7</span><b>Embers, shapes</b><p>Fire embers, and shapes that hide dust.</p></li>
         <li><span class="n">8</span><b>Moving things</b><p>Characters and keyed shapes pushing the dust.</p></li>
-        <li><span class="n">9</span><b>Release</b><p>The browser demo, artist quick start, TD guide.</p></li>
+        <li><span class="n">9</span><b>Release</b><p>Artist quick start, TD guide.</p></li>
       </ol>
     </div>
   </section>
@@ -210,13 +218,14 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
     <div class="wrap">
       <div class="read">
         <h2>In Nuke 15</h2>
-        <p class="lede">It needs only the Python and numpy Nuke ships with.</p>
+        <p class="lede">One node. Nothing to install, and nothing written to disk.</p>
       </div>
+      <p><a class="btn" href="https://x14halo.github.io/mote-field/v1/dist/MoteField.nk" download>Download MoteField.nk</a> <a class="btn ghost" href="https://x14halo.github.io/mote-field/v1/dist/MoteField_check.nk" download>The BlinkScript check</a></p>
       <ol class="steps">
-        <li><b>Install.</b> Add the repository's <code>v1</code> folder to <code>NUKE_PATH</code>. It adds <i>Other &gt; MoteField</i> to the Nodes menu and the render callback, in the GUI and on the farm.</li>
-        <li><b>Try the stand-in.</b> Create the node, set <i>Stand-in shot</i> to <i>wide</i> and view it. The frame you're on appears in a second or two, then the frames around it.</li>
-        <li><b>Your shot.</b> Connect the utility pass Read to the node's <i>utility</i> input and put the mattes pass in <i>Extra passes</i>. Then <i>Shot check</i>, <i>Fit box to shot</i>, set the light's heading, and tune with the dials.</li>
-        <li><b>Comp it.</b> Plus the node onto the comp, or set <i>Alpha</i> to <i>matte</i> and merge over. Writes render any missing frames first.</li>
+        <li><b>Paste it in.</b> Drag <code>MoteField.nk</code> into the Node Graph, or open it in a text editor, copy everything and paste. With the utility pass Read selected, it connects itself.</li>
+        <li><b>Connect the utility pass</b> to the <i>utility</i> input. The node finds the layers, reads the camera from the header on every frame, takes the frame range and fits the dust box. Optional: the plate, to judge the look, and a pass with surface colour, for bounce light.</li>
+        <li><b>Check shot, aim, tune.</b> <i>Check shot</i> says what it found. Set the light's heading and elevation, then tune with <i>Amount</i>, <i>Brightness</i>, <i>Air</i> and <i>Steady</i>.</li>
+        <li><b>Comp it.</b> Plus the node onto the comp, or set <i>Alpha</i> to <i>matte</i> and merge over. It renders like any node: Writes and the farm need nothing special.</li>
       </ol>
       <p style="color:var(--dim);font-size:14px;margin:14px 0 0">The full guide, and what to report back, is <a href="https://github.com/X14Halo/mote-field/blob/main/v1/docs/NUKE.md">docs/NUKE.md</a>.</p>
     </div>
@@ -225,13 +234,14 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
   <section>
     <div class="wrap">
       <div class="read">
-        <h2>First frames</h2>
-        <p class="lede">The built-in stand-in room, frame 1024, at full HD. The plate under the dust is a plain clay render of the set; the dust is MoteField's, added with plus.</p>
+        <h2>First frames from the node's kernels</h2>
+        <p class="lede">The built-in stand-in room, frame 1024, at full HD. The plate is a plain clay render of the set, and the dust is added with plus. The dust was rendered by the node's kernels: the same code Nuke runs, compiled here by the test harness. Below, the same frame from the Python reference and from the kernels.</p>
       </div>
       <div class="shots">
         <figure><img src="<!--IMG_WIDE-->" alt="A dim room with a sunbeam through the window, dust motes glittering in the beam" width="1280" height="536"><figcaption><b>Wide.</b> A slow camera move across the room. Motes glitter in the sunbeam and fade to faint bounce light outside it; the table and bookcase hold them out. <span class="mono"><!--T_WIDE--></span></figcaption></figure>
         <figure><img src="<!--IMG_CLOSE-->" alt="Close to the lens in the sunbeam: large soft seven-sided bokeh from motes near the camera" width="1280" height="536"><figcaption><b>Close-up.</b> Standing in the beam at f/2.8: motes near the lens open into large seven-bladed bokeh, with cat-eye toward the edges, from the lens details in the header. <span class="mono"><!--T_CLOSE--></span></figcaption></figure>
       </div>
+      <figure class="cmp"><img src="<!--IMG_CMP-->" alt="The same close-up frame: the Python reference on the left, the node's kernels on the right" width="1280" height="268"><figcaption><b>Reference (left), kernels (right).</b> The same motes in the same places, through the same lens.</figcaption></figure>
     </div>
   </section>
 
@@ -239,7 +249,7 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
     <div class="wrap">
       <div class="read">
         <h2>The new settings panel</h2>
-        <p class="lede">Built from the settings table, as the Nuke node and the viewer will be. Four dials stay on screen, the tabs follow the order you work in, and each tab shows its basic settings until you ask for all of them. The tag on each setting says what changing it costs. Change something to see; double-click a setting's name to reset it.</p>
+        <p class="lede">Built from the settings table that the node's knobs also come from. Four dials stay on screen, and each tab shows its basic settings until you ask for all of them. Change something to see it; double-click a setting's name to reset it.</p>
       </div>
       <div class="app" id="app">
         <div class="dials" id="dials"></div>
@@ -261,7 +271,7 @@ footer .wrap { display: flex; gap: 18px; flex-wrap: wrap; }
     <div class="wrap">
       <div class="read">
         <h2>The shot check</h2>
-        <p class="lede">What MoteField reports when it opens a shot, here on the built-in stand-in pass. On your shots: <code>python -m motefield check /path/util.####.exr --extra /path/mattes.####.exr</code></p>
+        <p class="lede">What the reference reports about a pass, here on the built-in stand-in pass. In Nuke, the node's <i>Check shot</i> button gives the same report.</p>
       </div>
       <div class="report" id="report"></div>
     </div>

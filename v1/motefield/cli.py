@@ -1,6 +1,6 @@
 """python -m motefield <command> ...
 
-    schema    write the generated settings files: viewer/js/schema.json and docs/SETTINGS.md
+    schema    write the generated settings files: docs/schema.json and docs/SETTINGS.md
     show      print a shot's resolved settings and where each comes from
     keys      print a shot's cache keys (prep, sim, cache)
     diff      compare two settings files, resolved
@@ -10,7 +10,6 @@
 
     check     the shot check: what's in a utility pass and what MoteField will do with it
 
-    render    render frames into the node's cache (or another folder), e.g. to fill it ahead on a farm
 """
 
 import argparse
@@ -39,7 +38,7 @@ def _fmt(v):
 def cmd_schema(a):
     targets = []
     if a.json or not a.md:
-        targets.append((a.json_out or os.path.join(ROOT, 'viewer', 'js', 'schema.json'), schema.to_json() + '\n'))
+        targets.append((a.json_out or os.path.join(ROOT, 'docs', 'schema.json'), schema.to_json() + '\n'))
     if a.md or not a.json:
         targets.append((a.md_out or os.path.join(ROOT, 'docs', 'SETTINGS.md'), schema.to_markdown()))
     for path, text in targets:
@@ -146,23 +145,6 @@ def frames_arg(text, first, last):
     return out
 
 
-def cmd_render(a):
-    import time
-    from . import cache, render
-    s = settings.load(a.settings)
-    frames = frames_arg(a.frames, s['first'], s['last'])
-    r = render.Renderer(s)
-    fc = cache.FrameCache(s, r.shot, root=a.cache)
-    print('rendering %d frames into %s' % (len(frames), fc.pattern()))
-    t0 = time.time()
-    for f in frames:
-        t = time.time()
-        made = not fc.has(f) or a.force
-        fc.render(f, r, force=a.force)
-        print('  %d  %s' % (f, '%.2f s' % (time.time() - t) if made else 'already there'))
-    print('done in %.1f s' % (time.time() - t0))
-
-
 def cmd_doctor(a):
     ok = True
     print('MoteField %s (model %d)' % (__version__, MODEL_VERSION))
@@ -176,25 +158,21 @@ def cmd_doctor(a):
     except ImportError:
         ok = False
         print('numpy      missing (required)')
-    for mod, why in (('OpenImageIO', 'tiled, PIZ and DWA utility passes'), ('OpenEXR', 'tiled, PIZ and DWA utility passes'),
-                     ('nuke', 'the Nuke node'), ('PySide2', 'the live viewer panel in Nuke 15')):
+    for mod, why in (('OpenImageIO', 'tiled, PIZ and DWA utility passes'),
+                     ('OpenEXR', 'tiled, PIZ and DWA utility passes')):
         try:
             __import__(mod)
             print('%-10s found' % mod)
         except Exception:
             print('%-10s not found (optional: %s)' % (mod, why))
-    try:
-        from PySide2 import QtWebEngineWidgets  # noqa: F401
-        print('QtWebEngine found: the live viewer can open in a Nuke panel')
-    except Exception:
-        print('QtWebEngine not found: the live viewer opens in your web browser instead')
+    print('(the Nuke node itself needs nothing installed: paste dist/MoteField.nk)')
     return 0 if ok else 1
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='motefield', description='MoteField %s' % __version__)
     sub = ap.add_subparsers(dest='cmd')
-    p = sub.add_parser('schema', help='write viewer/js/schema.json and docs/SETTINGS.md')
+    p = sub.add_parser('schema', help='write docs/schema.json and docs/SETTINGS.md')
     p.add_argument('--json', action='store_true')
     p.add_argument('--md', action='store_true')
     p.add_argument('--json-out')
@@ -221,11 +199,6 @@ def main(argv=None):
     p.add_argument('--units', choices=list(schema.UNITS))
     p.add_argument('--frame', type=int)
     p.add_argument('--json', action='store_true')
-    p = sub.add_parser('render', help="render frames into the node's cache")
-    p.add_argument('settings')
-    p.add_argument('--frames', help='e.g. 1001-1048 or 1001,1010-1012 (default: the shot\'s frames)')
-    p.add_argument('--cache', help='folder to render into (default: the settings\' cache folder)')
-    p.add_argument('--force', action='store_true', help='render frames that are already there again')
     sub.add_parser('doctor', help='check this Python')
     a = ap.parse_args(argv)
     if not a.cmd:

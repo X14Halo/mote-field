@@ -1,0 +1,174 @@
+// MoteField: the picture. Each pixel gathers the motes binned to its tile and adds up their light: small blur as a
+// Gaussian integrated over the pixel (so a mote's light never flickers with where it falls on the pixel grid), larger
+// blur as the lens aperture (blades, anamorphic squeeze, cat-eye, centre/rim brightness) normalised to keep the
+// mote's light, all along its motion-blur streak with the shutter's weighting (mirrors splat.draw in the Python
+// reference). Out: rgb, and alpha as set by the node (none, or a matte from the dust's brightness).
+kernel MFDraw : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> motes;
+  Image<eRead, eAccessRandom, eEdgeClamped> bins;
+  Image<eRead, eAccessRandom, eEdgeClamped> rows;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    int tw;
+    int th;
+    float lens_blades;
+    float lens_sa;
+    float lens_rot;
+    float sg;
+    float cos_half;
+    float swn[25];
+
+  void define() {
+//@define
+  }
+
+//@params blades hdr_blades anamorphic hdr_anamorphic bokeh_rot bokeh_falloff shutter_shape alpha_mode matte_gain held
+//@include lib_math
+
+  float shutter_w(float u) {
+    return shutter_shape == 0 ? 1.0f / (1.0f + exp(-9.0f * (u - 0.55f))) : 1.0f;
+  }
+
+  void init() {
+    int W = surf.bounds.width();
+    int H = surf.bounds.height();
+    tw = (W + @TILES_X@ - 1) / @TILES_X@;
+    th = (H + @TILES_Y@ - 1) / @TILES_Y@;
+    lens_blades = float(blades > 0 ? blades : hdr_blades);
+    lens_sa = sqrt(max((hdr_anamorphic > 0.0f ? hdr_anamorphic : 1.0f) + anamorphic, 0.05f));
+    lens_rot = 0.25f + bokeh_rot * 0.0174532925f;
+    sg = lens_blades >= 3.0f ? 6.28318530717959f / lens_blades : 1.0f;
+    cos_half = cos(sg * 0.5f);
+    swn[0] = 1.0f;
+    for (int n = 1; n < 25; n++) {
+      float s = 0.0f;
+      for (int k = 0; k < n; k++) {
+        s += shutter_w((float(k) + 0.5f) / float(n));
+      }
+      swn[n] = s;
+    }
+  }
+
+  // the blur of one sample at offset (dx, dy) from it, radius R px (sums to 1 over the picture)
+  float spot(float dx, float dy, float R, float inv, float cx, float cy) {
+    if (R < 2.5f) {
+      float sp = sqrt(0.25f * R * R + 0.12f + 1.0f / 6.0f - 1.0f / 12.0f);
+      float lim = 4.0f * sp + 1.0f;
+      if (fabs(dx) > lim || fabs(dy) > lim) {
+        return 0.0f;
+      }
+      float k = 0.707106781f / sp;
+      float gx = 0.5f * (erf_a((dx + 0.5f) * k) - erf_a((dx - 0.5f) * k));
+      float gy = 0.5f * (erf_a((dy + 0.5f) * k) - erf_a((dy - 0.5f) * k));
+      return gx * gy;
+    }
+    float aa = clamp(1.5f / R, 0.04f, 0.5f);
+    float xa = dx * lens_sa;
+    float ya = dy / lens_sa;
+    float rr = sqrt(xa * xa + ya * ya) / R;
+    if (rr > 1.0f + aa) {
+      return 0.0f;
+    }
+    float m = rr;
+    if (lens_blades >= 3.0f) {
+      float a = atan2(-ya, xa) + lens_rot;
+      float ang = a - sg * floor(a / sg) - sg * 0.5f;
+      m = 0.65f * (rr * cos(ang) / cos_half) + 0.35f * rr;
+    }
+    float q = m;
+    if (cx != 0.0f || cy != 0.0f) {
+      float ax = dx / R - cx;
+      float ay = dy / R - cy;
+      float bx = dx / R + cx;
+      float by = dy / R + cy;
+      q = max(q, sqrt(max(ax * ax + ay * ay, bx * bx + by * by)));
+    }
+    float win = 1.0f - smooth01((q - (1.0f - aa)) / (2.0f * aa));
+    return max(win * (1.0f + bokeh_falloff * (0.5f - m * m)), 0.0f) * inv;
+  }
+
+  // one mote's light at pixel centre (px, py)
+  float3 mote_light(int i, float px, float py) {
+    int row = i / @STATE_COLS@;
+    int col = i - row * @STATE_COLS@;
+    float4 bb = motes(col, row);
+    if (px < bb.x || px > bb.z || py < bb.y || py > bb.w) {
+      return float3(0.0f);
+    }
+    float4 en = motes(col + 4 * @STATE_COLS@, row);
+    float hold = held == 1 ? en.w : 1.0f;
+    if (hold <= 0.0f) {
+      return float3(0.0f);
+    }
+    float4 sk = motes(col + @STATE_COLS@, row);
+    float4 rk = motes(col + 2 * @STATE_COLS@, row);
+    float4 fc = motes(col + 3 * @STATE_COLS@, row);
+    float R = rk.x;
+    int SK = int(rk.y + 0.5f);
+    int K = SK / 32;
+    int S = SK - K * 32;
+    S = clampi(S, 1, 24);
+    K = clampi(K, 1, 24);
+    float bend = rk.z;
+    float total = 0.0f;
+    for (int s = 0; s < S; s++) {
+      float ts = (float(s) + 0.5f) / float(S);
+      float sw = shutter_w(ts);
+      float bx = sk.x + (sk.z - sk.x) * ts;
+      float by = sk.y + (sk.w - sk.y) * ts;
+      for (int k = 0; k < K; k++) {
+        float kf = K > 1 ? float(k) / float(K - 1) - 0.5f : 0.0f;
+        float qb = 0.25f - kf * kf;
+        float X = bx + fc.x * kf - fc.y * bend * qb;
+        float Y = by + fc.y * kf + fc.x * bend * qb;
+        total += sw * spot(px - X, py - Y, R, rk.w, fc.z, fc.w);
+      }
+    }
+    float f = total * hold / (swn[S] * float(K));
+    return float3(en.x * f, en.y * f, en.z * f);
+  }
+
+  void process(int2 xy) {
+    int x = xy.x - surf.bounds.x1;
+    int y = xy.y - surf.bounds.y1;
+    float px = float(x) + 0.5f;
+    float py = float(y) + 0.5f;
+    int T = clampi(x / tw, 0, @TILES_X@ - 1) + clampi(y / th, 0, @TILES_Y@ - 1) * @TILES_X@;
+    float3 acc = float3(0.0f);
+    for (int r2 = 0; r2 < @ROWS2@; r2++) {
+      for (int c2 = 0; c2 < 4; c2++) {
+        int m2 = int(rows(T, r2, c2));
+        int b2 = 0;
+        while (m2 != 0) {
+          if ((m2 & 1) != 0) {
+            int r1 = r2 * 96 + c2 * 24 + b2;
+            for (int c1 = 0; c1 < 4; c1++) {
+              int m1 = int(bins(T, r1, c1));
+              int b1 = 0;
+              while (m1 != 0) {
+                if ((m1 & 1) != 0) {
+                  acc += mote_light(r1 * 96 + c1 * 24 + b1, px, py);
+                }
+                m1 = m1 >> 1;
+                b1++;
+              }
+            }
+          }
+          m2 = m2 >> 1;
+          b2++;
+        }
+      }
+    }
+    float alpha = 0.0f;
+    if (alpha_mode == 1) {
+      alpha = clamp((0.2126f * acc.x + 0.7152f * acc.y + 0.0722f * acc.z) * matte_gain, 0.0f, 1.0f);
+    }
+    dst() = float4(acc.x, acc.y, acc.z, alpha);
+  }
+};

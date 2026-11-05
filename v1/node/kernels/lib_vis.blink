@@ -1,0 +1,54 @@
+  // ---- is a point lit by the key light? (mirrors light.visibility in the Python reference)
+  // Occluders: march toward the light through what the camera sees (the surface image); a step that lands behind a
+  // seen surface, by less than the shadow thickness, is in its shadow. Off-screen geometry casts no shadow.
+  // 'Light only through openings': the pass only shows what the camera saw, so light gets in only where the ray,
+  // followed out of the set (lo..hi), leaves through what the camera saw as empty sky.
+  // Needs locals Wf, Hf, Ldir, vis_t0, vis_grow, vis_bias, vis_thick.
+  float vis_at(float3 Q, float3 lo, float3 hi) {
+    if (shadows == 1) {
+      return 1.0f;
+    }
+    float lx = fabs(Ldir.x) < 1e-9f ? 1e-9f : Ldir.x;
+    float ly = fabs(Ldir.y) < 1e-9f ? 1e-9f : Ldir.y;
+    float lz = fabs(Ldir.z) < 1e-9f ? 1e-9f : Ldir.z;
+    float tx = lx > 0.0f ? (hi.x - Q.x) / lx : (lo.x - Q.x) / lx;
+    float ty = ly > 0.0f ? (hi.y - Q.y) / ly : (lo.y - Q.y) / ly;
+    float tz = lz > 0.0f ? (hi.z - Q.z) / lz : (lo.z - Q.z) / lz;
+    float t_exit = max(min(min(tx, ty), tz), 0.0f);
+    float t = vis_t0;
+    for (int j = 0; j < 48; j++) {
+      if (t > t_exit + vis_t0) {
+        break;
+      }
+      float3 X = Q + Ldir * t;
+      float3 p = project_mid(X);
+      if (p.z <= 0.0f || p.x < 0.0f || p.y < 0.0f || p.x >= Wf || p.y >= Hf) {
+        break;
+      }
+      float4 s = surf(surf.bounds.x1 + int(p.x), surf.bounds.y1 + int(p.y));
+      if (s.y >= 0.02f && s.z > 0.0f) {
+        float xd = len3(X - cam_pos);
+        if (xd > s.z * 1.01f + vis_bias && xd < s.z + max(vis_thick, 0.25f * t)) {
+          return 0.0f;
+        }
+      }
+      t = t * vis_grow;
+    }
+    if (interior != 1) {
+      return 1.0f;
+    }
+    float3 E = Q + Ldir * (t_exit + len3(hi - lo) * 0.01f);
+    float3 pe = project_mid(E);
+    if (pe.z <= 0.0f || pe.x < 0.0f || pe.y < 0.0f || pe.x >= Wf || pe.y >= Hf) {
+      return 0.0f;
+    }
+    float4 se = surf(surf.bounds.x1 + int(pe.x), surf.bounds.y1 + int(pe.y));
+    return se.y <= 0.02f ? 1.0f : 0.0f;
+  }
+  void vis_setup() {
+    Ldir = light_dir(light_az, light_el);
+    vis_t0 = 0.01f / su;
+    vis_grow = pow(6000.0f, 1.0f / 48.0f);
+    vis_bias = 0.02f / su;
+    vis_thick = shadow_thick * 0.01f / su;
+  }

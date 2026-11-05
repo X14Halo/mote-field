@@ -1,0 +1,9 @@
+  // ---- how many motes: density (Amount already applied) x box volume, capped
+  int mote_count() {
+    float sx = max(box_size.x * su, 0.02f);
+    float sy = max(box_size.y * su, 0.02f);
+    float sz = max(box_size.z * su, 0.02f);
+    float n = floor(density * ((sx * sy) * sz) + 0.5f);
+    float cap = float(max_motes < @MAX_MOTES@ ? max_motes : @MAX_MOTES@);
+    return int(clamp(n, 0.0f, cap));
+  }

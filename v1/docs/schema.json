@@ -322,7 +322,7 @@
     -130.0
    ],
    "label": "Box centre",
-   "help": "Centre of the box the dust lives in. Easiest to set with Fit box or the handles in the viewer.",
+   "help": "Centre of the box the dust lives in. Easiest to set with Fit box.",
    "ws": "place",
    "section": "Dust volume",
    "level": "advanced",
@@ -751,6 +751,54 @@
     10000.0
    ],
    "affects": "look",
+   "layer": "shot",
+   "anim": false,
+   "options": null,
+   "aliases": {}
+  },
+  {
+   "key": "shadow_thick",
+   "type": "float",
+   "default": 60.0,
+   "label": "Shadow thickness",
+   "help": "How far behind a surface the camera sees it still casts shadow. The pass only shows surfaces from the front, so the node takes them to be about this thick: raise it for heavy walls, lower it if dust behind thin things goes dark.",
+   "ws": "place",
+   "section": "Key light",
+   "level": "advanced",
+   "unit": "cm",
+   "soft": [
+    5,
+    300
+   ],
+   "hard": [
+    0.1,
+    100000.0
+   ],
+   "affects": "prep",
+   "layer": "shot",
+   "anim": false,
+   "options": null,
+   "aliases": {}
+  },
+  {
+   "key": "albedo",
+   "type": "float",
+   "default": 0.35,
+   "label": "Set colour",
+   "help": "How much light the set bounces back onto the dust when the pass has no surface colour layer (0 = black, 1 = white).",
+   "ws": "place",
+   "section": "Key light",
+   "level": "advanced",
+   "unit": "",
+   "soft": [
+    0,
+    1
+   ],
+   "hard": [
+    0,
+    1
+   ],
+   "affects": "prep",
    "layer": "shot",
    "anim": false,
    "options": null,

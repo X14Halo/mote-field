@@ -1,0 +1,55 @@
+// MoteField: a check that BlinkScript runs here and does integer maths exactly (green square = good, red = not)
+kernel MFCheck : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+
+  param:
+    int motes;
+
+  local:
+    float width;
+    float height;
+    int ok;
+
+  void define() {
+    defineParam(motes, "motes", 400);
+  }
+
+//@include lib_hash
+
+  void init() {
+    width = float(src.bounds.width());
+    height = float(src.bounds.height());
+    int2 acc = int2(0, 0);
+    for (int i = 0; i < 64; i++) {
+      acc = u_xor(acc, hash_more(hash_more(hash1(word(1)), int2(17493, 21332)), word(i)));
+    }
+    ok = (acc.x == 49807 && acc.y == 41382) ? 1 : 0;
+  }
+
+  void process(int2 pos) {
+    float x = float(pos.x) + 0.5f;
+    float y = float(pos.y) + 0.5f;
+    float acc = 0.0f;
+    for (int i = 0; i < motes; i++) {
+      int2 h = hash_more(hash_more(hash1(word(7)), int2(17493, 21332)), word(i));
+      float dx = x - u01(h) * width;
+      float dy = y - u01(pcg(h)) * height;
+      float r2 = dx * dx + dy * dy;
+      if (r2 < 64.0f) {
+        acc += exp(-r2 / 8.0f);
+      }
+    }
+    float4 under = src();
+    float4 c = float4(under.x + acc, under.y + acc, under.z + acc, 1.0f);
+    if (x < 120.0f && y < 120.0f) {
+      if (ok == 1) {
+        c = float4(0.1f, 0.9f, 0.2f, 1.0f);
+      } else {
+        c = float4(0.9f, 0.1f, 0.1f, 1.0f);
+      }
+    }
+    dst() = c;
+  }
+};

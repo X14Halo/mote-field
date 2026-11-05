@@ -1,0 +1,74 @@
+// MoteField: which motes touch which part of the picture. The picture is cut into 64 x 36 tiles (column = tile);
+// each row holds 96 motes as bits (24 per channel, exact in a float): bit b of channel c in row r = mote r*96 + c*24 + b.
+kernel MFBins : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eRead, eAccessRandom, eEdgeClamped> motes;
+  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    int count;
+    int tw;
+    int th;
+
+  void define() {
+//@define
+  }
+
+//@params density max_motes box_size su
+//@include lib_count
+
+  void init() {
+    count = mote_count();
+    int W = surf.bounds.width();
+    int H = surf.bounds.height();
+    tw = (W + @TILES_X@ - 1) / @TILES_X@;
+    th = (H + @TILES_Y@ - 1) / @TILES_Y@;
+  }
+
+  void process(int2 xy) {
+    int T = xy.x;
+    int r = xy.y;
+    if (T >= @NTILES@ || r * 96 >= count) {
+      dst() = float4(0.0f);
+      return;
+    }
+    int tx = T - (T / @TILES_X@) * @TILES_X@;
+    int ty = T / @TILES_X@;
+    float x0 = float(tx * tw);
+    float y0 = float(ty * th);
+    float x1 = x0 + float(tw);
+    float y1 = y0 + float(th);
+    float m0 = 0.0f;
+    float m1 = 0.0f;
+    float m2 = 0.0f;
+    float m3 = 0.0f;
+    for (int c = 0; c < 4; c++) {
+      int bits = 0;
+      for (int b = 0; b < 24; b++) {
+        int i = r * 96 + c * 24 + b;
+        if (i >= count) {
+          break;
+        }
+        float4 bb = motes(i - (i / @STATE_COLS@) * @STATE_COLS@, i / @STATE_COLS@);
+        if (bb.x < x1 && bb.z > x0 && bb.y < y1 && bb.w > y0) {
+          bits = bits | (1 << b);
+        }
+      }
+      if (c == 0) {
+        m0 = float(bits);
+      } else if (c == 1) {
+        m1 = float(bits);
+      } else if (c == 2) {
+        m2 = float(bits);
+      } else {
+        m3 = float(bits);
+      }
+    }
+    dst() = float4(m0, m1, m2, m3);
+  }
+};

@@ -1,0 +1,343 @@
+// MoteField: what every mote looks like through the lens on this frame (mirrors render._appearance, _draw and
+// _holdout in the Python reference). Five pixels per mote, 128 apart (mote i: row i / 128, column i % 128):
+//   pixel 0: the screen box it touches (x0, y0, x1, y1); empty if it is hidden or off screen
+//   pixel 1: its streak as the shutter opens (x, y) and closes (x, y)
+//   pixel 2: blur radius (px), samples along the streak + 32 x samples along a fibre, fibre bend, 1 / bokeh area
+//   pixel 3: fibre length on screen (dx, dy), cat-eye offset (x, y) as a fraction of the radius
+//   pixel 4: its light (rgb, before holdouts) and how much of it the set does not hide (0..1)
+kernel MFMotes : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eRead, eAccessRandom, eEdgeClamped> place;
+  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> cells;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    float Wf;
+    float Hf;
+    float3 Ldir;
+    int count;
+    float3 bsize;
+    float3 bcenter;
+    float rc;
+    float rs;
+    float3 wind;
+    float t;
+    float spf;
+    float t_open;
+    float t_close;
+    float3 sun;
+    float lens_focal;
+    float lens_fstop;
+    float lens_film;
+    float focus_m;
+    float lens_blades;
+    float lens_cat;
+    float lens_sa;
+    float lens_fc;
+    float lens_rot;
+    float focal_px;
+
+  void define() {
+//@define
+  }
+
+//@params frame first fps speed su seed density max_motes box_center box_size box_rot drift drift_dir lift settle
+//@params flakes fibers fluff size_min size_max size_bias flake_scale fiber_scale fluff_scale
+//@params light_az light_el light_k light_rgb light_int bounce
+//@params brightness forward shadow_fill glint tumble tint steady cam_fade_near cam_fade_far
+//@params holdout fg_near fg_far dof mb focal film fstop focus front_mult back_mult max_bokeh blades cateye
+//@params anamorphic field_curv fstop_full bokeh_rot bokeh_falloff
+//@params hdr_focal hdr_film hdr_fstop hdr_focus hdr_blades hdr_cateye hdr_anamorphic hdr_field_curv hdr_fstop_full
+//@params shutter shutter_mode shutter_shape
+//@params cam_pos cam_right cam_up cam_back cam_th o_pos o_right o_up o_back o_th c_pos c_right c_up c_back c_th
+//@include lib_hash
+//@include lib_math
+//@include lib_box
+//@include lib_cam
+//@include lib_count
+//@include lib_light
+
+  void init() {
+//@include init_common
+    Ldir = light_dir(light_az, light_el);
+    float s = mb == 1 ? shutter / 360.0f : 0.0f;
+    t_open = shutter_mode == 0 ? -s : (shutter_mode == 1 ? -0.5f * s : 0.0f);
+    t_close = shutter_mode == 0 ? 0.0f : (shutter_mode == 1 ? 0.5f * s : s);
+    sun = kelvin_rgb(light_k) * light_rgb * light_int;
+    // the lens: the camera's, with the settings on top (0 = from the camera)
+    lens_focal = focal > 0.0f ? focal : (hdr_focal > 0.0f ? hdr_focal : 35.0f);
+    lens_fstop = fstop > 0.0f ? fstop : (hdr_fstop > 0.0f ? hdr_fstop : 4.0f);
+    lens_film = film > 0.0f ? film : (hdr_film > 0.0f ? hdr_film : 2.0f * lens_focal * cam_th);
+    focus_m = (focus > 0.0f ? focus : (hdr_focus > 0.0f ? hdr_focus : 500.0f)) * su;
+    lens_blades = float(blades > 0 ? blades : hdr_blades);
+    float full = fstop_full > 0.0f ? fstop_full : (hdr_fstop_full > 0.0f ? hdr_fstop_full : lens_fstop);
+    lens_cat = max(hdr_cateye + cateye, 0.0f) * min(1.0f, full / max(lens_fstop, 1e-3f));
+    lens_sa = sqrt(max((hdr_anamorphic > 0.0f ? hdr_anamorphic : 1.0f) + anamorphic, 0.05f));
+    lens_fc = hdr_field_curv + field_curv;
+    lens_rot = 0.25f + bokeh_rot * 0.0174532925f;
+    focal_px = Wf / (2.0f * cam_th);
+  }
+
+  float shutter_w(float u) {
+    return shutter_shape == 0 ? 1.0f / (1.0f + exp(-9.0f * (u - 0.55f))) : 1.0f;
+  }
+
+  float3 tumble_axis(float h4, float h5, float h6, float rate, float tt) {
+    float a = 6.28318530717959f * (h4 + rate * tt);
+    float b = 6.28318530717959f * h5 + 4.1f * rate * tt * (0.5f + h6);
+    return float3(sin(a) * cos(b), cos(a), sin(a) * sin(b));
+  }
+
+  // the bokeh's area (its kernel sums to 1 / this): integrated around the edge, in pixels
+  float bokeh_area(float R, float cx, float cy) {
+    float aa = clamp(1.5f / R, 0.04f, 0.5f);
+    float sg = lens_blades >= 3.0f ? 6.28318530717959f / lens_blades : 1.0f;
+    float cc = cx * cx + cy * cy;
+    float sum = 0.0f;
+    for (int k = 0; k < 96; k++) {
+      float th = (float(k) + 0.5f) * 6.28318530717959f / 96.0f;
+      float ux = cos(th);
+      float uy = sin(th);
+      float sx = ux * lens_sa;
+      float sy = uy / lens_sa;
+      float slen = sqrt(sx * sx + sy * sy);
+      float g = 1.0f;
+      if (lens_blades >= 3.0f) {
+        float a = atan2(-sy, sx) + lens_rot;
+        float ang = a - sg * floor(a / sg) - sg * 0.5f;
+        g = 0.65f * cos(ang) / cos(sg * 0.5f) + 0.35f;
+      }
+      float slope = slen * g / R;
+      float rho = 1.0f / slope;
+      if (cc > 0.0f) {
+        float uc = fabs(ux * cx + uy * cy);
+        float rc2 = R * (-uc + sqrt(max(uc * uc + 1.0f - cc, 0.0f)));
+        rho = min(rho, max(rc2, 0.0f));
+      }
+      float r2 = rho * rho;
+      sum += r2 * (0.5f + 0.1f * aa * aa) + bokeh_falloff * (0.25f * r2 - slope * slope * r2 * r2 * 0.25f);
+    }
+    return max(sum * 6.28318530717959f / 96.0f, 1e-6f);
+  }
+
+  void empty_out(int g) {
+    if (g == 0) {
+      dst() = float4(1e9f, 1e9f, -1e9f, -1e9f);
+    } else {
+      dst() = float4(0.0f);
+    }
+  }
+
+  void process(int2 xy) {
+    int g = xy.x / @STATE_COLS@;
+    int i = xy.y * @STATE_COLS@ + (xy.x - g * @STATE_COLS@);
+    if (i >= count || g >= @GROUPS@) {
+      empty_out(g);
+      return;
+    }
+//@include body_start
+    float4 pp = place(xy.x - g * @STATE_COLS@, xy.y);
+    float4 pv = place(xy.x - g * @STATE_COLS@ + @STATE_COLS@, xy.y);
+    float w = pp.w;
+    if (w <= 0.0f) {
+      empty_out(g);
+      return;
+    }
+    float3 P = float3(pp.x, pp.y, pp.z);
+    float3 V = float3(pv.x, pv.y, pv.z);
+    float v = pv.w;
+    float3 dcam = P - cam_pos;
+    float dist = len3(dcam);
+    float zc = -dot(dcam, cam_back);
+    float3 pm = project_mid(P);
+
+    // ---- how it looks (render._appearance)
+    float dist_m = dist * su;
+    float3 Vd = (cam_pos - P) / dist;
+    float z_m = zc * su;
+    float ppm = focal_px / max(z_m, 1e-3f);
+    float rate = tumble * (kind == 1 ? 0.12f + 0.78f * h3 : (kind == 0 ? 0.1f + 0.6f * h3 : 0.03f + 0.27f * h3));
+    float3 axis = tumble_axis(h4, h5, h6, rate, t);
+    float sigma = 0.0f;
+    float rsz = 0.0f;
+    float gph = forward;
+    float3 tcol = float3(1.0f);
+    float fib_len = 0.0f;
+    if (kind == 0) {
+      sigma = (dgrit / 40.0f) * (dgrit / 40.0f) * (1.0f + 0.12f * (1.0f - steady) * sin(6.28318530717959f * (rate * t * 1.3f + h7)));
+      rsz = 0.5f * dgrit * 1e-6f * ppm;
+    } else if (kind == 1) {
+      float df = 30.0f * pow(8.0f, pow(h1, 2.2f)) * flake_scale;
+      float nl = fabs(dot(axis, Ldir));
+      float nv = fabs(dot(axis, Vd));
+      nl = nl + (0.5f - nl) * steady;
+      nv = nv + (0.5f - nv) * steady;
+      sigma = (df * df / 1600.0f) * (0.4f * nl * (0.25f + 0.75f * nv) + 0.03f);
+      rsz = 0.5f * df * 1e-6f * ppm;
+      gph = forward * 0.85f;
+      tcol = h7 > 0.5f ? float3(1.04f, 1.0f, 0.94f) : float3(0.95f, 0.95f, 0.97f);
+    } else if (kind == 2) {
+      float ln = 300.0f * pow(8.0f, pow(h1, 1.8f)) * fiber_scale;
+      float thk = 8.0f + 12.0f * h8;
+      float tl = dot(axis, Ldir);
+      sigma = (ln * thk / 1600.0f) * sqrt(max(1.0f - tl * tl, 0.03f)) * 0.5f;
+      rsz = thk * 1e-6f * ppm;
+      gph = forward * 0.5f;
+      fib_len = ln;
+      if (h9 < 0.4f) {
+        tcol = float3(0.95f, 0.95f, 0.93f);
+      } else if (h9 < 0.58f) {
+        tcol = float3(0.5f, 0.58f, 0.82f);
+      } else if (h9 < 0.7f) {
+        tcol = float3(0.85f, 0.45f, 0.42f);
+      } else if (h9 < 0.84f) {
+        tcol = float3(0.36f, 0.34f, 0.32f);
+      } else {
+        tcol = float3(0.82f, 0.74f, 0.55f);
+      }
+    } else {
+      float dl = 200.0f * pow(6.0f, h1 * h1) * fluff_scale;
+      sigma = (dl * dl / 1600.0f) * 0.07f;
+      rsz = 0.5f * dl * 1e-6f * ppm;
+      gph = forward * 0.45f;
+      tcol = float3(0.9f, 0.9f, 0.93f);
+    }
+    // the key light: forward scattering (Henyey-Greenstein) and, for flakes, glints
+    float cth = -dot(Ldir, Vd);
+    float hg = (1.0f - gph * gph) / pow(max(1.0f + gph * gph - 2.0f * gph * cth, 1e-4f), 1.5f);
+    float3 key = sun * (v * hg);
+    if (kind == 1 && v > 0.0f && glint * (1.0f - steady) > 0.0f) {
+      float3 Hh = unit3(Ldir + Vd);
+      float gsum = 0.0f;
+      for (int k = 0; k < 4; k++) {
+        gsum += shutter_w(float(k) / 3.0f);
+      }
+      float gl = 0.0f;
+      for (int k = 0; k < 4; k++) {
+        float tt = t + (t_open + (t_close - t_open) * float(k) / 3.0f) * spf;
+        float gw = shutter_w(float(k) / 3.0f) * 4.0f / gsum;
+        gl += gw * pow(fabs(dot(tumble_axis(h4, h5, h6, rate, tt), Hh)), 90.0f);
+      }
+      key += sun * (v * gl * 0.25f * 8.0f * glint * (1.0f - steady) * (0.4f + 0.6f * h2));
+    }
+    // bounce light off the sunlit set (cells worked out for a white light), plus an overall fill from all of it
+    float3 Pm = P * su;
+    float3 tot = float3(0.0f);
+    float3 Ei = float3(0.0f);
+    for (int c = 0; c < @NCELLS@; c++) {
+      float4 cp = cells(0, c);
+      if (cp.w <= 0.0f) {
+        continue;
+      }
+      float4 cn = cells(1, c);
+      float4 cf = cells(2, c);
+      float3 fl = float3(cf.x, cf.y, cf.z);
+      tot += fl;
+      float3 dv = float3(cp.x, cp.y, cp.z) - Pm;
+      float r2 = dot(dv, dv) + 0.12f;
+      float3 lv = dv / sqrt(r2);
+      Ei += fl * (max(-dot(lv, float3(cn.x, cn.y, cn.z)), 0.0f) / (pi1() * r2));
+    }
+    Ei += tot * (0.4f / (278.0f * 0.6f));
+    float3 fill = sun * Ei * (bounce * shadow_fill * 1.5f);
+    float3 scale = tint * tcol * (brightness * 0.8f * sigma / (max(dist_m, 0.05f) * max(dist_m, 0.05f)) * (focal_px / 1100.0f) * (focal_px / 1100.0f) * w);
+    float3 E = (key + fill) * scale;
+
+    // ---- through the lens: blur, streak, fibre spread (render._draw)
+    float R = 0.0f;
+    if (dof == 1) {
+      float hw = Wf * 0.5f;
+      float hh = Hf * 0.5f;
+      float rn2 = ((pm.x - hw) * (pm.x - hw) + (pm.y - hh) * (pm.y - hh)) / (hw * hw + hh * hh);
+      float s1 = focus_m * 1000.0f * max(1.0f + lens_fc * rn2, 0.05f);
+      float s2 = max(z_m, 0.02f) * 1000.0f;
+      float fl = lens_focal;
+      float coc = (fl / lens_fstop) * fl * (s2 - s1) / (s2 * max(s1 - fl, 1.0f)) / lens_film * Wf;
+      R = fabs(coc * (coc < 0.0f ? front_mult : back_mult)) * 0.5f;
+    }
+    R = clamp(R, 0.25f + 0.5f * steady, max_bokeh);
+    float3 po = project_cam(P + V * (t_open * spf), o_pos, o_right, o_up, o_back, o_th);
+    float3 pc = project_cam(P + V * (t_close * spf), c_pos, c_right, c_up, c_back, c_th);
+    float streak = sqrt((pc.x - po.x) * (pc.x - po.x) + (pc.y - po.y) * (pc.y - po.y));
+    float rsk = kind == 3 ? 0.6f : (kind == 2 ? 0.0f : 0.5f);
+    float Reff = sqrt(R * R + rsk * rsz * rsz);
+    float S = clamp(ceil(streak / max(Reff * 0.6f, 0.6f)), 1.0f, 24.0f);
+    float Kf = 1.0f;
+    float fdx = 0.0f;
+    float fdy = 0.0f;
+    float bend = 0.0f;
+    if (kind == 2) {
+      float hl = fib_len * 0.5e-6f / su;
+      float3 f0 = project_mid(P - axis * hl);
+      float3 f1 = project_mid(P + axis * hl);
+      fdx = f1.x - f0.x;
+      fdy = f1.y - f0.y;
+      Kf = clamp(ceil(sqrt(fdx * fdx + fdy * fdy) / max(R * 0.7f, 0.7f)), 1.0f, 24.0f);
+      bend = -(h2 - 0.5f) * 0.6f;
+    }
+    // cat-eye: toward the frame edges the bokeh turns into lemons, pointing away from the centre
+    float hd = sqrt(Wf * Wf + Hf * Hf) * 0.5f;
+    float cx = (pm.x - Wf * 0.5f) / hd * lens_cat * 0.5f;
+    float cy = (pm.y - Hf * 0.5f) / hd * lens_cat * 0.5f;
+    float cl = sqrt(cx * cx + cy * cy);
+    if (cl > 0.95f) {
+      cx = cx * 0.95f / cl;
+      cy = cy * 0.95f / cl;
+    }
+
+    // ---- holdout: how much the set hides it, averaged over its blur with Steady (render._holdout)
+    float hold = 1.0f;
+    if (holdout == 1) {
+      float rr = steady * Reff * 0.7071f;
+      int ntaps = steady > 0.0f ? 5 : 1;
+      float hsum = 0.0f;
+      for (int k = 0; k < ntaps; k++) {
+        float ox = k == 0 ? 0.0f : (k == 1 || k == 3 ? 1.0f : -1.0f);
+        float oy = k == 0 ? 0.0f : (k <= 2 ? 1.0f : -1.0f);
+        int sx = surf.bounds.x1 + clampi(int(floor(pm.x + ox * rr)), 0, int(Wf) - 1);
+        int sy = surf.bounds.y1 + clampi(int(floor(pm.y + oy * rr)), 0, int(Hf) - 1);
+        float4 s = surf(sx, sy);
+        float occl = s.x > 0.0f ? smooth01(((dist - s.x) / max(s.x, 1e-6f) + 0.01f) / 0.04f) : 0.0f;
+        float fgw = 1.0f;
+        if (fg_far > fg_near) {
+          fgw = smooth01((s.x - fg_near) / (fg_far - fg_near));
+        } else if (fg_near > 0.0f) {
+          fgw = s.x >= fg_near ? 1.0f : 0.0f;
+        }
+        hsum += 1.0f - occl * fgw * s.y;
+      }
+      hold = hsum / float(ntaps);
+    }
+
+    // ---- what the drawing needs
+    if (g == 0) {
+      float sa = lens_sa > 1.0f ? lens_sa : 1.0f / lens_sa;
+      float ext = Reff < 2.5f ? 4.0f * sqrt(0.25f * Reff * Reff + 0.12f + 1.0f / 6.0f) + 1.0f : Reff * sa * (1.0f + clamp(1.5f / Reff, 0.04f, 0.5f)) + 1.5f;
+      ext += sqrt(fdx * fdx + fdy * fdy) * (0.5f + 0.25f * fabs(bend));
+      float bx0 = min(po.x, pc.x) - ext;
+      float by0 = min(po.y, pc.y) - ext;
+      float bx1 = max(po.x, pc.x) + ext;
+      float by1 = max(po.y, pc.y) + ext;
+      float lum = E.x + E.y + E.z;
+      if (bx1 < 0.0f || by1 < 0.0f || bx0 > Wf || by0 > Hf || !(lum > 0.0f)) {
+        dst() = float4(1e9f, 1e9f, -1e9f, -1e9f);
+      } else {
+        dst() = float4(bx0, by0, bx1, by1);
+      }
+    } else if (g == 1) {
+      dst() = float4(po.x, po.y, pc.x, pc.y);
+    } else if (g == 2) {
+      float inv = Reff >= 2.5f ? 1.0f / bokeh_area(Reff, cx, cy) : 0.0f;
+      dst() = float4(Reff, S + 32.0f * Kf, bend, inv);
+    } else if (g == 3) {
+      dst() = float4(fdx, fdy, cx, cy);
+    } else {
+      dst() = float4(E.x, E.y, E.z, hold);
+    }
+  }
+};

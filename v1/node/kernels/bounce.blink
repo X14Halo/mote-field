@@ -1,0 +1,116 @@
+// MoteField: bounce light. The picture is cut into 16 x 9 cells; each cell's sunlit, cleanly seen surfaces become one
+// point light at their light-weighted centre (for a white key light of intensity 1; the motes multiply by the light's
+// colour). Surfaces take the surface colour layer when there is one, else a grey (Set colour).
+// Out: 3 pixels per cell (row = cell): position in metres and weight, normal, flux (rgb).
+kernel MFBounce : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> setbox;
+  Image<eRead, eAccessRandom, eEdgeClamped> nrm;
+  Image<eRead, eAccessRandom, eEdgeClamped> alb;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    float Wf;
+    float Hf;
+    float3 Ldir;
+    float vis_t0;
+    float vis_grow;
+    float vis_bias;
+    float vis_thick;
+
+  void define() {
+//@define
+  }
+
+//@params cam_pos cam_right cam_up cam_back cam_th light_az light_el shadows interior shadow_thick
+//@params su box_center box_size albedo use_albedo
+//@include lib_math
+//@include lib_cam
+//@include lib_light
+//@include lib_vis
+
+  void init() {
+    Wf = float(surf.bounds.width());
+    Hf = float(surf.bounds.height());
+    vis_setup();
+  }
+
+  void process(int2 xy) {
+    int c = xy.y;
+    if (c >= @NCELLS@) {
+      dst() = float4(0.0f);
+      return;
+    }
+    int cx = c - (c / @CELLS_X@) * @CELLS_X@;
+    int cy = c / @CELLS_X@;
+    float cw = Wf / float(@CELLS_X@);
+    float ch = Hf / float(@CELLS_Y@);
+    int ns = 24;
+    float stx = cw / float(ns);
+    float sty = ch / float(ns);
+    float pix = 2.0f * cam_th / Wf * sqrt(stx * sty);
+    float4 b0 = setbox(0, 0);
+    float4 b1 = setbox(1, 0);
+    float3 lo = float3(b0.x, b0.y, b0.z);
+    float3 hi = float3(b1.x, b1.y, b1.z);
+    float3 pacc = float3(0.0f);
+    float3 nacc = float3(0.0f);
+    float3 facc = float3(0.0f);
+    for (int j = 0; j < ns; j++) {
+      for (int i = 0; i < ns; i++) {
+        float fx = (float(cx) * cw + (float(i) + 0.5f) * stx);
+        float fy = (float(cy) * ch + (float(j) + 0.5f) * sty);
+        int sx = surf.bounds.x1 + int(fx);
+        int sy = surf.bounds.y1 + int(fy);
+        float4 s = surf(sx, sy);
+        if (s.w < 0.5f || s.z <= 0.0f) {
+          continue;
+        }
+        float3 dir = ray_dir(float(sx - surf.bounds.x1) + 0.5f, float(sy - surf.bounds.y1) + 0.5f);
+        float3 P = cam_pos + dir * s.z;
+        float4 nn = nrm(sx, sy);
+        float3 N = float3(nn.x, nn.y, nn.z);
+        if (dot(N, N) < 1e-12f) {
+          N = cam_pos - P;
+        }
+        N = unit3(N);
+        float nl = dot(N, Ldir);
+        if (nl <= 0.0f) {
+          continue;
+        }
+        float v = vis_at(P + N * (0.02f / su), lo, hi);
+        if (v <= 0.0f) {
+          continue;
+        }
+        float dist_m = s.z * su;
+        float cosv = fabs(dot(dir, N));
+        float area = (dist_m * pix) * (dist_m * pix) / max(cosv, 0.2f);
+        float3 col = float3(albedo);
+        if (use_albedo == 1) {
+          float4 a = alb(sx, sy);
+          col = float3(clamp(a.x, 0.0f, 1.0f), clamp(a.y, 0.0f, 1.0f), clamp(a.z, 0.0f, 1.0f));
+        }
+        float3 flux = col * (nl * v * area);
+        float fw = flux.x + flux.y + flux.z;
+        pacc += P * (su * fw);
+        nacc += N * fw;
+        facc += flux;
+      }
+    }
+    float wsum = facc.x + facc.y + facc.z;
+    if (xy.x == 0) {
+      float3 pm = wsum > 0.0f ? pacc / wsum : float3(0.0f);
+      dst() = float4(pm.x, pm.y, pm.z, wsum);
+    } else if (xy.x == 1) {
+      float3 nm = unit3(nacc);
+      dst() = float4(nm.x, nm.y, nm.z, 0.0f);
+    } else {
+      dst() = float4(facc.x, facc.y, facc.z, 0.0f);
+    }
+  }
+};

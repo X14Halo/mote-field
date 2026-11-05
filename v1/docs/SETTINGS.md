@@ -50,6 +50,8 @@ Generated from `motefield/schema.py`; do not edit by hand (`python -m motefield 
 | Key light | Shadows from | `shadows` | auto |  | prep | shot | advanced |
 | Key light | Light only through openings | `interior` | on |  | prep | shot | advanced |
 | Key light | Shadow edge softness | `shadow_soft` | 3 | cm | look | shot | advanced |
+| Key light | Shadow thickness | `shadow_thick` | 60 | cm | prep | shot | advanced |
+| Key light | Set colour | `albedo` | 0.35 |  | prep | shot | advanced |
 | Shapes | Shapes | `shapes` |  |  | look | shot | basic |
 
 ## Look

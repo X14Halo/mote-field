@@ -128,7 +128,7 @@ with _section('masters', 'Masters', 'shot', 'sim'):
 # ---------------------------------------------------------------------------------------------------------------------
 with _section('place', 'Dust volume', 'shot', 'sim'):
     _p('box_center', 'xyz', (-60.0, 175.0, -130.0), 'Box centre',
-       'Centre of the box the dust lives in. Easiest to set with Fit box or the handles in the viewer.', unit='scene')
+       'Centre of the box the dust lives in. Easiest to set with Fit box.', unit='scene')
     _p('box_size', 'xyz', (760.0, 330.0, 900.0), 'Box size', 'Width, height and depth of the dust box.',
        unit='scene', hard=(0, 1e9))
     _p('box_rot', 'float', 0.0, 'Box rotate Y', 'Turns the box about the vertical.', unit='°', soft=(-180, 180))
@@ -175,6 +175,13 @@ with _section('place', 'Key light', 'shot', 'prep'):
        'Interiors: light gets in only where the camera saw sky, such as a window.')
     _p('shadow_soft', 'float', 3.0, 'Shadow edge softness', 'Width of the soft edge of shadows on the dust.',
        unit='cm', soft=(0, 20), hard=(0, 1e4), affects='look')
+    _p('shadow_thick', 'float', 60.0, 'Shadow thickness',
+       'How far behind a surface the camera sees it still casts shadow. The pass only shows surfaces from the front, '
+       'so the node takes them to be about this thick: raise it for heavy walls, lower it if dust behind thin things '
+       'goes dark.', unit='cm', soft=(5, 300), hard=(0.1, 1e5))
+    _p('albedo', 'float', 0.35, 'Set colour',
+       'How much light the set bounces back onto the dust when the pass has no surface colour layer (0 = black, '
+       '1 = white).', soft=(0, 1), hard=(0, 1), affects='prep')
 
 with _section('place', 'Shapes', 'shot', 'look'):
     _p('shapes', 'json', [], 'Shapes',

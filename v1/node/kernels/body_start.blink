@@ -1,0 +1,32 @@
+    // ---- the mote's starting state (rng.dust_start): position in the box and its random attributes
+    int2 hb = hash_more(hash_more(hash1(word(seed)), int2(17493, 21332)), word(i));
+    float u0 = u01(pcg(u_add(hb, word(0))));
+    float u1 = u01(pcg(u_add(hb, word(1))));
+    float u2 = u01(pcg(u_add(hb, word(2))));
+    float h0 = u01(pcg(u_add(hb, word(3))));
+    float h1 = u01(pcg(u_add(hb, word(4))));
+    float h2 = u01(pcg(u_add(hb, word(5))));
+    float h3 = u01(pcg(u_add(hb, word(6))));
+    float h4 = u01(pcg(u_add(hb, word(7))));
+    float h5 = u01(pcg(u_add(hb, word(8))));
+    float h6 = u01(pcg(u_add(hb, word(9))));
+    float h7 = u01(pcg(u_add(hb, word(10))));
+    float h8 = u01(pcg(u_add(hb, word(11))));
+    float h9 = u01(pcg(u_add(hb, word(12))));
+    float3 x0 = float3((u0 - 0.5f) * bsize.x, (u1 - 0.5f) * bsize.y, (u2 - 0.5f) * bsize.z);
+    float f_fib = fibers / 100.0f;
+    float f_flf = fluff / 100.0f;
+    float f_flk = flakes / 100.0f;
+    int kind = 0;
+    if (h0 < f_fib) {
+      kind = 2;
+    } else if (h0 < f_fib + f_flf) {
+      kind = 3;
+    } else if (h0 < (f_fib + f_flf) + f_flk) {
+      kind = 1;
+    }
+    float ratio = size_max / max(size_min, 1e-3f);
+    float dgrit = size_min * pow(ratio, pow(h1, size_bias));
+    float qd = dgrit / 50.0f;
+    float st_settle = kind == 0 ? 0.15f + min(qd * qd, 4.0f) : (kind == 1 ? 0.5f : (kind == 2 ? 0.22f : 0.12f));
+    float settle_m = settle * 0.01f * st_settle;

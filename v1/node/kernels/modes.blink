@@ -1,0 +1,85 @@
+// MoteField: the swirling air. Random Fourier modes from the seed only: 40 large eddies (rows 0-39) and 20 small
+// ones (rows 40-59). Pixel 0 = wave vector K for a 1 m eddy (xyz) and phase; pixel 1 = amplitude (xyz, at right
+// angles to K) and angular speed for a 1 m eddy. Mirrors rng.mode_table in the Python reference.
+kernel MFModes : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  void define() {
+//@define
+  }
+
+//@params seed
+//@include lib_hash
+
+  float gauss12(int2 hb, int i0) {
+    int2 b = hash_more(hb, word(i0));
+    float s = 0.0f;
+    for (int i = 0; i < 12; i++) {
+      s += u01(hash_more(b, word(i)));
+    }
+    return s - 6.0f;
+  }
+
+  void process(int2 pos) {
+    int m = pos.y;
+    if (m >= @MODES@) {
+      dst() = float4(0.0f);
+      return;
+    }
+    int which = m < 40 ? 0 : 1;
+    int mm = which == 0 ? m : m - 40;
+    float count = which == 0 ? 40.0f : 20.0f;
+    float amp = sqrt(6.0f / count);
+    float two_pi = 6.28318530717959f;
+    int2 hb = hash_more(hash_more(hash1(word(seed)), int2(19791, 17477)), word(which * 1024 + mm));
+    // direction: a point inside the unit ball, normalised
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float vz = 1.0f;
+    float r2 = 1.0f;
+    for (int attempt = 0; attempt < 64; attempt++) {
+      vx = u01(hash_more(hb, word(attempt * 3))) * 2.0f - 1.0f;
+      vy = u01(hash_more(hb, word(attempt * 3 + 1))) * 2.0f - 1.0f;
+      vz = u01(hash_more(hb, word(attempt * 3 + 2))) * 2.0f - 1.0f;
+      r2 = (vx * vx + vy * vy) + vz * vz;
+      if (r2 > 1e-6f && r2 <= 1.0f) {
+        break;
+      }
+    }
+    float r = sqrt(r2);
+    float kx = vx / r;
+    float ky = vy / r;
+    float kz = vz / r;
+    float kmag = two_pi * exp(0.35f * gauss12(hb, 200));
+    // amplitude: a random vector with its part along k taken out
+    float ax = 0.0f;
+    float ay = 0.0f;
+    float az = 0.0f;
+    float al = 1.0f;
+    for (int attempt = 0; attempt < 64; attempt++) {
+      ax = gauss12(hb, 300 + attempt * 3);
+      ay = gauss12(hb, 300 + attempt * 3 + 1);
+      az = gauss12(hb, 300 + attempt * 3 + 2);
+      float d = (ax * kx + ay * ky) + az * kz;
+      ax = ax - kx * d;
+      ay = ay - ky * d;
+      az = az - kz * d;
+      al = sqrt((ax * ax + ay * ay) + az * az);
+      if (al > 1e-3f) {
+        break;
+      }
+    }
+    float phase = u01(hash_more(hb, word(400))) * two_pi;
+    float omega = (0.4f + 0.6f * u01(hash_more(hb, word(401)))) * kmag;
+    if (pos.x == 0) {
+      dst() = float4(kx * kmag, ky * kmag, kz * kmag, phase);
+    } else {
+      dst() = float4(ax / al * amp, ay / al * amp, az / al * amp, omega);
+    }
+  }
+};

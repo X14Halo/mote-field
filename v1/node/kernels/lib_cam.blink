@@ -1,0 +1,19 @@
+  // ---- the camera: world point -> pixel x, y (Nuke's, y up, pixel centres at .5) and depth along the view
+  float3 project_cam(float3 P, float3 pos, float3 rr, float3 uu, float3 bb, float th) {
+    float3 d = P - pos;
+    float x = dot(d, rr);
+    float y = dot(d, uu);
+    float z = -dot(d, bb);
+    float zs = z > 1e-9f ? z : 1e-9f;
+    float tv = th * Hf / Wf;
+    return float3((x / zs / th * 0.5f + 0.5f) * Wf, (y / zs / tv * 0.5f + 0.5f) * Hf, z);
+  }
+  float3 project_mid(float3 P) {
+    return project_cam(P, cam_pos, cam_right, cam_up, cam_back, cam_th);
+  }
+  // the unit direction of the ray through pixel position (px, py)
+  float3 ray_dir(float px, float py) {
+    float tv = cam_th * Hf / Wf;
+    float3 d = cam_right * ((px / Wf * 2.0f - 1.0f) * cam_th) + cam_up * ((py / Hf * 2.0f - 1.0f) * tv) - cam_back;
+    return unit3(d);
+  }

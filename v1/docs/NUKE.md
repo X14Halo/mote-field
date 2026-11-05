@@ -1,85 +1,84 @@
 # MoteField in Nuke 15
 
-The node's output is the dust (and later the embers) as an ordinary image. Look at it in the viewer, then **plus** it
-onto the comp, or **over** it with *Alpha* set to *matte*. There are no files to manage and no render buttons to
-press: frames appear as you work, and any render of the comp makes the frames it needs.
+MoteField is one node. You paste it into a script and use it. There's nothing to install, no `NUKE_PATH`, nothing in
+`.nuke`, and it never writes a file. It works in plain Nuke 15 as well as NukeX.
 
-## Install
+Its output is the dust as an ordinary image, with the shot's depth of field and motion blur, and held out by the set.
+Look at it in the viewer, then **plus** it onto the comp. To **over** it instead, set *Alpha* to *matte*.
 
-MoteField v1 is the `v1` folder of the repository. It needs only Python and numpy, which Nuke 15 ships with.
+## Get the node into a script
 
-Add the `v1` folder to `NUKE_PATH`. That's all: its `init.py` installs the render callback (in the GUI and in batch
-renders on the farm), and its `menu.py` adds **Other > MoteField** to the Nodes menu. If your pipeline sets up
-plug-ins another way, these are the two lines that matter:
+Pick one:
 
-```python
-import motefield.nuke_node; motefield.nuke_node.register()                                # init.py
-nuke.menu('Nodes').addCommand('Other/MoteField', 'import motefield.nuke_node as m; m.create()')   # menu.py
-```
+- Drag `dist/MoteField.nk` from a file browser into the Node Graph.
+- Open `dist/MoteField.nk` in a text editor, copy all of it, and paste it into the Node Graph.
+- Use *File > Import Script*.
 
-Don't put MoteField 0.8.3 (`nuke/motefield.py`) on `NUKE_PATH` at the same time: both are called `motefield`, and
-whichever comes first would be loaded.
+If a Read is selected when you paste, it becomes the node's **utility** input. To keep the node handy, put it in a
+ToolSet or a shared template script. That's still nothing to install.
 
-Check the Python Nuke will use with `python -m motefield doctor`, run with Nuke's Python, or with this in the Script
-Editor:
+### Is BlinkScript OK here? (once per machine or Nuke version)
 
-```python
-import motefield.cli; motefield.cli.main(['doctor'])
-```
+`dist/MoteField_check.nk` is a two-node script. Paste it in and view **MoteField_check**:
 
-## Try it
+- dots plus a **green** square in the corner mean it's ready;
+- a **red** square means this machine's integer maths differs: tell us.
 
-1. **Create the node:** Other > MoteField, or in the Script Editor `import motefield.nuke_node as m; m.create()`.
-   With a Read selected, it becomes the node's utility input.
-2. **The stand-in first:** set *Stand-in shot* to *wide* and view the node. The frame you're on appears in a second or
-   two, then the frames around it. The status line says what it's doing. Try *close-up* for big bokeh.
-3. **Your shot:**
-   - Connect the utility pass Read to the node's **utility** input (input 1), or type its path in *Utility pass*.
-   - Put the mattes pass in *Extra passes*, for surface colour (bounce light) and ID mattes.
-   - Set *First frame* and *Last frame*.
-   - Press **Shot check**: it lists what it found in the pass and anything to fix.
-   - Press **Fit box to shot** to place the dust.
-   - Set the key light in the Place tab (heading and elevation).
-   - Tune with the four dials, then the Look tab.
-4. **Comp it:** Merge (plus) the node over your comp. For an over, set *Alpha* to *matte* and merge with over. *Node
-   output* can also show the dust merged over input 0 (the plate), or a holdout check.
+Try it with *Use GPU if available* on and off.
 
-## Renders and the farm
+## Use it
 
-Before each frame of any Write render, locally or with `nuke -x` on the farm, the node renders that frame if it isn't
-already there. A farm machine needs `motefield` on its `NUKE_PATH` too; the node's `onCreate` registers the callback
-when the script loads.
+1. **Connect the utility pass** Read to the **utility** input. The node then:
+   - finds the layers: position, normals, depth, unfiltered depth, coverage and surface colour;
+   - takes the frame range from the Read;
+   - reads the camera from the EXR header on every frame. This covers the lens and shutter too, including extras
+     inside JSON header attributes;
+   - fits the dust box to the set.
 
-Frames live in folders named after every setting that changes a pixel, so a frame is never out of date. Where they go:
+   The line at the top of the panel says what it found.
+2. **Optional inputs:**
+   - **plate**, to judge the look: set *Output* to *dust over plate*.
+   - **colour**, a pass with a surface colour layer, such as a mattes pass, so bounce light takes the set's colours.
+     If the utility pass has the layer itself, you don't need this input.
+3. **Press Check shot.** It lists the layers it used and how it read the pass (premultiplied or not, depth along the
+   ray or the view axis), the camera, the scene-unit sanity, and the mote count.
+4. **Aim the key light** with *Light heading* and *Light elevation*. Then tune with the four dials: *Amount*,
+   *Brightness*, *Air* and *Steady*. Everything else is on the *Dust & air* and *Light & lens* tabs.
+5. **Comp it:** Merge (plus) the node onto your comp.
 
-- the node's *Cache folder* (Deliver tab), if set;
-- otherwise `$MOTEFIELD_CACHE`;
-- otherwise Nuke's temp folder.
+## How it renders
 
-Set *Cache folder* to a shared location and the farm reuses the frames you already rendered while working. A frame
-comes out the same on any machine: tested bit-for-bit between Nuke 15's numpy and numpy 2.
+Inside the node are BlinkScript kernels. Plain Nuke runs a kernel that comes saved in a script, but can't edit one.
+They do the whole job each frame:
 
-## Settings files
+- **where every mote is.** This comes straight from the time, with no simulation and no cache, so any frame renders
+  alone, in any order, on any machine;
+- **how the light reaches it.** Shadows are found by marching toward the light through what the camera sees. With
+  *Light only through openings* on, light only gets in where the pass shows empty sky;
+- **bounce light** off the sunlit set;
+- **holdouts** against the unfiltered depth, weighted by coverage;
+- **drawing**, with the lens: small blur as a Gaussian integrated over each pixel, so motes don't flicker, and larger
+  blur as the aperture (blades, cat-eye, anamorphic squeeze), all along each mote's motion-blur streak.
 
-*Look file* points at a sequence's shared look. Knobs show its values until you change them in the node; from then on
-your value stays, even through *Reload files*. *Save look...* writes this node's look settings to a file for others.
-*Show file* holds the show's conventions (units, lens, shutter, channels).
+*Use GPU* is on by default. It's much faster on a GPU, and the dust is the same either way: the random numbers are
+exact integer maths on every machine.
 
-## Not yet tried in Nuke itself
+A render is just a render. Write nodes, the farm and `nuke -x` all work as they would for any other node, and Nuke's
+own viewer and disk caching apply.
 
-The node was built and tested against a stand-in for Nuke's Python module, not in Nuke. These Nuke calls are the ones
-it relies on; if any misbehaves, the Script Editor will show a traceback:
+## The Shot tab
 
-- `nuke.nodes.Group`, `Read`, `Merge2`, `Expression`, `Switch`, `Input`, `Output`, and `begin()` / `end()`
-- knob types: `Double_Knob`, `Int_Knob`, `Boolean_Knob`, `Enumeration_Knob`, `XYZ_Knob`, `Color_Knob`,
-  `File_Knob`, `String_Knob`, `Multiline_Eval_String_Knob`, `PyScript_Knob`, `Text_Knob`, `Tab_Knob`
-- knob methods: `setFlag(nuke.NO_ANIMATION)`, `setValueAt`, `getValueAt`, `isAnimated`, `setExpression`
-- the Read's `raw`, `on_error`, `reload`; the Group's `knobChanged` and `onCreate`
-- `nuke.addBeforeFrameRender`, `nuke.executeInMainThread`, `nuke.executeInMainThreadWithResult`, `nuke.frame`
+- **Layers:** if a layer was picked wrong, choose it here, or press *Find layers* to look again.
+- **Pass handling:** *Positions premultiplied*, *Depth is distance along the view axis* and *Depth premultiplied* are
+  worked out from the pass by default (*auto*). Override them if the check says something surprising.
+- **Camera:** the camera knobs are what was read from the header, keyed per frame if the camera moves. *Read camera*
+  (on the first tab) reads them again, for example after the Read changes to a new version of the pass. The node also
+  checks this when you open its panel.
+- **Repair node:** relinks the internal kernels to the knobs. You shouldn't need it.
 
-What would help most to hear back:
+## Limits for now
 
-1. Does the node create without errors, and do frames appear in the viewer as you scrub (stand-in, then your shot)?
-2. Does a Write render of a comp with the node work, both in the GUI and with `nuke -x`?
-3. Does the look file behave as described above?
-4. Any traceback from the Script Editor.
+- Embers, hide shapes and things moving through the dust come in later phases.
+- Up to 65,536 motes per node. The check says when density times box size asks for more. Use a second node with
+  another seed for more.
+- Shadows only know the surfaces the camera sees on the current frame: off-screen geometry casts none.

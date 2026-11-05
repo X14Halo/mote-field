@@ -1,0 +1,57 @@
+// MoteField: which rows of the bins hold any mote, per tile (the same 96-per-row bit layout, over the bin rows), so
+// drawing a pixel skips the empty ones.
+kernel MFRows : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> space;
+  Image<eRead, eAccessRandom, eEdgeClamped> bins;
+  Image<eWrite> dst;
+
+  param:
+//@decl
+
+  local:
+    int nrows;
+
+  void define() {
+//@define
+  }
+
+//@params density max_motes box_size su
+//@include lib_count
+
+  void init() {
+    nrows = (mote_count() + 95) / 96;
+  }
+
+  void process(int2 xy) {
+    int T = xy.x;
+    int r2 = xy.y;
+    float m0 = 0.0f;
+    float m1 = 0.0f;
+    float m2 = 0.0f;
+    float m3 = 0.0f;
+    for (int c = 0; c < 4; c++) {
+      int bits = 0;
+      for (int b = 0; b < 24; b++) {
+        int r1 = r2 * 96 + c * 24 + b;
+        if (r1 >= nrows) {
+          break;
+        }
+        float4 w = bins(T, r1);
+        if (w.x != 0.0f || w.y != 0.0f || w.z != 0.0f || w.w != 0.0f) {
+          bits = bits | (1 << b);
+        }
+      }
+      if (c == 0) {
+        m0 = float(bits);
+      } else if (c == 1) {
+        m1 = float(bits);
+      } else if (c == 2) {
+        m2 = float(bits);
+      } else {
+        m3 = float(bits);
+      }
+    }
+    dst() = float4(m0, m1, m2, m3);
+  }
+};
