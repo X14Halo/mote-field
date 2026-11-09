@@ -7,11 +7,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from node import blinklib, nk      # noqa: E402
 
 
-def build():
+def build(version='15.0 v1'):
     src = blinklib.source('check')
     return '\n'.join([
         'set cut_paste_input [stack 0]',
-        'version 15.0 v1',
+        'version ' + version,
         'Constant {',
         ' inputs 0',
         ' channels rgb',
@@ -38,4 +38,6 @@ def build():
 if __name__ == '__main__':
     out = sys.argv[1] if len(sys.argv) > 1 else 'MoteField_check.nk'
     open(out, 'w').write(build())
-    print(out)
+    older = os.path.join(os.path.dirname(os.path.abspath(out)), 'MoteField_check_nuke12.nk')
+    open(older, 'w').write(build('12.2 v1'))
+    print(out, older)

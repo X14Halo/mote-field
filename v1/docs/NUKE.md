@@ -26,6 +26,15 @@ ToolSet or a shared template script. That's still nothing to install.
 
 Try it with *Use GPU if available* on and off.
 
+### Older Nuke (12.2 to 14)
+
+`dist/MoteField_nuke12.nk` and `dist/MoteField_check_nuke12.nk` are the same node and check, labelled for Nuke 12.2,
+so older versions load them without the "saved with a newer version" warning. The Python inside runs on Nuke 12's
+Python 2.7 too. This is untested in Nuke 12: start with the check.
+
+**Nuke Non-commercial can't run it.** Foundry disables the BlinkScript node in Non-commercial, and MoteField renders
+with BlinkScript. The check node shows straight away whether a Nuke can run it.
+
 ## Use it
 
 1. **Connect the utility pass** Read to the **utility** input. The node then:

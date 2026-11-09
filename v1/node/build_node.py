@@ -340,9 +340,9 @@ def shuffle(name, src_in, in2, mapping, xpos, ypos):
             '}']
 
 
-def build():
+def build(version='15.0 v1'):
     py = python_source()
-    L = ['set cut_paste_input [stack 0]', 'version 15.0 v1', 'push 0', 'push 0', 'push $cut_paste_input', 'Group {',
+    L = ['set cut_paste_input [stack 0]', 'version ' + version, 'push 0', 'push 0', 'push $cut_paste_input', 'Group {',
          ' inputs 3',
          ' name MoteField1',
          ' tile_color 0x6b5a3aff',
@@ -401,9 +401,16 @@ def build():
     return '\n'.join(L)
 
 
+# the same node labelled for older Nuke (12.2 and later), so they load it without the newer-version warning
+OLDER = ('MoteField_nuke12.nk', '12.2 v1')
+
 if __name__ == '__main__':
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'dist', 'MoteField.nk')
     os.makedirs(os.path.dirname(out), exist_ok=True)
     text = build()
     open(out, 'w').write(text)
     print('%s (%d KB)' % (out, len(text) // 1024))
+    if len(sys.argv) <= 1:
+        older = os.path.join(ROOT, 'dist', OLDER[0])
+        open(older, 'w').write(build(OLDER[1]))
+        print(older)

@@ -37,8 +37,16 @@ ROLES = {
 }
 
 
+try:                        # Nuke 12 and older run Python 2, where text can also be unicode
+    _STR = (str, unicode)   # noqa: F821
+except NameError:
+    _STR = (str,)
+
+
 def _norm(s):
-    return ''.join(ch for ch in str(s).lower() if ch.isalnum())
+    if not isinstance(s, _STR):
+        s = str(s)
+    return ''.join(ch for ch in s.lower() if ch.isalnum())
 
 
 def _inner(grp, name):
@@ -206,9 +214,9 @@ def _nums(v):
         for x in v:
             out += _nums(x)
         return out
-    if isinstance(v, (int, float)):
+    if isinstance(v, (int, float)) or type(v).__name__ == 'long':
         return [float(v)]
-    if isinstance(v, str):
+    if isinstance(v, _STR):
         return [float(x) for x in _NUM.findall(v)]
     try:
         return [float(x) for x in v]
@@ -230,7 +238,7 @@ def header_items(md):
     plain, nested = [], []
     for k, v in md.items():
         plain.append((k, v, None))
-        if isinstance(v, str) and v[:1] == '{' and len(v) < 2000000:
+        if isinstance(v, _STR) and v[:1] == '{' and len(v) < 2000000:
             try:
                 d = json.loads(v)
             except ValueError:
@@ -301,10 +309,10 @@ def _match(k, v, nested, cam, src, lens, take):
         take('aperture', k, v)
     elif kn.endswith('shutterangle'):
         take('shutter_angle', k, v)
-    elif kn.endswith('shuttershape') and isinstance(v, str):
+    elif kn.endswith('shuttershape') and isinstance(v, _STR):
         cam.setdefault('shutter_shape', v)
         src.setdefault('shutter_shape', k)
-    elif full.endswith('cameradirection') and isinstance(v, str):
+    elif full.endswith('cameradirection') and isinstance(v, _STR):
         cam.setdefault('shutter_dir', v)
         src.setdefault('shutter_dir', k)
 

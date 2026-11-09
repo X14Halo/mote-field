@@ -91,7 +91,27 @@ class Script(unittest.TestCase):
         with open(os.path.join(ROOT, 'dist', 'MoteField.nk'), encoding='utf-8') as fh:
             self.assertEqual(fh.read(), TEXT, 'run: python3 node/build_node.py')
         with open(os.path.join(ROOT, 'dist', 'MoteField_check.nk'), encoding='utf-8') as fh:
-            self.assertEqual(fh.read(), build_check.build(), 'run: python3 node/build_check.py')
+            self.assertEqual(fh.read(), build_check.build(), 'run: python3 node/build_check.py dist/MoteField_check.nk')
+        with open(os.path.join(ROOT, 'dist', 'MoteField_nuke12.nk'), encoding='utf-8') as fh:
+            self.assertEqual(fh.read(), build_node.build('12.2 v1'), 'run: python3 node/build_node.py')
+        with open(os.path.join(ROOT, 'dist', 'MoteField_check_nuke12.nk'), encoding='utf-8') as fh:
+            self.assertEqual(fh.read(), build_check.build('12.2 v1'), 'run: python3 node/build_check.py dist/MoteField_check.nk')
+
+    def test_embedded_python_is_plain_ascii_and_python2_safe(self):
+        """Nuke 12 and older run Python 2.7: no non-ASCII and nothing Python 3 only in the code inside the node."""
+        import ast
+        import re
+        src = build_node.python_source()
+        self.assertTrue(all(ord(c) < 128 for c in src))
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            self.assertNotIsInstance(node, (ast.JoinedStr, ast.Nonlocal, ast.YieldFrom, ast.AsyncFunctionDef,
+                                            ast.Starred), ast.dump(node)[:80])
+            if isinstance(node, ast.arguments):
+                self.assertFalse(node.kwonlyargs)
+        for script in (build_node.LOADER,):
+            self.assertTrue(all(ord(c) < 128 for c in script))
+        self.assertIsNone(re.search(r'\bprint\s+[^(]', src))
 
     def test_links_survive_another_knob_naming(self):
         """If a Nuke version named the kernel knobs with another prefix, the links still find them."""
