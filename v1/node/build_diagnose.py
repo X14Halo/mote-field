@@ -29,11 +29,94 @@ SIZES = {'mf_space_modes': (2, 64), 'mf_space_facts': (3, 1), 'mf_space_bounds':
          'mf_place': (2 * bl.STATE_COLS, bl.STATE_H), 'mf_motes': (bl.STATE_W, bl.STATE_H),
          'mf_bins': (bl.NTILES, bl.ROWS1), 'mf_rows': (bl.NTILES, bl.ROWS2)}
 
+# Step 10 (the set-bounds kernel) crashes Nuke 12.2. These are that kernel cut back, each adding one piece of it
+# back, so the first one that crashes says which piece is the trouble.
+BOUNDS_STEPS = [
+    ('a_shell', """    dst() = float4(Wf, Hf, 0.0f, 1.0f);"""),
+    ('b_read', """    float t = 0.0f;
+    for (int j = 0; j < 90; j++) {
+      for (int i = 0; i < 160; i++) {
+        float px = (float(i) + 0.5f) * Wf / 160.0f;
+        float py = (float(j) + 0.5f) * Hf / 90.0f;
+        float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+        t += s.w;
+      }
+    }
+    dst() = float4(t, 0.0f, 0.0f, 1.0f);"""),
+    ('c_coord', """    float t = 0.0f;
+    for (int j = 0; j < 90; j++) {
+      for (int i = 0; i < 160; i++) {
+        float px = (float(i) + 0.5f) * Wf / 160.0f;
+        float py = (float(j) + 0.5f) * Hf / 90.0f;
+        float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+        float c = coord_of(s.w, s.z, px, py, 0);
+        if (c < 1000.0f) {
+          t += c;
+        }
+      }
+    }
+    dst() = float4(t, 0.0f, 0.0f, 1.0f);"""),
+    ('d_big_numbers', """    float mn = 1e30f;
+    float mx = -1e30f;
+    float n = 0.0f;
+    for (int j = 0; j < 90; j++) {
+      for (int i = 0; i < 160; i++) {
+        float px = (float(i) + 0.5f) * Wf / 160.0f;
+        float py = (float(j) + 0.5f) * Hf / 90.0f;
+        float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+        float c = coord_of(s.w, s.z, px, py, 0);
+        if (c < 1e29f) {
+          mn = min(mn, c);
+          mx = max(mx, c);
+          n += 1.0f;
+        }
+      }
+    }
+    dst() = float4(mn, mx, n, 1.0f);"""),
+    ('e_axis_loop', """    float r0 = 0.0f;
+    float r1 = 0.0f;
+    float r2 = 0.0f;
+    for (int axis = 0; axis < 3; axis++) {
+      float n = 0.0f;
+      for (int j = 0; j < 90; j++) {
+        for (int i = 0; i < 160; i++) {
+          float px = (float(i) + 0.5f) * Wf / 160.0f;
+          float py = (float(j) + 0.5f) * Hf / 90.0f;
+          float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+          float c = coord_of(s.w, s.z, px, py, axis);
+          if (c < 1000.0f) {
+            n += 1.0f;
+          }
+        }
+      }
+      if (axis == 0) {
+        r0 = n;
+      } else if (axis == 1) {
+        r1 = n;
+      } else {
+        r2 = n;
+      }
+    }
+    dst() = float4(r0, r1, r2, 1.0f);"""),
+]
+
+
+def bounds_step(body):
+    """The set-bounds kernel with its process() replaced by body."""
+    src = bl.source('bounds')
+    a = src.index('  void process(int2 xy) {')
+    b = src.rindex('};')
+    return src[:a] + '  void process(int2 xy) {\n' + body + '\n  }\n' + src[b:]
+
+
 def order():
     """The nodes in the order to test them: the simple feature probes, then the kernels as the node runs them, then
     the probes of features the node doesn't use."""
     out = ['mfdiag_probe_' + p for p in PROBES if p not in INFO_ONLY]
-    out += ['mfdiag_kernel_' + kfile for node, kfile, space, inputs in GRAPH]
+    for node, kfile, space, inputs in GRAPH:
+        if kfile == 'bounds':
+            out += ['mfdiag_bounds_' + name for name, body in BOUNDS_STEPS]
+        out.append('mfdiag_kernel_' + kfile)
     out += ['mfdiag_info_' + p for p in INFO_ONLY]
     return out
 
@@ -114,6 +197,13 @@ def build(version='12.2 v1'):
             L += constant('mfdiag_%s_in%d' % (kfile, i), w, h, x + 20 * i, 40)
         L += blink('mfdiag_kernel_' + kfile, bl.source(kfile), len(inputs), x, 140, kfile not in SCALAR)
         x += 140
+        if kfile == 'bounds':
+            for name, body in BOUNDS_STEPS:
+                for i, src in reversed(list(enumerate(inputs))):
+                    w, h = SIZES[src]
+                    L += constant('mfdiag_bounds_%s_in%d' % (name, i), w, h, x + 20 * i, 40)
+                L += blink('mfdiag_bounds_' + name, bounds_step(body), len(inputs), x, 140, False)
+                x += 140
     names = order()
     L += ['NoOp {', ' inputs 0', ' name MoteField_diagnose',
           ' label "Test next"',

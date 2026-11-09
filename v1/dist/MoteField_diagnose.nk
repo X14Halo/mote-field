@@ -143,7 +143,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_info_array_in_function
- label "17"
+ label "22"
  xpos 720
  ypos -120
 }
@@ -164,7 +164,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_info_one_value_vector
- label "18"
+ label "23"
  xpos 840
  ypos -120
 }
@@ -185,7 +185,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_info_while_loop
- label "19"
+ label "24"
  xpos 960
  ypos -120
 }
@@ -206,7 +206,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_info_int_division
- label "20"
+ label "25"
  xpos 1080
  ypos -120
 }
@@ -338,8 +338,163 @@ BlinkScript {
  useGPUIfAvailable false
  vectorize false
  name mfdiag_kernel_bounds
- label "10"
+ label "15"
  xpos 420
+ ypos 140
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "320 180 0 0 320 180 1 mfdiag_bounds_a_shell_in1_fmt"
+ name mfdiag_bounds_a_shell_in1
+ xpos 580
+ ypos 40
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "2 1 0 0 2 1 1 mfdiag_bounds_a_shell_in0_fmt"
+ name mfdiag_bounds_a_shell_in0
+ xpos 560
+ ypos 40
+}
+BlinkScript {
+ inputs 2
+ ProgramGroup 1
+ kernelSource "// MoteField: the extent of the set the camera sees (world, scene units), from clean pixels on a grid of samples:\n// pixel 0 = low corner, pixel 1 = high corner, each the 0.5 / 99.5 percentile along each axis, so a few stray\n// far-away pixels don't stretch it. 'Light only through openings' follows rays out of this box.\nkernel MFBounds : ImageComputationKernel<ePixelWise>\n\{\n  Image<eRead, eAccessPoint, eEdgeClamped> space;\n  Image<eRead, eAccessRandom, eEdgeClamped> surf;\n  Image<eWrite> dst;\n\n  param:\n    float3 cam_pos;\n    float3 cam_right;\n    float3 cam_up;\n    float3 cam_back;\n    float cam_th;\n  local:\n    float Wf;\n    float Hf;\n\n  void define() \{\n    defineParam(cam_pos, \"cam_pos\", float3(0.0f, 150.0f, 400.0f));\n    defineParam(cam_right, \"cam_right\", float3(1.0f, 0.0f, 0.0f));\n    defineParam(cam_up, \"cam_up\", float3(0.0f, 1.0f, 0.0f));\n    defineParam(cam_back, \"cam_back\", float3(0.0f, 0.0f, 1.0f));\n    defineParam(cam_th, \"cam_th\", 0.5f);\n  \}\n\n\n  // ---- small maths\n  float smooth01(float x) \{\n    float c = clamp(x, 0.0f, 1.0f);\n    return c * c * (3.0f - 2.0f * c);\n  \}\n  float len3(float3 v) \{\n    return sqrt(dot(v, v));\n  \}\n  float3 unit3(float3 v) \{\n    return v / max(len3(v), 1e-12f);\n  \}\n  float wrap1(float x, float s) \{\n    float y = x + s * 0.5f;\n    return y - s * floor(y / s) - s * 0.5f;\n  \}\n  float erf_a(float x) \{\n    // Abramowitz and Stegun 7.1.26 (error under 1.5e-7)\n    float ax = fabs(x);\n    float t = 1.0f / (1.0f + 0.3275911f * ax);\n    float p = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;\n    float r = 1.0f - p * exp(-ax * ax);\n    return x < 0.0f ? -r : r;\n  \}\n  float pi1() \{\n    return 3.14159265358979f;\n  \}\n  int clampi(int x, int a, int b) \{\n    return x < a ? a : (x > b ? b : x);\n  \}\n  // ---- the camera: world point -> pixel x, y (Nuke's, y up, pixel centres at .5) and depth along the view\n  float3 project_cam(float3 P, float3 pos, float3 rr, float3 uu, float3 bb, float th) \{\n    float3 d = P - pos;\n    float x = dot(d, rr);\n    float y = dot(d, uu);\n    float z = -dot(d, bb);\n    float zs = z > 1e-9f ? z : 1e-9f;\n    float tv = th * Hf / Wf;\n    return float3((x / zs / th * 0.5f + 0.5f) * Wf, (y / zs / tv * 0.5f + 0.5f) * Hf, z);\n  \}\n  float3 project_mid(float3 P) \{\n    return project_cam(P, cam_pos, cam_right, cam_up, cam_back, cam_th);\n  \}\n  // the unit direction of the ray through pixel position (px, py)\n  float3 ray_dir(float px, float py) \{\n    float tv = cam_th * Hf / Wf;\n    float3 d = cam_right * ((px / Wf * 2.0f - 1.0f) * cam_th) + cam_up * ((py / Hf * 2.0f - 1.0f) * tv) - cam_back;\n    return unit3(d);\n  \}\n  void init() \{\n    Wf = float(surf.bounds.width());\n    Hf = float(surf.bounds.height());\n  \}\n\n  // one axis of the world position seen at pixel position (px, py), or 1e30 if the pixel isn't a clean surface\n  float coord_of(float sw, float sz, float px, float py, int axis) \{\n    if (sw < 0.5f || sz <= 0.0f) \{\n      return 1e30f;\n    \}\n    float3 P = cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * sz;\n    return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);\n  \}\n\n  // Blink reads images only in process() or in functions it calls directly, so the loops that read the surface\n  // image are all written out here, over a 160 x 90 grid. The q-th fraction of the samples along each axis is found\n  // by halving the range.\n  void process(int2 xy) \{\n    dst() = float4(Wf, Hf, 0.0f, 1.0f);\n  \}\n\};\n"
+ rebuild ""
+ rebuild_finalise ""
+ useGPUIfAvailable false
+ vectorize false
+ name mfdiag_bounds_a_shell
+ label "10"
+ xpos 560
+ ypos 140
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "320 180 0 0 320 180 1 mfdiag_bounds_b_read_in1_fmt"
+ name mfdiag_bounds_b_read_in1
+ xpos 720
+ ypos 40
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "2 1 0 0 2 1 1 mfdiag_bounds_b_read_in0_fmt"
+ name mfdiag_bounds_b_read_in0
+ xpos 700
+ ypos 40
+}
+BlinkScript {
+ inputs 2
+ ProgramGroup 1
+ kernelSource "// MoteField: the extent of the set the camera sees (world, scene units), from clean pixels on a grid of samples:\n// pixel 0 = low corner, pixel 1 = high corner, each the 0.5 / 99.5 percentile along each axis, so a few stray\n// far-away pixels don't stretch it. 'Light only through openings' follows rays out of this box.\nkernel MFBounds : ImageComputationKernel<ePixelWise>\n\{\n  Image<eRead, eAccessPoint, eEdgeClamped> space;\n  Image<eRead, eAccessRandom, eEdgeClamped> surf;\n  Image<eWrite> dst;\n\n  param:\n    float3 cam_pos;\n    float3 cam_right;\n    float3 cam_up;\n    float3 cam_back;\n    float cam_th;\n  local:\n    float Wf;\n    float Hf;\n\n  void define() \{\n    defineParam(cam_pos, \"cam_pos\", float3(0.0f, 150.0f, 400.0f));\n    defineParam(cam_right, \"cam_right\", float3(1.0f, 0.0f, 0.0f));\n    defineParam(cam_up, \"cam_up\", float3(0.0f, 1.0f, 0.0f));\n    defineParam(cam_back, \"cam_back\", float3(0.0f, 0.0f, 1.0f));\n    defineParam(cam_th, \"cam_th\", 0.5f);\n  \}\n\n\n  // ---- small maths\n  float smooth01(float x) \{\n    float c = clamp(x, 0.0f, 1.0f);\n    return c * c * (3.0f - 2.0f * c);\n  \}\n  float len3(float3 v) \{\n    return sqrt(dot(v, v));\n  \}\n  float3 unit3(float3 v) \{\n    return v / max(len3(v), 1e-12f);\n  \}\n  float wrap1(float x, float s) \{\n    float y = x + s * 0.5f;\n    return y - s * floor(y / s) - s * 0.5f;\n  \}\n  float erf_a(float x) \{\n    // Abramowitz and Stegun 7.1.26 (error under 1.5e-7)\n    float ax = fabs(x);\n    float t = 1.0f / (1.0f + 0.3275911f * ax);\n    float p = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;\n    float r = 1.0f - p * exp(-ax * ax);\n    return x < 0.0f ? -r : r;\n  \}\n  float pi1() \{\n    return 3.14159265358979f;\n  \}\n  int clampi(int x, int a, int b) \{\n    return x < a ? a : (x > b ? b : x);\n  \}\n  // ---- the camera: world point -> pixel x, y (Nuke's, y up, pixel centres at .5) and depth along the view\n  float3 project_cam(float3 P, float3 pos, float3 rr, float3 uu, float3 bb, float th) \{\n    float3 d = P - pos;\n    float x = dot(d, rr);\n    float y = dot(d, uu);\n    float z = -dot(d, bb);\n    float zs = z > 1e-9f ? z : 1e-9f;\n    float tv = th * Hf / Wf;\n    return float3((x / zs / th * 0.5f + 0.5f) * Wf, (y / zs / tv * 0.5f + 0.5f) * Hf, z);\n  \}\n  float3 project_mid(float3 P) \{\n    return project_cam(P, cam_pos, cam_right, cam_up, cam_back, cam_th);\n  \}\n  // the unit direction of the ray through pixel position (px, py)\n  float3 ray_dir(float px, float py) \{\n    float tv = cam_th * Hf / Wf;\n    float3 d = cam_right * ((px / Wf * 2.0f - 1.0f) * cam_th) + cam_up * ((py / Hf * 2.0f - 1.0f) * tv) - cam_back;\n    return unit3(d);\n  \}\n  void init() \{\n    Wf = float(surf.bounds.width());\n    Hf = float(surf.bounds.height());\n  \}\n\n  // one axis of the world position seen at pixel position (px, py), or 1e30 if the pixel isn't a clean surface\n  float coord_of(float sw, float sz, float px, float py, int axis) \{\n    if (sw < 0.5f || sz <= 0.0f) \{\n      return 1e30f;\n    \}\n    float3 P = cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * sz;\n    return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);\n  \}\n\n  // Blink reads images only in process() or in functions it calls directly, so the loops that read the surface\n  // image are all written out here, over a 160 x 90 grid. The q-th fraction of the samples along each axis is found\n  // by halving the range.\n  void process(int2 xy) \{\n    float t = 0.0f;\n    for (int j = 0; j < 90; j++) \{\n      for (int i = 0; i < 160; i++) \{\n        float px = (float(i) + 0.5f) * Wf / 160.0f;\n        float py = (float(j) + 0.5f) * Hf / 90.0f;\n        float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));\n        t += s.w;\n      \}\n    \}\n    dst() = float4(t, 0.0f, 0.0f, 1.0f);\n  \}\n\};\n"
+ rebuild ""
+ rebuild_finalise ""
+ useGPUIfAvailable false
+ vectorize false
+ name mfdiag_bounds_b_read
+ label "11"
+ xpos 700
+ ypos 140
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "320 180 0 0 320 180 1 mfdiag_bounds_c_coord_in1_fmt"
+ name mfdiag_bounds_c_coord_in1
+ xpos 860
+ ypos 40
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "2 1 0 0 2 1 1 mfdiag_bounds_c_coord_in0_fmt"
+ name mfdiag_bounds_c_coord_in0
+ xpos 840
+ ypos 40
+}
+BlinkScript {
+ inputs 2
+ ProgramGroup 1
+ kernelSource "// MoteField: the extent of the set the camera sees (world, scene units), from clean pixels on a grid of samples:\n// pixel 0 = low corner, pixel 1 = high corner, each the 0.5 / 99.5 percentile along each axis, so a few stray\n// far-away pixels don't stretch it. 'Light only through openings' follows rays out of this box.\nkernel MFBounds : ImageComputationKernel<ePixelWise>\n\{\n  Image<eRead, eAccessPoint, eEdgeClamped> space;\n  Image<eRead, eAccessRandom, eEdgeClamped> surf;\n  Image<eWrite> dst;\n\n  param:\n    float3 cam_pos;\n    float3 cam_right;\n    float3 cam_up;\n    float3 cam_back;\n    float cam_th;\n  local:\n    float Wf;\n    float Hf;\n\n  void define() \{\n    defineParam(cam_pos, \"cam_pos\", float3(0.0f, 150.0f, 400.0f));\n    defineParam(cam_right, \"cam_right\", float3(1.0f, 0.0f, 0.0f));\n    defineParam(cam_up, \"cam_up\", float3(0.0f, 1.0f, 0.0f));\n    defineParam(cam_back, \"cam_back\", float3(0.0f, 0.0f, 1.0f));\n    defineParam(cam_th, \"cam_th\", 0.5f);\n  \}\n\n\n  // ---- small maths\n  float smooth01(float x) \{\n    float c = clamp(x, 0.0f, 1.0f);\n    return c * c * (3.0f - 2.0f * c);\n  \}\n  float len3(float3 v) \{\n    return sqrt(dot(v, v));\n  \}\n  float3 unit3(float3 v) \{\n    return v / max(len3(v), 1e-12f);\n  \}\n  float wrap1(float x, float s) \{\n    float y = x + s * 0.5f;\n    return y - s * floor(y / s) - s * 0.5f;\n  \}\n  float erf_a(float x) \{\n    // Abramowitz and Stegun 7.1.26 (error under 1.5e-7)\n    float ax = fabs(x);\n    float t = 1.0f / (1.0f + 0.3275911f * ax);\n    float p = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;\n    float r = 1.0f - p * exp(-ax * ax);\n    return x < 0.0f ? -r : r;\n  \}\n  float pi1() \{\n    return 3.14159265358979f;\n  \}\n  int clampi(int x, int a, int b) \{\n    return x < a ? a : (x > b ? b : x);\n  \}\n  // ---- the camera: world point -> pixel x, y (Nuke's, y up, pixel centres at .5) and depth along the view\n  float3 project_cam(float3 P, float3 pos, float3 rr, float3 uu, float3 bb, float th) \{\n    float3 d = P - pos;\n    float x = dot(d, rr);\n    float y = dot(d, uu);\n    float z = -dot(d, bb);\n    float zs = z > 1e-9f ? z : 1e-9f;\n    float tv = th * Hf / Wf;\n    return float3((x / zs / th * 0.5f + 0.5f) * Wf, (y / zs / tv * 0.5f + 0.5f) * Hf, z);\n  \}\n  float3 project_mid(float3 P) \{\n    return project_cam(P, cam_pos, cam_right, cam_up, cam_back, cam_th);\n  \}\n  // the unit direction of the ray through pixel position (px, py)\n  float3 ray_dir(float px, float py) \{\n    float tv = cam_th * Hf / Wf;\n    float3 d = cam_right * ((px / Wf * 2.0f - 1.0f) * cam_th) + cam_up * ((py / Hf * 2.0f - 1.0f) * tv) - cam_back;\n    return unit3(d);\n  \}\n  void init() \{\n    Wf = float(surf.bounds.width());\n    Hf = float(surf.bounds.height());\n  \}\n\n  // one axis of the world position seen at pixel position (px, py), or 1e30 if the pixel isn't a clean surface\n  float coord_of(float sw, float sz, float px, float py, int axis) \{\n    if (sw < 0.5f || sz <= 0.0f) \{\n      return 1e30f;\n    \}\n    float3 P = cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * sz;\n    return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);\n  \}\n\n  // Blink reads images only in process() or in functions it calls directly, so the loops that read the surface\n  // image are all written out here, over a 160 x 90 grid. The q-th fraction of the samples along each axis is found\n  // by halving the range.\n  void process(int2 xy) \{\n    float t = 0.0f;\n    for (int j = 0; j < 90; j++) \{\n      for (int i = 0; i < 160; i++) \{\n        float px = (float(i) + 0.5f) * Wf / 160.0f;\n        float py = (float(j) + 0.5f) * Hf / 90.0f;\n        float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));\n        float c = coord_of(s.w, s.z, px, py, 0);\n        if (c < 1000.0f) \{\n          t += c;\n        \}\n      \}\n    \}\n    dst() = float4(t, 0.0f, 0.0f, 1.0f);\n  \}\n\};\n"
+ rebuild ""
+ rebuild_finalise ""
+ useGPUIfAvailable false
+ vectorize false
+ name mfdiag_bounds_c_coord
+ label "12"
+ xpos 840
+ ypos 140
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "320 180 0 0 320 180 1 mfdiag_bounds_d_big_numbers_in1_fmt"
+ name mfdiag_bounds_d_big_numbers_in1
+ xpos 1000
+ ypos 40
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "2 1 0 0 2 1 1 mfdiag_bounds_d_big_numbers_in0_fmt"
+ name mfdiag_bounds_d_big_numbers_in0
+ xpos 980
+ ypos 40
+}
+BlinkScript {
+ inputs 2
+ ProgramGroup 1
+ kernelSource "// MoteField: the extent of the set the camera sees (world, scene units), from clean pixels on a grid of samples:\n// pixel 0 = low corner, pixel 1 = high corner, each the 0.5 / 99.5 percentile along each axis, so a few stray\n// far-away pixels don't stretch it. 'Light only through openings' follows rays out of this box.\nkernel MFBounds : ImageComputationKernel<ePixelWise>\n\{\n  Image<eRead, eAccessPoint, eEdgeClamped> space;\n  Image<eRead, eAccessRandom, eEdgeClamped> surf;\n  Image<eWrite> dst;\n\n  param:\n    float3 cam_pos;\n    float3 cam_right;\n    float3 cam_up;\n    float3 cam_back;\n    float cam_th;\n  local:\n    float Wf;\n    float Hf;\n\n  void define() \{\n    defineParam(cam_pos, \"cam_pos\", float3(0.0f, 150.0f, 400.0f));\n    defineParam(cam_right, \"cam_right\", float3(1.0f, 0.0f, 0.0f));\n    defineParam(cam_up, \"cam_up\", float3(0.0f, 1.0f, 0.0f));\n    defineParam(cam_back, \"cam_back\", float3(0.0f, 0.0f, 1.0f));\n    defineParam(cam_th, \"cam_th\", 0.5f);\n  \}\n\n\n  // ---- small maths\n  float smooth01(float x) \{\n    float c = clamp(x, 0.0f, 1.0f);\n    return c * c * (3.0f - 2.0f * c);\n  \}\n  float len3(float3 v) \{\n    return sqrt(dot(v, v));\n  \}\n  float3 unit3(float3 v) \{\n    return v / max(len3(v), 1e-12f);\n  \}\n  float wrap1(float x, float s) \{\n    float y = x + s * 0.5f;\n    return y - s * floor(y / s) - s * 0.5f;\n  \}\n  float erf_a(float x) \{\n    // Abramowitz and Stegun 7.1.26 (error under 1.5e-7)\n    float ax = fabs(x);\n    float t = 1.0f / (1.0f + 0.3275911f * ax);\n    float p = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;\n    float r = 1.0f - p * exp(-ax * ax);\n    return x < 0.0f ? -r : r;\n  \}\n  float pi1() \{\n    return 3.14159265358979f;\n  \}\n  int clampi(int x, int a, int b) \{\n    return x < a ? a : (x > b ? b : x);\n  \}\n  // ---- the camera: world point -> pixel x, y (Nuke's, y up, pixel centres at .5) and depth along the view\n  float3 project_cam(float3 P, float3 pos, float3 rr, float3 uu, float3 bb, float th) \{\n    float3 d = P - pos;\n    float x = dot(d, rr);\n    float y = dot(d, uu);\n    float z = -dot(d, bb);\n    float zs = z > 1e-9f ? z : 1e-9f;\n    float tv = th * Hf / Wf;\n    return float3((x / zs / th * 0.5f + 0.5f) * Wf, (y / zs / tv * 0.5f + 0.5f) * Hf, z);\n  \}\n  float3 project_mid(float3 P) \{\n    return project_cam(P, cam_pos, cam_right, cam_up, cam_back, cam_th);\n  \}\n  // the unit direction of the ray through pixel position (px, py)\n  float3 ray_dir(float px, float py) \{\n    float tv = cam_th * Hf / Wf;\n    float3 d = cam_right * ((px / Wf * 2.0f - 1.0f) * cam_th) + cam_up * ((py / Hf * 2.0f - 1.0f) * tv) - cam_back;\n    return unit3(d);\n  \}\n  void init() \{\n    Wf = float(surf.bounds.width());\n    Hf = float(surf.bounds.height());\n  \}\n\n  // one axis of the world position seen at pixel position (px, py), or 1e30 if the pixel isn't a clean surface\n  float coord_of(float sw, float sz, float px, float py, int axis) \{\n    if (sw < 0.5f || sz <= 0.0f) \{\n      return 1e30f;\n    \}\n    float3 P = cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * sz;\n    return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);\n  \}\n\n  // Blink reads images only in process() or in functions it calls directly, so the loops that read the surface\n  // image are all written out here, over a 160 x 90 grid. The q-th fraction of the samples along each axis is found\n  // by halving the range.\n  void process(int2 xy) \{\n    float mn = 1e30f;\n    float mx = -1e30f;\n    float n = 0.0f;\n    for (int j = 0; j < 90; j++) \{\n      for (int i = 0; i < 160; i++) \{\n        float px = (float(i) + 0.5f) * Wf / 160.0f;\n        float py = (float(j) + 0.5f) * Hf / 90.0f;\n        float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));\n        float c = coord_of(s.w, s.z, px, py, 0);\n        if (c < 1e29f) \{\n          mn = min(mn, c);\n          mx = max(mx, c);\n          n += 1.0f;\n        \}\n      \}\n    \}\n    dst() = float4(mn, mx, n, 1.0f);\n  \}\n\};\n"
+ rebuild ""
+ rebuild_finalise ""
+ useGPUIfAvailable false
+ vectorize false
+ name mfdiag_bounds_d_big_numbers
+ label "13"
+ xpos 980
+ ypos 140
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "320 180 0 0 320 180 1 mfdiag_bounds_e_axis_loop_in1_fmt"
+ name mfdiag_bounds_e_axis_loop_in1
+ xpos 1140
+ ypos 40
+}
+Constant {
+ inputs 0
+ channels rgba
+ color {0 0 0 0}
+ format "2 1 0 0 2 1 1 mfdiag_bounds_e_axis_loop_in0_fmt"
+ name mfdiag_bounds_e_axis_loop_in0
+ xpos 1120
+ ypos 40
+}
+BlinkScript {
+ inputs 2
+ ProgramGroup 1
+ kernelSource "// MoteField: the extent of the set the camera sees (world, scene units), from clean pixels on a grid of samples:\n// pixel 0 = low corner, pixel 1 = high corner, each the 0.5 / 99.5 percentile along each axis, so a few stray\n// far-away pixels don't stretch it. 'Light only through openings' follows rays out of this box.\nkernel MFBounds : ImageComputationKernel<ePixelWise>\n\{\n  Image<eRead, eAccessPoint, eEdgeClamped> space;\n  Image<eRead, eAccessRandom, eEdgeClamped> surf;\n  Image<eWrite> dst;\n\n  param:\n    float3 cam_pos;\n    float3 cam_right;\n    float3 cam_up;\n    float3 cam_back;\n    float cam_th;\n  local:\n    float Wf;\n    float Hf;\n\n  void define() \{\n    defineParam(cam_pos, \"cam_pos\", float3(0.0f, 150.0f, 400.0f));\n    defineParam(cam_right, \"cam_right\", float3(1.0f, 0.0f, 0.0f));\n    defineParam(cam_up, \"cam_up\", float3(0.0f, 1.0f, 0.0f));\n    defineParam(cam_back, \"cam_back\", float3(0.0f, 0.0f, 1.0f));\n    defineParam(cam_th, \"cam_th\", 0.5f);\n  \}\n\n\n  // ---- small maths\n  float smooth01(float x) \{\n    float c = clamp(x, 0.0f, 1.0f);\n    return c * c * (3.0f - 2.0f * c);\n  \}\n  float len3(float3 v) \{\n    return sqrt(dot(v, v));\n  \}\n  float3 unit3(float3 v) \{\n    return v / max(len3(v), 1e-12f);\n  \}\n  float wrap1(float x, float s) \{\n    float y = x + s * 0.5f;\n    return y - s * floor(y / s) - s * 0.5f;\n  \}\n  float erf_a(float x) \{\n    // Abramowitz and Stegun 7.1.26 (error under 1.5e-7)\n    float ax = fabs(x);\n    float t = 1.0f / (1.0f + 0.3275911f * ax);\n    float p = ((((1.061405429f * t - 1.453152027f) * t + 1.421413741f) * t - 0.284496736f) * t + 0.254829592f) * t;\n    float r = 1.0f - p * exp(-ax * ax);\n    return x < 0.0f ? -r : r;\n  \}\n  float pi1() \{\n    return 3.14159265358979f;\n  \}\n  int clampi(int x, int a, int b) \{\n    return x < a ? a : (x > b ? b : x);\n  \}\n  // ---- the camera: world point -> pixel x, y (Nuke's, y up, pixel centres at .5) and depth along the view\n  float3 project_cam(float3 P, float3 pos, float3 rr, float3 uu, float3 bb, float th) \{\n    float3 d = P - pos;\n    float x = dot(d, rr);\n    float y = dot(d, uu);\n    float z = -dot(d, bb);\n    float zs = z > 1e-9f ? z : 1e-9f;\n    float tv = th * Hf / Wf;\n    return float3((x / zs / th * 0.5f + 0.5f) * Wf, (y / zs / tv * 0.5f + 0.5f) * Hf, z);\n  \}\n  float3 project_mid(float3 P) \{\n    return project_cam(P, cam_pos, cam_right, cam_up, cam_back, cam_th);\n  \}\n  // the unit direction of the ray through pixel position (px, py)\n  float3 ray_dir(float px, float py) \{\n    float tv = cam_th * Hf / Wf;\n    float3 d = cam_right * ((px / Wf * 2.0f - 1.0f) * cam_th) + cam_up * ((py / Hf * 2.0f - 1.0f) * tv) - cam_back;\n    return unit3(d);\n  \}\n  void init() \{\n    Wf = float(surf.bounds.width());\n    Hf = float(surf.bounds.height());\n  \}\n\n  // one axis of the world position seen at pixel position (px, py), or 1e30 if the pixel isn't a clean surface\n  float coord_of(float sw, float sz, float px, float py, int axis) \{\n    if (sw < 0.5f || sz <= 0.0f) \{\n      return 1e30f;\n    \}\n    float3 P = cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * sz;\n    return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);\n  \}\n\n  // Blink reads images only in process() or in functions it calls directly, so the loops that read the surface\n  // image are all written out here, over a 160 x 90 grid. The q-th fraction of the samples along each axis is found\n  // by halving the range.\n  void process(int2 xy) \{\n    float r0 = 0.0f;\n    float r1 = 0.0f;\n    float r2 = 0.0f;\n    for (int axis = 0; axis < 3; axis++) \{\n      float n = 0.0f;\n      for (int j = 0; j < 90; j++) \{\n        for (int i = 0; i < 160; i++) \{\n          float px = (float(i) + 0.5f) * Wf / 160.0f;\n          float py = (float(j) + 0.5f) * Hf / 90.0f;\n          float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));\n          float c = coord_of(s.w, s.z, px, py, axis);\n          if (c < 1000.0f) \{\n            n += 1.0f;\n          \}\n        \}\n      \}\n      if (axis == 0) \{\n        r0 = n;\n      \} else if (axis == 1) \{\n        r1 = n;\n      \} else \{\n        r2 = n;\n      \}\n    \}\n    dst() = float4(r0, r1, r2, 1.0f);\n  \}\n\};\n"
+ rebuild ""
+ rebuild_finalise ""
+ useGPUIfAvailable false
+ vectorize false
+ name mfdiag_bounds_e_axis_loop
+ label "14"
+ xpos 1120
  ypos 140
 }
 Constant {
@@ -348,7 +503,7 @@ Constant {
  color {0 0 0 0}
  format "320 180 0 0 320 180 1 mfdiag_bounce_in4_fmt"
  name mfdiag_bounce_in4
- xpos 640
+ xpos 1340
  ypos 40
 }
 Constant {
@@ -357,7 +512,7 @@ Constant {
  color {0 0 0 0}
  format "320 180 0 0 320 180 1 mfdiag_bounce_in3_fmt"
  name mfdiag_bounce_in3
- xpos 620
+ xpos 1320
  ypos 40
 }
 Constant {
@@ -366,7 +521,7 @@ Constant {
  color {0 0 0 0}
  format "2 1 0 0 2 1 1 mfdiag_bounce_in2_fmt"
  name mfdiag_bounce_in2
- xpos 600
+ xpos 1300
  ypos 40
 }
 Constant {
@@ -375,7 +530,7 @@ Constant {
  color {0 0 0 0}
  format "320 180 0 0 320 180 1 mfdiag_bounce_in1_fmt"
  name mfdiag_bounce_in1
- xpos 580
+ xpos 1280
  ypos 40
 }
 Constant {
@@ -384,7 +539,7 @@ Constant {
  color {0 0 0 0}
  format "3 144 0 0 3 144 1 mfdiag_bounce_in0_fmt"
  name mfdiag_bounce_in0
- xpos 560
+ xpos 1260
  ypos 40
 }
 BlinkScript {
@@ -396,8 +551,8 @@ BlinkScript {
  useGPUIfAvailable false
  vectorize false
  name mfdiag_kernel_bounce
- label "11"
- xpos 560
+ label "16"
+ xpos 1260
  ypos 140
 }
 Constant {
@@ -406,7 +561,7 @@ Constant {
  color {0 0 0 0}
  format "2 1 0 0 2 1 1 mfdiag_place_in3_fmt"
  name mfdiag_place_in3
- xpos 760
+ xpos 1460
  ypos 40
 }
 Constant {
@@ -415,7 +570,7 @@ Constant {
  color {0 0 0 0}
  format "320 180 0 0 320 180 1 mfdiag_place_in2_fmt"
  name mfdiag_place_in2
- xpos 740
+ xpos 1440
  ypos 40
 }
 Constant {
@@ -424,7 +579,7 @@ Constant {
  color {0 0 0 0}
  format "2 64 0 0 2 64 1 mfdiag_place_in1_fmt"
  name mfdiag_place_in1
- xpos 720
+ xpos 1420
  ypos 40
 }
 Constant {
@@ -433,7 +588,7 @@ Constant {
  color {0 0 0 0}
  format "256 512 0 0 256 512 1 mfdiag_place_in0_fmt"
  name mfdiag_place_in0
- xpos 700
+ xpos 1400
  ypos 40
 }
 BlinkScript {
@@ -444,8 +599,8 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_place
- label "12"
- xpos 700
+ label "17"
+ xpos 1400
  ypos 140
 }
 Constant {
@@ -454,7 +609,7 @@ Constant {
  color {0 0 0 0}
  format "3 144 0 0 3 144 1 mfdiag_motes_in3_fmt"
  name mfdiag_motes_in3
- xpos 900
+ xpos 1600
  ypos 40
 }
 Constant {
@@ -463,7 +618,7 @@ Constant {
  color {0 0 0 0}
  format "320 180 0 0 320 180 1 mfdiag_motes_in2_fmt"
  name mfdiag_motes_in2
- xpos 880
+ xpos 1580
  ypos 40
 }
 Constant {
@@ -472,7 +627,7 @@ Constant {
  color {0 0 0 0}
  format "256 512 0 0 256 512 1 mfdiag_motes_in1_fmt"
  name mfdiag_motes_in1
- xpos 860
+ xpos 1560
  ypos 40
 }
 Constant {
@@ -481,7 +636,7 @@ Constant {
  color {0 0 0 0}
  format "640 512 0 0 640 512 1 mfdiag_motes_in0_fmt"
  name mfdiag_motes_in0
- xpos 840
+ xpos 1540
  ypos 40
 }
 BlinkScript {
@@ -492,8 +647,8 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_motes
- label "13"
- xpos 840
+ label "18"
+ xpos 1540
  ypos 140
 }
 Constant {
@@ -502,7 +657,7 @@ Constant {
  color {0 0 0 0}
  format "320 180 0 0 320 180 1 mfdiag_bins_in2_fmt"
  name mfdiag_bins_in2
- xpos 1020
+ xpos 1720
  ypos 40
 }
 Constant {
@@ -511,7 +666,7 @@ Constant {
  color {0 0 0 0}
  format "640 512 0 0 640 512 1 mfdiag_bins_in1_fmt"
  name mfdiag_bins_in1
- xpos 1000
+ xpos 1700
  ypos 40
 }
 Constant {
@@ -520,7 +675,7 @@ Constant {
  color {0 0 0 0}
  format "2304 683 0 0 2304 683 1 mfdiag_bins_in0_fmt"
  name mfdiag_bins_in0
- xpos 980
+ xpos 1680
  ypos 40
 }
 BlinkScript {
@@ -531,8 +686,8 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_bins
- label "14"
- xpos 980
+ label "19"
+ xpos 1680
  ypos 140
 }
 Constant {
@@ -541,7 +696,7 @@ Constant {
  color {0 0 0 0}
  format "2304 683 0 0 2304 683 1 mfdiag_rows_in1_fmt"
  name mfdiag_rows_in1
- xpos 1140
+ xpos 1840
  ypos 40
 }
 Constant {
@@ -550,7 +705,7 @@ Constant {
  color {0 0 0 0}
  format "2304 8 0 0 2304 8 1 mfdiag_rows_in0_fmt"
  name mfdiag_rows_in0
- xpos 1120
+ xpos 1820
  ypos 40
 }
 BlinkScript {
@@ -561,8 +716,8 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_rows
- label "15"
- xpos 1120
+ label "20"
+ xpos 1820
  ypos 140
 }
 Constant {
@@ -571,7 +726,7 @@ Constant {
  color {0 0 0 0}
  format "2304 8 0 0 2304 8 1 mfdiag_draw_in3_fmt"
  name mfdiag_draw_in3
- xpos 1320
+ xpos 2020
  ypos 40
 }
 Constant {
@@ -580,7 +735,7 @@ Constant {
  color {0 0 0 0}
  format "2304 683 0 0 2304 683 1 mfdiag_draw_in2_fmt"
  name mfdiag_draw_in2
- xpos 1300
+ xpos 2000
  ypos 40
 }
 Constant {
@@ -589,7 +744,7 @@ Constant {
  color {0 0 0 0}
  format "640 512 0 0 640 512 1 mfdiag_draw_in1_fmt"
  name mfdiag_draw_in1
- xpos 1280
+ xpos 1980
  ypos 40
 }
 Constant {
@@ -598,7 +753,7 @@ Constant {
  color {0 0 0 0}
  format "320 180 0 0 320 180 1 mfdiag_draw_in0_fmt"
  name mfdiag_draw_in0
- xpos 1260
+ xpos 1960
  ypos 40
 }
 BlinkScript {
@@ -609,8 +764,8 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_draw
- label "16"
- xpos 1260
+ label "21"
+ xpos 1960
  ypos 140
 }
 NoOp {
@@ -619,8 +774,8 @@ NoOp {
  label "Test next"
  addUserKnob {20 diagnose l Diagnose}
  addUserKnob {26 about l "" +STARTLINE T "Every MoteField kernel, and small probes of single Blink features, on the CPU. <b>Check builds</b> reads which failed to build, without rendering anything. <b>Test next</b> renders one node at a time: before each press, the line below says which node is next, so if Nuke crashes, that is the one. After a crash, set Next step to carry on past it. For a node that says ERROR, view it: Nuke shows the error text in the viewer."}
- addUserKnob {22 check_builds l "Check builds" T "import nuke\nnames = \['mfdiag_probe_basic', 'mfdiag_probe_float3_param', 'mfdiag_probe_float3_function', 'mfdiag_probe_bool_local', 'mfdiag_probe_loops', 'mfdiag_probe_random_component', 'mfdiag_kernel_modes', 'mfdiag_kernel_facts', 'mfdiag_kernel_surface', 'mfdiag_kernel_bounds', 'mfdiag_kernel_bounce', 'mfdiag_kernel_place', 'mfdiag_kernel_motes', 'mfdiag_kernel_bins', 'mfdiag_kernel_rows', 'mfdiag_kernel_draw', 'mfdiag_info_array_in_function', 'mfdiag_info_one_value_vector', 'mfdiag_info_while_loop', 'mfdiag_info_int_division'\]\nlines = \[\]\nfor i, name in enumerate(names):\n    n = nuke.toNode(name)\n    err = False\n    try:\n        err = n.hasError()\n    except Exception:\n        pass\n    lines.append('%d %s: %s' % (i + 1, name\[7:\], 'ERROR' if err else 'no error yet'))\nme = nuke.thisNode()\ni = max(int(me\['step'\].value()) - 1, 0)\nnxt = ('<b>Next to test: %d %s</b>' % (i + 1, names\[i\]\[7:\])) if i < len(names) else '<b>All tested.</b>'\nme\['result'\].setValue('<br>'.join(\['Builds (nothing rendered):'\] + lines) + '<br><br>' + me\['log'\].value() + nxt)\n" +STARTLINE}
- addUserKnob {22 test_next l "Test next" T "import nuke\nnames = \['mfdiag_probe_basic', 'mfdiag_probe_float3_param', 'mfdiag_probe_float3_function', 'mfdiag_probe_bool_local', 'mfdiag_probe_loops', 'mfdiag_probe_random_component', 'mfdiag_kernel_modes', 'mfdiag_kernel_facts', 'mfdiag_kernel_surface', 'mfdiag_kernel_bounds', 'mfdiag_kernel_bounce', 'mfdiag_kernel_place', 'mfdiag_kernel_motes', 'mfdiag_kernel_bins', 'mfdiag_kernel_rows', 'mfdiag_kernel_draw', 'mfdiag_info_array_in_function', 'mfdiag_info_one_value_vector', 'mfdiag_info_while_loop', 'mfdiag_info_int_division'\]\nme = nuke.thisNode()\ni = max(int(me\['step'\].value()) - 1, 0)\nif i >= len(names):\n    nuke.message('All %d tested.' % len(names))\nelse:\n    n = nuke.toNode(names\[i\])\n    try:\n        n.sample('rgba.red', 0.5, 0.5)\n    except Exception:\n        pass\n    err = False\n    try:\n        err = n.hasError()\n    except Exception:\n        pass\n    log = me\['log'\].value()\n    log += '%d %s: %s<br>' % (i + 1, names\[i\]\[7:\], 'ERROR' if err else 'ok')\n    me\['log'\].setValue(log)\n    me\['step'\].setValue(i + 2)\n    nxt = ('<b>Next to test: %d %s</b>' % (i + 2, names\[i + 1\]\[7:\])) if i + 1 < len(names) else '<b>All tested.</b>'\n    me\['result'\].setValue(log + nxt)\n"}
+ addUserKnob {22 check_builds l "Check builds" T "import nuke\nnames = \['mfdiag_probe_basic', 'mfdiag_probe_float3_param', 'mfdiag_probe_float3_function', 'mfdiag_probe_bool_local', 'mfdiag_probe_loops', 'mfdiag_probe_random_component', 'mfdiag_kernel_modes', 'mfdiag_kernel_facts', 'mfdiag_kernel_surface', 'mfdiag_bounds_a_shell', 'mfdiag_bounds_b_read', 'mfdiag_bounds_c_coord', 'mfdiag_bounds_d_big_numbers', 'mfdiag_bounds_e_axis_loop', 'mfdiag_kernel_bounds', 'mfdiag_kernel_bounce', 'mfdiag_kernel_place', 'mfdiag_kernel_motes', 'mfdiag_kernel_bins', 'mfdiag_kernel_rows', 'mfdiag_kernel_draw', 'mfdiag_info_array_in_function', 'mfdiag_info_one_value_vector', 'mfdiag_info_while_loop', 'mfdiag_info_int_division'\]\nlines = \[\]\nfor i, name in enumerate(names):\n    n = nuke.toNode(name)\n    err = False\n    try:\n        err = n.hasError()\n    except Exception:\n        pass\n    lines.append('%d %s: %s' % (i + 1, name\[7:\], 'ERROR' if err else 'no error yet'))\nme = nuke.thisNode()\ni = max(int(me\['step'\].value()) - 1, 0)\nnxt = ('<b>Next to test: %d %s</b>' % (i + 1, names\[i\]\[7:\])) if i < len(names) else '<b>All tested.</b>'\nme\['result'\].setValue('<br>'.join(\['Builds (nothing rendered):'\] + lines) + '<br><br>' + me\['log'\].value() + nxt)\n" +STARTLINE}
+ addUserKnob {22 test_next l "Test next" T "import nuke\nnames = \['mfdiag_probe_basic', 'mfdiag_probe_float3_param', 'mfdiag_probe_float3_function', 'mfdiag_probe_bool_local', 'mfdiag_probe_loops', 'mfdiag_probe_random_component', 'mfdiag_kernel_modes', 'mfdiag_kernel_facts', 'mfdiag_kernel_surface', 'mfdiag_bounds_a_shell', 'mfdiag_bounds_b_read', 'mfdiag_bounds_c_coord', 'mfdiag_bounds_d_big_numbers', 'mfdiag_bounds_e_axis_loop', 'mfdiag_kernel_bounds', 'mfdiag_kernel_bounce', 'mfdiag_kernel_place', 'mfdiag_kernel_motes', 'mfdiag_kernel_bins', 'mfdiag_kernel_rows', 'mfdiag_kernel_draw', 'mfdiag_info_array_in_function', 'mfdiag_info_one_value_vector', 'mfdiag_info_while_loop', 'mfdiag_info_int_division'\]\nme = nuke.thisNode()\ni = max(int(me\['step'\].value()) - 1, 0)\nif i >= len(names):\n    nuke.message('All %d tested.' % len(names))\nelse:\n    n = nuke.toNode(names\[i\])\n    try:\n        n.sample('rgba.red', 0.5, 0.5)\n    except Exception:\n        pass\n    err = False\n    try:\n        err = n.hasError()\n    except Exception:\n        pass\n    log = me\['log'\].value()\n    log += '%d %s: %s<br>' % (i + 1, names\[i\]\[7:\], 'ERROR' if err else 'ok')\n    me\['log'\].setValue(log)\n    me\['step'\].setValue(i + 2)\n    nxt = ('<b>Next to test: %d %s</b>' % (i + 2, names\[i + 1\]\[7:\])) if i + 1 < len(names) else '<b>All tested.</b>'\n    me\['result'\].setValue(log + nxt)\n"}
  addUserKnob {26 result l "" +STARTLINE T "<b>Next to test: 1 probe_basic</b>"}
  addUserKnob {3 step l "Next step" t "Which node Test next renders next (1 = the first). Set it to carry on after a crash."}
  addUserKnob {1 log +INVISIBLE}
