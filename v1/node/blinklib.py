@@ -139,3 +139,45 @@ def images(src):
 
 
 KERNELS = ('modes', 'facts', 'surface', 'bounds', 'bounce', 'place', 'motes', 'bins', 'rows', 'draw')
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Rules the kernels keep, so older Blink (Nuke 12) builds and runs them too
+# ---------------------------------------------------------------------------------------------------------------------
+def functions(src):
+    """{name: body} of each function in a kernel (user functions and define / init / process)."""
+    out = {}
+    for m in re.finditer(r'\n  (?:float[234]?|int[234]?|bool|void)\s+(\w+)\s*\([^)]*\)\s*\{', src):
+        i, depth = m.end(), 1
+        while depth:
+            depth += {'{': 1, '}': -1}.get(src[i], 0)
+            i += 1
+        out[m.group(1)] = src[m.end():i - 1]
+    return out
+
+
+def rule_breaks(src):
+    """What in a kernel's source older Blink may reject or crash on: [text]. Empty means fine.
+
+    * images read in a function that another user function calls (Blink reads images only in process() or in the
+      functions it calls directly; Nuke 12.2 crashes otherwise);
+    * images read in init();
+    * arrays, while loops, one-value vector constructors."""
+    out = []
+    imgs = images(src)
+    fns = functions(src)
+    reads = set(f for f, body in fns.items() if any(re.search(r'\b%s\s*\(' % im, body) for im in imgs))
+    for f, body in fns.items():
+        for g in reads:
+            if g != f and f != 'process' and re.search(r'\b%s\s*\(' % g, body):
+                out.append('%s reads images and is called from %s' % (g, f))
+    if 'init' in reads:
+        out.append('init reads images')
+    code = re.sub(r'//[^\n]*', '', src)
+    if re.search(r'\w\s*\[', code):
+        out.append('an array')
+    if re.search(r'\bwhile\s*\(', code):
+        out.append('a while loop')
+    if re.search(r'\bfloat[234]\(\s*[^,()]*\s*\)', code):
+        out.append('a one-value vector constructor')
+    return out

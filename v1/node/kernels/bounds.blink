@@ -27,58 +27,72 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
     Hf = float(surf.bounds.height());
   }
 
-  // one axis of the world position under sample k of a 160 x 90 grid, or 1e30 if that pixel isn't a clean surface
-  float sample_at(int k, int axis) {
+  // the pixel position of sample k of a 160 x 90 grid
+  float2 grid_at(int k) {
     int i = k - (k / 160) * 160;
     int j = k / 160;
-    float px = (float(i) + 0.5f) * Wf / 160.0f;
-    float py = (float(j) + 0.5f) * Hf / 90.0f;
-    float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+    return float2((float(i) + 0.5f) * Wf / 160.0f, (float(j) + 0.5f) * Hf / 90.0f);
+  }
+
+  // one axis of the world position seen at grid position g, or 1e30 if the pixel isn't a clean surface
+  float coord_of(float4 s, float2 g, int axis) {
     if (s.w < 0.5f || s.z <= 0.0f) {
       return 1e30f;
     }
-    float3 P = cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * s.z;
+    float3 P = cam_pos + ray_dir(floor(g.x) + 0.5f, floor(g.y) + 0.5f) * s.z;
     return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);
   }
 
-  // the q-th fraction of the samples along one axis (by halving the range: no arrays, for older Blink)
-  float percentile(int axis, float q) {
-    float mn = 1e30f;
-    float mx = -1e30f;
-    float n = 0.0f;
-    for (int k = 0; k < 14400; k++) {
-      float c = sample_at(k, axis);
-      if (c < 1e29f) {
-        mn = min(mn, c);
-        mx = max(mx, c);
-        n += 1.0f;
-      }
-    }
-    if (n < 1.0f) {
-      return 0.0f;
-    }
-    float lo = mn;
-    float hi = mx;
-    for (int it = 0; it < 20; it++) {
-      float mid = 0.5f * (lo + hi);
-      float below = 0.0f;
-      for (int k = 0; k < 14400; k++) {
-        float c = sample_at(k, axis);
-        if (c <= mid) {
-          below += 1.0f;
-        }
-      }
-      if (below >= q * n) {
-        hi = mid;
-      } else {
-        lo = mid;
-      }
-    }
-    return hi;
-  }
-
+  // Blink reads images only in process() or in functions it calls directly, so the loops that read the surface
+  // image are all written out here. The q-th fraction of the samples along each axis is found by halving the range.
   void process(int2 xy) {
     float q = xy.x == 0 ? 0.005f : 0.995f;
-    dst() = float4(percentile(0, q), percentile(1, q), percentile(2, q), 1.0f);
+    float r0 = 0.0f;
+    float r1 = 0.0f;
+    float r2 = 0.0f;
+    for (int axis = 0; axis < 3; axis++) {
+      float mn = 1e30f;
+      float mx = -1e30f;
+      float n = 0.0f;
+      for (int k = 0; k < 14400; k++) {
+        float2 g = grid_at(k);
+        float c = coord_of(surf(surf.bounds.x1 + int(g.x), surf.bounds.y1 + int(g.y)), g, axis);
+        if (c < 1e29f) {
+          mn = min(mn, c);
+          mx = max(mx, c);
+          n += 1.0f;
+        }
+      }
+      float lo = mn;
+      float hi = mx;
+      if (n < 1.0f) {
+        hi = 0.0f;
+      } else {
+        for (int it = 0; it < 20; it++) {
+          float mid = 0.5f * (lo + hi);
+          float below = 0.0f;
+          for (int k = 0; k < 14400; k++) {
+            float2 g = grid_at(k);
+            float c = coord_of(surf(surf.bounds.x1 + int(g.x), surf.bounds.y1 + int(g.y)), g, axis);
+            if (c <= mid) {
+              below += 1.0f;
+            }
+          }
+          if (below >= q * n) {
+            hi = mid;
+          } else {
+            lo = mid;
+          }
+        }
+      }
+      if (axis == 0) {
+        r0 = hi;
+      } else if (axis == 1) {
+        r1 = hi;
+      } else {
+        r2 = hi;
+      }
+    }
+    dst() = float4(r0, r1, r2, 1.0f);
   }
 };

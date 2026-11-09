@@ -51,7 +51,7 @@ for i, name in enumerate(names):
         pass
     lines.append('%%d %%s: %%s' %% (i + 1, name[7:], 'ERROR' if err else 'no error yet'))
 me = nuke.thisNode()
-i = int(me['step'].value())
+i = max(int(me['step'].value()) - 1, 0)
 nxt = ('<b>Next to test: %%d %%s</b>' %% (i + 1, names[i][7:])) if i < len(names) else '<b>All tested.</b>'
 me['result'].setValue('<br>'.join(['Builds (nothing rendered):'] + lines) + '<br><br>' + me['log'].value() + nxt)
 """
@@ -60,7 +60,7 @@ me['result'].setValue('<br>'.join(['Builds (nothing rendered):'] + lines) + '<br
 TEST_NEXT = """import nuke
 names = %r
 me = nuke.thisNode()
-i = int(me['step'].value())
+i = max(int(me['step'].value()) - 1, 0)
 if i >= len(names):
     nuke.message('All %%d tested.' %% len(names))
 else:
@@ -77,7 +77,7 @@ else:
     log = me['log'].value()
     log += '%%d %%s: %%s<br>' %% (i + 1, names[i][7:], 'ERROR' if err else 'ok')
     me['log'].setValue(log)
-    me['step'].setValue(i + 1)
+    me['step'].setValue(i + 2)
     nxt = ('<b>Next to test: %%d %%s</b>' %% (i + 2, names[i + 1][7:])) if i + 1 < len(names) else '<b>All tested.</b>'
     me['result'].setValue(log + nxt)
 """
@@ -121,15 +121,16 @@ def build(version='12.2 v1'):
               'Every MoteField kernel, and small probes of single Blink features, on the CPU. '
               '<b>Check builds</b> reads which failed to build, without rendering anything. '
               '<b>Test next</b> renders one node at a time: before each press, the line below says which node is '
-              'next, so if Nuke crashes, that is the one. For a node that says ERROR, view it: Nuke shows the '
-              'error text in the viewer.'),
+              'next, so if Nuke crashes, that is the one. After a crash, set Next step to carry on past it. For a '
+              'node that says ERROR, view it: Nuke shows the error text in the viewer.'),
           ' addUserKnob {22 check_builds l "Check builds" T %s +STARTLINE}' % nk.q(CHECK_BUILDS % (names,)),
           ' addUserKnob {22 test_next l "Test next" T %s}' % nk.q(TEST_NEXT % (names,)),
           ' addUserKnob {26 result l "" +STARTLINE T %s}' % nk.q('<b>Next to test: 1 %s</b>' % names[0][7:]),
-          ' addUserKnob {3 step +INVISIBLE}',
+          ' addUserKnob {3 step l "Next step" t %s}' % nk.q('Which node Test next renders next (1 = the first). '
+                                                             'Set it to carry on after a crash.'),
           ' addUserKnob {1 log +INVISIBLE}',
+          ' step 1',
           ' xpos 0', ' ypos -320', '}', '']
-    # each node labelled with its place in the order
     return '\n'.join(L)
 
 

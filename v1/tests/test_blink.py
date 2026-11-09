@@ -55,6 +55,28 @@ def blurred(img, r=3):
     return a
 
 
+class OlderBlink(unittest.TestCase):
+    """The kernels keep to what Nuke 12.2's Blink builds and runs (found on a real Nuke 12.2: an image read two
+    function calls deep crashed it)."""
+
+    def test_kernels_keep_the_rules(self):
+        for k in bl.KERNELS:
+            self.assertEqual(bl.rule_breaks(bl.source(k)), [], k)
+
+    def test_the_rules_catch_what_they_should(self):
+        src = bl.source('bounds').replace('  void process(int2 xy) {', """  float bad(int k) {
+    return surf(k, 0).x;
+  }
+  float worse(int k) {
+    return bad(k);
+  }
+  void process(int2 xy) {
+    float a[2];""", 1)
+        found = bl.rule_breaks(src)
+        self.assertIn('bad reads images and is called from worse', found)
+        self.assertIn('an array', found)
+
+
 @unittest.skipUnless(HAVE_CXX, 'needs g++ to compile the kernels')
 class Randomness(unittest.TestCase):
     def test_hash_in_16_bit_halves_matches_the_reference(self):

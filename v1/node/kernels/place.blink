@@ -65,19 +65,6 @@ kernel MFPlace : ImageComputationKernel<ePixelWise>
     tap_b = cross(Ldir, tap_a);
   }
 
-  // the key light reaching P (world, scene units), averaged over a small disc across the light (light.soft_visibility)
-  float soft_vis(float3 P, float radius, float3 lo, float3 hi) {
-    float v = vis_at(P, lo, hi);
-    if (radius <= 0.0f) {
-      return v;
-    }
-    for (int k = 0; k < 5; k++) {
-      float a = 6.28318530717959f * float(k) / 5.0f + 0.3f;
-      v += vis_at(P + (tap_a * cos(a) + tap_b * sin(a)) * radius, lo, hi);
-    }
-    return v / 6.0f;
-  }
-
   void process(int2 xy) {
     int g = xy.x / @STATE_COLS@;
     int i = xy.y * @STATE_COLS@ + (xy.x - g * @STATE_COLS@);
@@ -182,7 +169,20 @@ kernel MFPlace : ImageComputationKernel<ePixelWise>
       dst() = float4(P.x, P.y, P.z, w);
     } else {
       float3 V = vel / su;
-      float v = w > 0.0f ? soft_vis(P, (shadow_soft + 12.0f * steady) * 0.01f / su, lo, hi) : 0.0f;
+      // the key light reaching it, averaged over a small disc across the light (light.soft_visibility). Written
+      // out here: Blink reads images only in process() or in functions it calls directly (vis_at reads the surface)
+      float v = 0.0f;
+      if (w > 0.0f) {
+        float radius = (shadow_soft + 12.0f * steady) * 0.01f / su;
+        v = vis_at(P, lo, hi);
+        if (radius > 0.0f) {
+          for (int k = 0; k < 5; k++) {
+            float a = 6.28318530717959f * float(k) / 5.0f + 0.3f;
+            v += vis_at(P + (tap_a * cos(a) + tap_b * sin(a)) * radius, lo, hi);
+          }
+          v = v / 6.0f;
+        }
+      }
       dst() = float4(V.x, V.y, V.z, v);
     }
   }
