@@ -108,8 +108,8 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
     K = clampi(K, 1, 24);
     float bend = rk.z;
     float total = 0.0f;
-    for (int s = 0; s < S; s++) {
-      float ts = (float(s) + 0.5f) / float(S);
+    for (int si = 0; si < S; si++) {
+      float ts = (float(si) + 0.5f) / float(S);
       float sw = shutter_w(ts);
       float bx = sk.x + (sk.z - sk.x) * ts;
       float by = sk.y + (sk.w - sk.y) * ts;

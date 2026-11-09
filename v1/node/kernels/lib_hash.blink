@@ -24,8 +24,8 @@
     return int2(a.x >> k, ((a.y >> k) | (a.x << (16 - k))) & 65535);
   }
   int2 pcg(int2 v) {
-    int2 s = u_add(u_mul(v, int2(11410, 30645)), int2(44118, 19205));
-    int2 w = u_mul(u_xor(u_shr(s, (s.x >> 12) + 4), s), int2(4238, 62169));
+    int2 st = u_add(u_mul(v, int2(11410, 30645)), int2(44118, 19205));
+    int2 w = u_mul(u_xor(u_shr(st, (st.x >> 12) + 4), st), int2(4238, 62169));
     return u_xor(u_shr(w, 22), w);
   }
   int2 word(int v) {

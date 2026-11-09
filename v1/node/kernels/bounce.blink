@@ -69,12 +69,12 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
         float fy = (float(cy) * ch + (float(j) + 0.5f) * sty);
         int sx = in_surf.bounds.x1 + int(fx);
         int sy = in_surf.bounds.y1 + int(fy);
-        float4 s = in_surf(sx, sy);
-        if (s.w < 0.5f || s.z <= 0.0f) {
+        float4 smp = in_surf(sx, sy);
+        if (smp.w < 0.5f || smp.z <= 0.0f) {
           continue;
         }
         float3 dir = ray_dir(float(sx - in_surf.bounds.x1) + 0.5f, float(sy - in_surf.bounds.y1) + 0.5f);
-        float3 P = cam_pos + dir * s.z;
+        float3 P = cam_pos + dir * smp.z;
         float4 nn = in_nrm(sx, sy);
         float3 N = float3(nn.x, nn.y, nn.z);
         if (dot(N, N) < 1e-12f) {
@@ -89,7 +89,7 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
         if (v <= 0.0f) {
           continue;
         }
-        float dist_m = s.z * su;
+        float dist_m = smp.z * su;
         float cosv = fabs(dot(dir, N));
         float area = (dist_m * pix) * (dist_m * pix) / max(cosv, 0.2f);
         float3 col = float3(albedo, albedo, albedo);

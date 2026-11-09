@@ -15,9 +15,10 @@ from node import blinklib as bl, nk                 # noqa: E402
 from node.build_node import GRAPH, SCALAR           # noqa: E402
 
 PROBES = ('basic', 'float3_param', 'float3_function', 'bool_local', 'loops', 'random_component',
-          'array_in_function', 'one_value_vector', 'while_loop', 'int_division')
-# features the node itself avoids (to know about, not to worry about)
-INFO_ONLY = ('array_in_function', 'one_value_vector', 'while_loop', 'int_division')
+          'array_in_function', 'one_value_vector', 'while_loop', 'int_division', 'vector_named_s')
+# features the node itself avoids (to know about, not to worry about). The last, a vector variable named s read
+# from an image, is what Nuke 12.2 seems to crash on: it goes last.
+INFO_ONLY = ('array_in_function', 'one_value_vector', 'while_loop', 'int_division', 'vector_named_s')
 
 PIC = (320, 180)                                    # the stand-in picture size for full-frame inputs
 SIZES = {'mf_space_modes': (2, 64), 'mf_space_facts': (3, 1), 'mf_space_bounds': (2, 1),
@@ -29,45 +30,11 @@ SIZES = {'mf_space_modes': (2, 64), 'mf_space_facts': (3, 1), 'mf_space_bounds':
          'mf_place': (2 * bl.STATE_COLS, bl.STATE_H), 'mf_motes': (bl.STATE_W, bl.STATE_H),
          'mf_bins': (bl.NTILES, bl.ROWS1), 'mf_rows': (bl.NTILES, bl.ROWS2)}
 
-# Nuke 12.2 crashed reading pixels in a loop from the set-bounds kernel's input named "surf", with that input's
-# bounds inside the read. The kernels now avoid both; these two probes tell which one it was.
-READ_LOOP = """    float t = 0.0f;
-    for (int j = 0; j < 90; j++) {
-      for (int i = 0; i < 160; i++) {
-        float px = (float(i) + 0.5f) * Wf / 160.0f;
-        float py = (float(j) + 0.5f) * Hf / 90.0f;
-        float4 s = %s;
-        t += s.w;
-      }
-    }
-    dst() = float4(t, 0.0f, 0.0f, 1.0f);"""
-READ_STEPS = [
-    # the input named surf, its bounds read first
-    ('name_surf', 'surf', """    int x0 = surf.bounds.x1;
-    int y0 = surf.bounds.y1;
-""" + READ_LOOP % 'surf(x0 + int(px), y0 + int(py))'),
-    # another name, its bounds inside the read
-    ('bounds_inside_read', 'in_surf', READ_LOOP % 'in_surf(in_surf.bounds.x1 + int(px), in_surf.bounds.y1 + int(py))'),
-]
-
-
-def read_step(name, body):
-    """The set-bounds kernel with its process() replaced by body, its surface input named name."""
-    src = bl.source('bounds')
-    a = src.index('  void process(int2 xy) {')
-    b = src.rindex('};')
-    src = src[:a] + '  void process(int2 xy) {\n' + body + '\n  }\n' + src[b:]
-    return src.replace('in_surf', name) if name != 'in_surf' else src
-
-
 def order():
     """The nodes in the order to test them: the simple feature probes, then the kernels as the node runs them, then
     the probes of features the node doesn't use."""
     out = ['mfdiag_probe_' + p for p in PROBES if p not in INFO_ONLY]
-    for node, kfile, space, inputs in GRAPH:
-        if kfile == 'bounds':
-            out += ['mfdiag_read_' + step for step, name, body in READ_STEPS]
-        out.append('mfdiag_kernel_' + kfile)
+    out += ['mfdiag_kernel_' + kfile for node, kfile, space, inputs in GRAPH]
     out += ['mfdiag_info_' + p for p in INFO_ONLY]
     return out
 
@@ -148,13 +115,6 @@ def build(version='12.2 v1'):
             L += constant('mfdiag_%s_in%d' % (kfile, i), w, h, x + 20 * i, 40)
         L += blink('mfdiag_kernel_' + kfile, bl.source(kfile), len(inputs), x, 140, kfile not in SCALAR)
         x += 140
-        if kfile == 'bounds':
-            for step, name, body in READ_STEPS:
-                for i, src in reversed(list(enumerate(inputs))):
-                    w, h = SIZES[src]
-                    L += constant('mfdiag_read_%s_in%d' % (step, i), w, h, x + 20 * i, 40)
-                L += blink('mfdiag_read_' + step, read_step(name, body), len(inputs), x, 140, False)
-                x += 140
     names = order()
     L += ['NoOp {', ' inputs 0', ' name MoteField_diagnose',
           ' label "Test next"',

@@ -25,10 +25,10 @@
       if (p.z <= 0.0f || p.x < 0.0f || p.y < 0.0f || p.x >= Wf || p.y >= Hf) {
         break;
       }
-      float4 s = in_surf(sx0 + int(p.x), sy0 + int(p.y));
-      if (s.y >= 0.02f && s.z > 0.0f) {
+      float4 smp = in_surf(sx0 + int(p.x), sy0 + int(p.y));
+      if (smp.y >= 0.02f && smp.z > 0.0f) {
         float xd = len3(X - cam_pos);
-        if (xd > s.z * 1.01f + vis_bias && xd < s.z + max(vis_thick, 0.25f * t)) {
+        if (xd > smp.z * 1.01f + vis_bias && xd < smp.z + max(vis_thick, 0.25f * t)) {
           return 0.0f;
         }
       }

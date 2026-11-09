@@ -54,8 +54,8 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
         for (int i = 0; i < 160; i++) {
           float px = (float(i) + 0.5f) * Wf / 160.0f;
           float py = (float(j) + 0.5f) * Hf / 90.0f;
-          float4 s = in_surf(x0 + int(px), y0 + int(py));
-          float c = coord_of(s.w, s.z, px, py, axis);
+          float4 smp = in_surf(x0 + int(px), y0 + int(py));
+          float c = coord_of(smp.w, smp.z, px, py, axis);
           if (c < 1e29f) {
             mn = min(mn, c);
             mx = max(mx, c);
@@ -75,8 +75,8 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
             for (int i = 0; i < 160; i++) {
               float px = (float(i) + 0.5f) * Wf / 160.0f;
               float py = (float(j) + 0.5f) * Hf / 90.0f;
-              float4 s = in_surf(x0 + int(px), y0 + int(py));
-              float c = coord_of(s.w, s.z, px, py, axis);
+              float4 smp = in_surf(x0 + int(px), y0 + int(py));
+              float c = coord_of(smp.w, smp.z, px, py, axis);
               if (c <= mid) {
                 below += 1.0f;
               }

@@ -171,8 +171,8 @@ def rule_breaks(src):
       functions it calls directly; Nuke 12.2 crashes otherwise);
     * images read in init();
     * integer division outside init() (Blink's CPU vectoriser can't always do it);
-    * input images not named in_... (Nuke 12.2 crashed reading pixels from an input named "surf"), and an image's
-      bounds used inside a read of that image;
+    * a variable named s (Nuke 12.2 crashed on every kernel that read pixels into a float4 named s);
+    * input images not named in_..., and an image's bounds used inside a read of that image;
     * arrays, while loops, one-value vector constructors."""
     out = []
     imgs = images(src)
@@ -213,6 +213,8 @@ def rule_breaks(src):
                 out.append('integer division in %s (/ %s)' % (f, d))
     if re.search(r'\w\s*\[', code):
         out.append('an array')
+    if re.search(r'\bs\b', code):
+        out.append('a variable named s')
     if re.search(r'\bwhile\s*\(', code):
         out.append('a while loop')
     if re.search(r'\bfloat[234]\(\s*[^,()]*\s*\)', code):

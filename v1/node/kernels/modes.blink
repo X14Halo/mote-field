@@ -18,11 +18,11 @@ kernel MFModes : ImageComputationKernel<ePixelWise>
 
   float gauss12(int2 hb, int i0) {
     int2 b = hash_more(hb, word(i0));
-    float s = 0.0f;
+    float sum = 0.0f;
     for (int i = 0; i < 12; i++) {
-      s += u01(hash_more(b, word(i)));
+      sum += u01(hash_more(b, word(i)));
     }
-    return s - 6.0f;
+    return sum - 6.0f;
   }
 
   void process(int2 in_pos) {

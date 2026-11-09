@@ -9,9 +9,9 @@
   float3 unit3(float3 v) {
     return v / max(len3(v), 1e-12f);
   }
-  float wrap1(float x, float s) {
-    float y = x + s * 0.5f;
-    return y - s * floor(y / s) - s * 0.5f;
+  float wrap1(float x, float period) {
+    float y = x + period * 0.5f;
+    return y - period * floor(y / period) - period * 0.5f;
   }
   float erf_a(float x) {
     // Abramowitz and Stegun 7.1.26 (error under 1.5e-7)

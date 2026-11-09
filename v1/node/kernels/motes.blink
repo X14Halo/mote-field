@@ -66,9 +66,9 @@ kernel MFMotes : ImageComputationKernel<ePixelWise>
   void init() {
 //@include init_common
     Ldir = light_dir(light_az, light_el);
-    float s = mb == 1 ? shutter / 360.0f : 0.0f;
-    t_open = shutter_mode == 0 ? -s : (shutter_mode == 1 ? -0.5f * s : 0.0f);
-    t_close = shutter_mode == 0 ? 0.0f : (shutter_mode == 1 ? 0.5f * s : s);
+    float sh = mb == 1 ? shutter / 360.0f : 0.0f;
+    t_open = shutter_mode == 0 ? -sh : (shutter_mode == 1 ? -0.5f * sh : 0.0f);
+    t_close = shutter_mode == 0 ? 0.0f : (shutter_mode == 1 ? 0.5f * sh : sh);
     sun = kelvin_rgb(light_k) * light_rgb * light_int;
     // the lens: the camera's, with the settings on top (0 = from the camera)
     lens_focal = focal > 0.0f ? focal : (hdr_focal > 0.0f ? hdr_focal : 35.0f);
@@ -302,15 +302,15 @@ kernel MFMotes : ImageComputationKernel<ePixelWise>
         float oy = k == 0 ? 0.0f : (k <= 2 ? 1.0f : -1.0f);
         int sx = in_surf.bounds.x1 + clampi(int(floor(pm.x + ox * rr)), 0, int(Wf) - 1);
         int sy = in_surf.bounds.y1 + clampi(int(floor(pm.y + oy * rr)), 0, int(Hf) - 1);
-        float4 s = in_surf(sx, sy);
-        float occl = s.x > 0.0f ? smooth01(((dist - s.x) / max(s.x, 1e-6f) + 0.01f) / 0.04f) : 0.0f;
+        float4 smp = in_surf(sx, sy);
+        float occl = smp.x > 0.0f ? smooth01(((dist - smp.x) / max(smp.x, 1e-6f) + 0.01f) / 0.04f) : 0.0f;
         float fgw = 1.0f;
         if (fg_far > fg_near) {
-          fgw = smooth01((s.x - fg_near) / (fg_far - fg_near));
+          fgw = smooth01((smp.x - fg_near) / (fg_far - fg_near));
         } else if (fg_near > 0.0f) {
-          fgw = s.x >= fg_near ? 1.0f : 0.0f;
+          fgw = smp.x >= fg_near ? 1.0f : 0.0f;
         }
-        hsum += 1.0f - occl * fgw * s.y;
+        hsum += 1.0f - occl * fgw * smp.y;
       }
       hold = hsum / float(ntaps);
     }
@@ -339,11 +339,11 @@ kernel MFMotes : ImageComputationKernel<ePixelWise>
       dst() = float4(fdx, fdy, cx, cy);
     } else {
       float swsum = 0.0f;
-      for (int s = 0; s < 24; s++) {
-        if (float(s) >= S) {
+      for (int si = 0; si < 24; si++) {
+        if (float(si) >= S) {
           break;
         }
-        swsum += shutter_w((float(s) + 0.5f) / S);
+        swsum += shutter_w((float(si) + 0.5f) / S);
       }
       float norm = 1.0f / (max(swsum, 1e-6f) * Kf);
       dst() = float4(E.x * norm, E.y * norm, E.z * norm, hold);

@@ -72,9 +72,11 @@ class OlderBlink(unittest.TestCase):
   }
   void process(int2 xy) {
     float a[2];
+    float4 s = in_surf(0, 0);
     int z = xy.x / 3;""", 1)
         found = bl.rule_breaks(src)
         self.assertIn('integer division in process (/ 3)', found)
+        self.assertIn('a variable named s', found)
         self.assertIn('bad reads images and is called from worse', found)
         self.assertIn('bounds inside a read of in_surf', found)
         self.assertIn('an input not named in_...: surf', bl.rule_breaks(bl.source('bounds').replace('in_surf', 'surf')))
