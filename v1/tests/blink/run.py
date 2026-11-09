@@ -21,9 +21,9 @@ def build(name):
     cpp = translate.translate(src)
     key = hashlib.sha1((cpp + open(os.path.join(HERE, 'blink.h')).read()).encode()).hexdigest()[:12]
     os.makedirs(BUILD, exist_ok=True)
-    exe = os.path.join(BUILD, '%s_%s' % (name, key))
+    exe = os.path.join(BUILD, '%s_%s' % (name.replace('/', '_'), key))
     if not os.path.exists(exe):
-        cp = os.path.join(BUILD, '%s_%s.cpp' % (name, key))
+        cp = os.path.join(BUILD, '%s_%s.cpp' % (name.replace('/', '_'), key))
         open(cp, 'w').write(cpp)
         r = subprocess.run(['g++', '-O2', '-fopenmp', '-std=c++17', '-I', HERE, '-Wno-unused', cp, '-o', exe],
                            capture_output=True, text=True)

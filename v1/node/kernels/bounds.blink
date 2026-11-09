@@ -27,78 +27,58 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
     Hf = float(surf.bounds.height());
   }
 
-  float coord(float3 P, int axis) {
+  // one axis of the world position under sample k of a 160 x 90 grid, or 1e30 if that pixel isn't a clean surface
+  float sample_at(int k, int axis) {
+    int i = k - (k / 160) * 160;
+    int j = k / 160;
+    float px = (float(i) + 0.5f) * Wf / 160.0f;
+    float py = (float(j) + 0.5f) * Hf / 90.0f;
+    float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
+    if (s.w < 0.5f || s.z <= 0.0f) {
+      return 1e30f;
+    }
+    float3 P = cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * s.z;
     return axis == 0 ? P.x : (axis == 1 ? P.y : P.z);
   }
 
+  // the q-th fraction of the samples along one axis (by halving the range: no arrays, for older Blink)
+  float percentile(int axis, float q) {
+    float mn = 1e30f;
+    float mx = -1e30f;
+    float n = 0.0f;
+    for (int k = 0; k < 14400; k++) {
+      float c = sample_at(k, axis);
+      if (c < 1e29f) {
+        mn = min(mn, c);
+        mx = max(mx, c);
+        n += 1.0f;
+      }
+    }
+    if (n < 1.0f) {
+      return 0.0f;
+    }
+    float lo = mn;
+    float hi = mx;
+    for (int it = 0; it < 20; it++) {
+      float mid = 0.5f * (lo + hi);
+      float below = 0.0f;
+      for (int k = 0; k < 14400; k++) {
+        float c = sample_at(k, axis);
+        if (c <= mid) {
+          below += 1.0f;
+        }
+      }
+      if (below >= q * n) {
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    return hi;
+  }
+
   void process(int2 xy) {
-    int gx = 160;
-    int gy = 90;
-    float lo3[3];
-    float hi3[3];
-    for (int axis = 0; axis < 3; axis++) {
-      float mn = 1e30f;
-      float mx = -1e30f;
-      float n = 0.0f;
-      for (int j = 0; j < gy; j++) {
-        for (int i = 0; i < gx; i++) {
-          float px = (float(i) + 0.5f) * Wf / float(gx);
-          float py = (float(j) + 0.5f) * Hf / float(gy);
-          float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
-          if (s.w < 0.5f || s.z <= 0.0f) {
-            continue;
-          }
-          float c = coord(cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * s.z, axis);
-          mn = min(mn, c);
-          mx = max(mx, c);
-          n += 1.0f;
-        }
-      }
-      if (n < 1.0f) {
-        lo3[axis] = 0.0f;
-        hi3[axis] = 0.0f;
-        continue;
-      }
-      float hist[256];
-      for (int b = 0; b < 256; b++) {
-        hist[b] = 0.0f;
-      }
-      float span = max(mx - mn, 1e-6f);
-      for (int j = 0; j < gy; j++) {
-        for (int i = 0; i < gx; i++) {
-          float px = (float(i) + 0.5f) * Wf / float(gx);
-          float py = (float(j) + 0.5f) * Hf / float(gy);
-          float4 s = surf(surf.bounds.x1 + int(px), surf.bounds.y1 + int(py));
-          if (s.w < 0.5f || s.z <= 0.0f) {
-            continue;
-          }
-          float c = coord(cam_pos + ray_dir(floor(px) + 0.5f, floor(py) + 0.5f) * s.z, axis);
-          int b = clampi(int((c - mn) / span * 256.0f), 0, 255);
-          hist[b] += 1.0f;
-        }
-      }
-      float acc = 0.0f;
-      float lo = mn;
-      float hi = mx;
-      bool found_lo = false;
-      for (int b = 0; b < 256; b++) {
-        acc += hist[b];
-        if (!found_lo && acc >= 0.005f * n) {
-          lo = mn + span * float(b) / 256.0f;
-          found_lo = true;
-        }
-        if (acc >= 0.995f * n) {
-          hi = mn + span * float(b + 1) / 256.0f;
-          break;
-        }
-      }
-      lo3[axis] = lo;
-      hi3[axis] = hi;
-    }
-    if (xy.x == 0) {
-      dst() = float4(lo3[0], lo3[1], lo3[2], 1.0f);
-    } else {
-      dst() = float4(hi3[0], hi3[1], hi3[2], 1.0f);
-    }
+    float q = xy.x == 0 ? 0.005f : 0.995f;
+    dst() = float4(percentile(0, q), percentile(1, q), percentile(2, q), 1.0f);
   }
 };

@@ -96,7 +96,7 @@ kernel MFFacts : ImageComputationKernel<ePixelWise>
       return;
     }
     if (xy.x != 1 || has_p == 0.0f) {
-      dst() = float4(0.0f);
+      dst() = float4(0.0f, 0.0f, 0.0f, 0.0f);
       return;
     }
     // depth: along the ray or the view axis, and premultiplied or not (checked against the positions)

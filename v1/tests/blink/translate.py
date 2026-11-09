@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
     %(K)s kk = k;
     for (int x = 0; x < W; x++) {
 %(setpos)s
-      kk.process(int2(x, y));
+      kk.process(%(pos)s);
     }
   }
   save_raw(out, outpath.c_str());
@@ -95,7 +95,8 @@ int main(int argc, char** argv) {
 ''' % dict(K=name, names=', '.join('"%s"' % n for n in ins) or '""', nin=len(ins), dst=dst,
            bind='\n'.join('  k.%s.bind(store[%d]);' % (n, i) for i, n in enumerate(ins)),
            first='store[0]->W' if ins else '1', firstH='store[0]->H' if ins else '1',
-           setpos='\n'.join('      kk.%s.cx = x; kk.%s.cy = y;' % (n, n) for n in images)))
+           setpos='\n'.join('      kk.%s.cx = x; kk.%s.cy = y;' % (n, n) for n in images),
+           pos='' if re.search(r'void\s+process\s*\(\s*\)', body) else 'int2(x, y)'))
     return '\n'.join(out)
 
 

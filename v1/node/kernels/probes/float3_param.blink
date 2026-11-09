@@ -1,0 +1,13 @@
+kernel MFProbeFloat3Param : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+  param:
+    float3 colour;
+  void define() {
+    defineParam(colour, "colour", float3(0.5f, 0.25f, 1.0f));
+  }
+  void process() {
+    dst() = float4(colour.x, colour.y, colour.z, 1.0f);
+  }
+};

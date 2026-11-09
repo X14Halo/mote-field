@@ -1,0 +1,9 @@
+kernel MFProbeBasic : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+  void process() {
+    float4 a = src();
+    dst() = float4(a.x, a.y, a.z, 1.0f);
+  }
+};

@@ -82,7 +82,7 @@ kernel MFPlace : ImageComputationKernel<ePixelWise>
     int g = xy.x / @STATE_COLS@;
     int i = xy.y * @STATE_COLS@ + (xy.x - g * @STATE_COLS@);
     if (i >= count || g >= 2) {
-      dst() = float4(0.0f);
+      dst() = float4(0.0f, 0.0f, 0.0f, 0.0f);
       return;
     }
 //@include body_start

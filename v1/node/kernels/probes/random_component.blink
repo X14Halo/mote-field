@@ -1,0 +1,10 @@
+kernel MFProbeRandomComponent : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessRandom, eEdgeClamped> src;
+  Image<eWrite> dst;
+  void process(int2 pos) {
+    float r = src(pos.x + 1, pos.y, 0);
+    float4 b = src(pos.x, pos.y + 1);
+    dst() = float4(r, b.y, float(src.bounds.width()), 1.0f);
+  }
+};

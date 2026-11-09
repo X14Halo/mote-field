@@ -1,0 +1,10 @@
+kernel MFProbeBool : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+  void process(int2 pos) {
+    bool even = (pos.x & 1) == 0;
+    float v = !even ? 1.0f : 0.0f;
+    dst() = float4(v, v, v, 1.0f);
+  }
+};

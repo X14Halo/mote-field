@@ -34,7 +34,7 @@ kernel MFBins : ImageComputationKernel<ePixelWise>
     int T = xy.x;
     int r = xy.y;
     if (T >= @NTILES@ || r * 96 >= count) {
-      dst() = float4(0.0f);
+      dst() = float4(0.0f, 0.0f, 0.0f, 0.0f);
       return;
     }
     int tx = T - (T / @TILES_X@) * @TILES_X@;

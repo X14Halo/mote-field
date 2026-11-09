@@ -28,7 +28,7 @@ kernel MFModes : ImageComputationKernel<ePixelWise>
   void process(int2 pos) {
     int m = pos.y;
     if (m >= @MODES@) {
-      dst() = float4(0.0f);
+      dst() = float4(0.0f, 0.0f, 0.0f, 0.0f);
       return;
     }
     int which = m < 40 ? 0 : 1;

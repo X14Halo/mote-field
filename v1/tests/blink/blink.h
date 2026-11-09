@@ -10,9 +10,9 @@
 #include <vector>
 #include <algorithm>
 
-struct float2 { float x, y; float2() : x(0), y(0) {} explicit float2(float s) : x(s), y(s) {} float2(float a, float b) : x(a), y(b) {} };
-struct float3 { float x, y, z; float3() : x(0), y(0), z(0) {} explicit float3(float s) : x(s), y(s), z(s) {} float3(float a, float b, float c) : x(a), y(b), z(c) {} };
-struct float4 { float x, y, z, w; float4() : x(0), y(0), z(0), w(0) {} explicit float4(float s) : x(s), y(s), z(s), w(s) {} float4(float a, float b, float c, float d) : x(a), y(b), z(c), w(d) {}
+struct float2 { float x, y; float2() : x(0), y(0) {} float2(float a, float b) : x(a), y(b) {} };
+struct float3 { float x, y, z; float3() : x(0), y(0), z(0) {} float3(float a, float b, float c) : x(a), y(b), z(c) {} };
+struct float4 { float x, y, z, w; float4() : x(0), y(0), z(0), w(0) {} float4(float a, float b, float c, float d) : x(a), y(b), z(c), w(d) {}
   float& operator[](int i) { return (&x)[i]; } };
 struct int2 { int x, y; int2() : x(0), y(0) {} int2(int a, int b) : x(a), y(b) {} };
 struct int4 { int x, y, z, w; int4() : x(0), y(0), z(0), w(0) {} int4(int a, int b, int c, int d) : x(a), y(b), z(c), w(d) {} };
@@ -113,4 +113,4 @@ struct ImgRef {
   float4& operator()() { return im->at(cx, cy); }
 };
 
-struct KernelBase { void init() {} };
+struct KernelBase { void init() {} void define() {} };

@@ -97,6 +97,21 @@ class Script(unittest.TestCase):
         with open(os.path.join(ROOT, 'dist', 'MoteField_check_nuke12.nk'), encoding='utf-8') as fh:
             self.assertEqual(fh.read(), build_check.build('12.2 v1'), 'run: python3 node/build_check.py dist/MoteField_check.nk')
 
+    def test_diagnose_script(self):
+        """dist/MoteField_diagnose.nk is current, and each kernel in it is fed inputs in the node's order."""
+        from node import build_diagnose
+        from node.build_node import GRAPH
+        text = build_diagnose.build()
+        with open(os.path.join(ROOT, 'dist', 'MoteField_diagnose.nk'), encoding='utf-8') as fh:
+            self.assertEqual(fh.read(), text, 'run: python3 node/build_diagnose.py')
+        sc = nkload.load(text)
+        for node, kfile, space, inputs in GRAPH:
+            n = sc.root.children['mfdiag_kernel_' + kfile]
+            self.assertEqual([i.name() for i in n.inputs], ['mfdiag_%s_in%d' % (kfile, i) for i in range(len(inputs))])
+            self.assertEqual(n.source, blinklib.source(kfile))
+            self.assertEqual(n['useGPUIfAvailable'].value(), False)
+        self.assertIsNotNone(sc.root.children['MoteField_diagnose'].knob('report'))
+
     def test_embedded_python_is_plain_ascii_and_python2_safe(self):
         """Nuke 12 and older run Python 2.7: no non-ASCII and nothing Python 3 only in the code inside the node."""
         import ast

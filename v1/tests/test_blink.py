@@ -132,6 +132,13 @@ class Picture(unittest.TestCase):
         np.testing.assert_allclose(out['alpha'], np.clip(lum * 2.0, 0, 1), atol=1e-5)
 
 
+def unit_light(S, shape, K=1):
+    """The light a mote of total light 1 hands to the drawing: divided by the sum of its samples' shutter weights."""
+    import math
+    sw = [1.0 / (1.0 + math.exp(-9.0 * ((s + 0.5) / S - 0.55))) if shape == 0 else 1.0 for s in range(S)]
+    return 1.0 / (sum(sw) * K)
+
+
 def one_mote(R, x, y, blades=0, cat=(0.0, 0.0), anamorphic=0.0, falloff=0.0, streak=(0.0, 0.0), shape=0, S=1):
     """The draw kernel on a hand-made state image holding one mote of light 1 (rgb) at (x, y)."""
     W_, H_ = 160, 120
@@ -145,7 +152,8 @@ def one_mote(R, x, y, blades=0, cat=(0.0, 0.0), anamorphic=0.0, falloff=0.0, str
     motes[0, bl.STATE_COLS] = [x, y, x + streak[0], y + streak[1]]
     motes[0, 2 * bl.STATE_COLS] = [R, S + 32, 0.0, 0.0]
     motes[0, 3 * bl.STATE_COLS] = [0.0, 0.0, cat[0], cat[1]]
-    motes[0, 4 * bl.STATE_COLS] = [1.0, 1.0, 1.0, 1.0]
+    u = unit_light(S, shape)
+    motes[0, 4 * bl.STATE_COLS] = [u, u, u, 1.0]
     surf = np.zeros((H_, W_, 4), np.float32)
     params = dict(blades=blades, hdr_blades=0, anamorphic=anamorphic, hdr_anamorphic=0.0, bokeh_rot=0.0,
                   bokeh_falloff=falloff, shutter_shape=shape, alpha_mode=0, matte_gain=1.0, held=1)
@@ -236,7 +244,8 @@ def _mote_state(R, cat, inv):
     motes[0, bl.STATE_COLS] = [80, 60, 80, 60]
     motes[0, 2 * bl.STATE_COLS] = [R, 1 + 32, 0.0, inv]
     motes[0, 3 * bl.STATE_COLS] = [0.0, 0.0, cat[0], cat[1]]
-    motes[0, 4 * bl.STATE_COLS] = [1.0, 1.0, 1.0, 1.0]
+    u = unit_light(1, 0)
+    motes[0, 4 * bl.STATE_COLS] = [u, u, u, 1.0]
     return motes
 
 

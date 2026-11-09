@@ -32,6 +32,10 @@ Try it with *Use GPU if available* on and off.
 so older versions load them without the "saved with a newer version" warning. The Python inside runs on Nuke 12's
 Python 2.7 too. This is untested in Nuke 12: start with the check.
 
+If the node shows kernel errors in an older Nuke, paste `dist/MoteField_diagnose.nk` and press **Report** on its
+*MoteField_diagnose* node. It builds every kernel on the CPU, plus small probes of single Blink features, and lists
+which fail. For any that fail, view that node to see Nuke's error text.
+
 **Nuke Non-commercial can't run it.** Foundry disables the BlinkScript node in Non-commercial, and MoteField renders
 with BlinkScript. The check node shows straight away whether a Nuke can run it.
 

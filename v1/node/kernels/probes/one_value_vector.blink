@@ -1,0 +1,9 @@
+kernel MFProbeOneValueVector : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+  void process() {
+    float3 v = float3(0.5f);
+    dst() = float4(v.x, v.y, v.z, 1.0f);
+  }
+};

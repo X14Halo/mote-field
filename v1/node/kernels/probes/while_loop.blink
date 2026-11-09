@@ -1,0 +1,14 @@
+kernel MFProbeWhile : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+  void process(int2 pos) {
+    int m = pos.x;
+    int n = 0;
+    while (m != 0) {
+      n += m & 1;
+      m = m >> 1;
+    }
+    dst() = float4(float(n), 0.0f, 0.0f, 1.0f);
+  }
+};

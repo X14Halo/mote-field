@@ -1,0 +1,13 @@
+kernel MFProbeFloat3Function : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+  float3 half_of(float3 v) {
+    return v * 0.5f;
+  }
+  void process() {
+    float4 a = src();
+    float3 h = half_of(float3(a.x, a.y, a.z) + float3(1.0f, 1.0f, 1.0f));
+    dst() = float4(h.x, h.y, h.z, 1.0f);
+  }
+};
