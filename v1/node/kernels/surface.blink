@@ -5,9 +5,9 @@
 //   a = 1 where one surface fills the pixel (safe to use as a 3D point), else 0
 kernel MFSurface : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessRandom, eEdgeClamped> pos;
-  Image<eRead, eAccessRandom, eEdgeClamped> depth;
-  Image<eRead, eAccessRandom, eEdgeClamped> facts;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_pos;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_depth;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_facts;
   Image<eWrite> dst;
 
   param:
@@ -26,14 +26,14 @@ kernel MFSurface : ImageComputationKernel<ePixelWise>
 //@include lib_cam
 
   void init() {
-    Wf = float(pos.bounds.width());
-    Hf = float(pos.bounds.height());
+    Wf = float(in_pos.bounds.width());
+    Hf = float(in_pos.bounds.height());
   }
 
   // coverage and distance along the ray from the position pass at a pixel (0 where empty)
   float2 cov_ray(int x, int y, float has_a, float premult) {
-    float4 p = pos(x, y);
-    float4 z = depth(x, y);
+    float4 p = in_pos(x, y);
+    float4 z = in_depth(x, y);
     bool have = fabs(p.x) + fabs(p.y) + fabs(p.z) > 0.0f || z.x > 0.0f || z.y > 0.0f;
     float cov = has_a > 0.0f ? clamp(p.w, 0.0f, 1.0f) : (have ? 1.0f : 0.0f);
     if (cov <= 0.0f || fabs(p.x) + fabs(p.y) + fabs(p.z) <= 0.0f) {
@@ -47,8 +47,8 @@ kernel MFSurface : ImageComputationKernel<ePixelWise>
   }
 
   void process(int2 xy) {
-    float4 f0 = facts(0, 0);
-    float4 f1 = facts(1, 0);
+    float4 f0 = in_facts(0, 0);
+    float4 f1 = in_facts(1, 0);
     float has_a = f0.y;
     float has_p = f0.z;
     float has_z = fmod(f0.w, 2.0f);
@@ -69,7 +69,7 @@ kernel MFSurface : ImageComputationKernel<ePixelWise>
     float2 cr = cov_ray(xy.x, xy.y, has_a, premult);
     float cov = cr.x;
     float ray = cr.y;
-    float4 z = depth(xy.x, xy.y);
+    float4 z = in_depth(xy.x, xy.y);
     float cosang = max(fabs(dot(ray_dir(float(xy.x) + 0.5f, float(xy.y) + 0.5f), cam_back)), 1e-6f);
     float zd = 0.0f;
     float rd = 0.0f;
@@ -103,7 +103,7 @@ kernel MFSurface : ImageComputationKernel<ePixelWise>
         for (int dx = -1; dx <= 1; dx++) {
           int nx = xy.x + dx;
           int ny = xy.y + dy;
-          if ((dx == 0 && dy == 0) || nx < pos.bounds.x1 || ny < pos.bounds.y1 || nx >= pos.bounds.x2 || ny >= pos.bounds.y2) {
+          if ((dx == 0 && dy == 0) || nx < in_pos.bounds.x1 || ny < in_pos.bounds.y1 || nx >= in_pos.bounds.x2 || ny >= in_pos.bounds.y2) {
             continue;
           }
           float rn = cov_ray(nx, ny, has_a, premult).y;

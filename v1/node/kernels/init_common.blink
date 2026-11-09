@@ -1,5 +1,5 @@
-    Wf = float(surf.bounds.width());
-    Hf = float(surf.bounds.height());
+    Wf = float(in_surf.bounds.width());
+    Hf = float(in_surf.bounds.height());
     count = mote_count();
     bsize = float3(max(box_size.x * su, 0.02f), max(box_size.y * su, 0.02f), max(box_size.z * su, 0.02f));
     bcenter = box_center * su;

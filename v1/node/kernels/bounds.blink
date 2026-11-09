@@ -3,8 +3,8 @@
 // far-away pixels don't stretch it. 'Light only through openings' follows rays out of this box.
 kernel MFBounds : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessPoint, eEdgeClamped> space;
-  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eRead, eAccessPoint, eEdgeClamped> in_space;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_surf;
   Image<eWrite> dst;
 
   param:
@@ -23,8 +23,8 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
 //@include lib_cam
 
   void init() {
-    Wf = float(surf.bounds.width());
-    Hf = float(surf.bounds.height());
+    Wf = float(in_surf.bounds.width());
+    Hf = float(in_surf.bounds.height());
   }
 
   // one axis of the world position seen at pixel position (px, py), or 1e30 if the pixel isn't a clean surface
@@ -41,8 +41,8 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
   // by halving the range.
   void process(int2 xy) {
     float q = xy.x == 0 ? 0.005f : 0.995f;
-    int x0 = surf.bounds.x1;
-    int y0 = surf.bounds.y1;
+    int x0 = in_surf.bounds.x1;
+    int y0 = in_surf.bounds.y1;
     float r0 = 0.0f;
     float r1 = 0.0f;
     float r2 = 0.0f;
@@ -54,7 +54,7 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
         for (int i = 0; i < 160; i++) {
           float px = (float(i) + 0.5f) * Wf / 160.0f;
           float py = (float(j) + 0.5f) * Hf / 90.0f;
-          float4 s = surf(x0 + int(px), y0 + int(py));
+          float4 s = in_surf(x0 + int(px), y0 + int(py));
           float c = coord_of(s.w, s.z, px, py, axis);
           if (c < 1e29f) {
             mn = min(mn, c);
@@ -75,7 +75,7 @@ kernel MFBounds : ImageComputationKernel<ePixelWise>
             for (int i = 0; i < 160; i++) {
               float px = (float(i) + 0.5f) * Wf / 160.0f;
               float py = (float(j) + 0.5f) * Hf / 90.0f;
-              float4 s = surf(x0 + int(px), y0 + int(py));
+              float4 s = in_surf(x0 + int(px), y0 + int(py));
               float c = coord_of(s.w, s.z, px, py, axis);
               if (c <= mid) {
                 below += 1.0f;

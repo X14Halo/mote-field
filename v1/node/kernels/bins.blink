@@ -2,9 +2,9 @@
 // each row holds 96 motes as bits (24 per channel, exact in a float): bit b of channel c in row r = mote r*96 + c*24 + b.
 kernel MFBins : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessPoint, eEdgeClamped> space;
-  Image<eRead, eAccessRandom, eEdgeClamped> motes;
-  Image<eRead, eAccessRandom, eEdgeClamped> surf;
+  Image<eRead, eAccessPoint, eEdgeClamped> in_space;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_motes;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_surf;
   Image<eWrite> dst;
 
   param:
@@ -24,8 +24,8 @@ kernel MFBins : ImageComputationKernel<ePixelWise>
 
   void init() {
     count = mote_count();
-    int W = surf.bounds.width();
-    int H = surf.bounds.height();
+    int W = in_surf.bounds.width();
+    int H = in_surf.bounds.height();
     tw = (W + @TILES_X@ - 1) / @TILES_X@;
     th = (H + @TILES_Y@ - 1) / @TILES_Y@;
   }
@@ -54,7 +54,7 @@ kernel MFBins : ImageComputationKernel<ePixelWise>
         if (i >= count) {
           break;
         }
-        float4 bb = motes(i & (@STATE_COLS@ - 1), i >> @STATE_COLS_SHIFT@);
+        float4 bb = in_motes(i & (@STATE_COLS@ - 1), i >> @STATE_COLS_SHIFT@);
         if (bb.x < x1 && bb.z > x0 && bb.y < y1 && bb.w > y0) {
           bits = bits | (1 << b);
         }

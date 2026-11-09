@@ -3,7 +3,7 @@
   // seen surface, by less than the shadow thickness, is in its shadow. Off-screen geometry casts no shadow.
   // 'Light only through openings': the pass only shows what the camera saw, so light gets in only where the ray,
   // followed out of the set (lo..hi), leaves through what the camera saw as empty sky.
-  // Needs locals Wf, Hf, Ldir, vis_t0, vis_grow, vis_bias, vis_thick.
+  // Needs locals Wf, Hf, sx0, sy0, Ldir, vis_t0, vis_grow, vis_bias, vis_thick.
   float vis_at(float3 Q, float3 lo, float3 hi) {
     if (shadows == 1) {
       return 1.0f;
@@ -25,7 +25,7 @@
       if (p.z <= 0.0f || p.x < 0.0f || p.y < 0.0f || p.x >= Wf || p.y >= Hf) {
         break;
       }
-      float4 s = surf(surf.bounds.x1 + int(p.x), surf.bounds.y1 + int(p.y));
+      float4 s = in_surf(sx0 + int(p.x), sy0 + int(p.y));
       if (s.y >= 0.02f && s.z > 0.0f) {
         float xd = len3(X - cam_pos);
         if (xd > s.z * 1.01f + vis_bias && xd < s.z + max(vis_thick, 0.25f * t)) {
@@ -42,10 +42,12 @@
     if (pe.z <= 0.0f || pe.x < 0.0f || pe.y < 0.0f || pe.x >= Wf || pe.y >= Hf) {
       return 0.0f;
     }
-    float4 se = surf(surf.bounds.x1 + int(pe.x), surf.bounds.y1 + int(pe.y));
+    float4 se = in_surf(sx0 + int(pe.x), sy0 + int(pe.y));
     return se.y <= 0.02f ? 1.0f : 0.0f;
   }
   void vis_setup() {
+    sx0 = in_surf.bounds.x1;
+    sy0 = in_surf.bounds.y1;
     Ldir = light_dir(light_az, light_el);
     vis_t0 = 0.01f / su;
     vis_grow = pow(6000.0f, 1.0f / 48.0f);

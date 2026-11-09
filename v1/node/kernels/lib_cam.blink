@@ -1,6 +1,6 @@
   // ---- the camera: world point -> pixel x, y (Nuke's, y up, pixel centres at .5) and depth along the view
-  float3 project_cam(float3 P, float3 pos, float3 rr, float3 uu, float3 bb, float th) {
-    float3 d = P - pos;
+  float3 project_cam(float3 P, float3 cpos, float3 rr, float3 uu, float3 bb, float th) {
+    float3 d = P - cpos;
     float x = dot(d, rr);
     float y = dot(d, uu);
     float z = -dot(d, bb);

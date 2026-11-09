@@ -8,10 +8,10 @@
 //            shutter weights of its S x K samples) and how much of it the set does not hide (0..1)
 kernel MFMotes : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessPoint, eEdgeClamped> space;
-  Image<eRead, eAccessRandom, eEdgeClamped> place;
-  Image<eRead, eAccessRandom, eEdgeClamped> surf;
-  Image<eRead, eAccessRandom, eEdgeClamped> cells;
+  Image<eRead, eAccessPoint, eEdgeClamped> in_space;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_place;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_cells;
   Image<eWrite> dst;
 
   param:
@@ -142,8 +142,8 @@ kernel MFMotes : ImageComputationKernel<ePixelWise>
       return;
     }
 //@include body_start
-    float4 pp = place(xy.x & (@STATE_COLS@ - 1), xy.y);
-    float4 pv = place((xy.x & (@STATE_COLS@ - 1)) + @STATE_COLS@, xy.y);
+    float4 pp = in_place(xy.x & (@STATE_COLS@ - 1), xy.y);
+    float4 pv = in_place((xy.x & (@STATE_COLS@ - 1)) + @STATE_COLS@, xy.y);
     float w = pp.w;
     if (w <= 0.0f) {
       empty_out(g);
@@ -231,12 +231,12 @@ kernel MFMotes : ImageComputationKernel<ePixelWise>
     float3 tot = float3(0.0f, 0.0f, 0.0f);
     float3 Ei = float3(0.0f, 0.0f, 0.0f);
     for (int c = 0; c < @NCELLS@; c++) {
-      float4 cp = cells(0, c);
+      float4 cp = in_cells(0, c);
       if (cp.w <= 0.0f) {
         continue;
       }
-      float4 cn = cells(1, c);
-      float4 cf = cells(2, c);
+      float4 cn = in_cells(1, c);
+      float4 cf = in_cells(2, c);
       float3 fl = float3(cf.x, cf.y, cf.z);
       tot += fl;
       float3 dv = float3(cp.x, cp.y, cp.z) - Pm;
@@ -300,9 +300,9 @@ kernel MFMotes : ImageComputationKernel<ePixelWise>
       for (int k = 0; k < ntaps; k++) {
         float ox = k == 0 ? 0.0f : (k == 1 || k == 3 ? 1.0f : -1.0f);
         float oy = k == 0 ? 0.0f : (k <= 2 ? 1.0f : -1.0f);
-        int sx = surf.bounds.x1 + clampi(int(floor(pm.x + ox * rr)), 0, int(Wf) - 1);
-        int sy = surf.bounds.y1 + clampi(int(floor(pm.y + oy * rr)), 0, int(Hf) - 1);
-        float4 s = surf(sx, sy);
+        int sx = in_surf.bounds.x1 + clampi(int(floor(pm.x + ox * rr)), 0, int(Wf) - 1);
+        int sy = in_surf.bounds.y1 + clampi(int(floor(pm.y + oy * rr)), 0, int(Hf) - 1);
+        float4 s = in_surf(sx, sy);
         float occl = s.x > 0.0f ? smooth01(((dist - s.x) / max(s.x, 1e-6f) + 0.01f) / 0.04f) : 0.0f;
         float fgw = 1.0f;
         if (fg_far > fg_near) {

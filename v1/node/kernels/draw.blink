@@ -5,10 +5,10 @@
 // reference). Out: rgb, and alpha as set by the node (none, or a matte from the dust's brightness).
 kernel MFDraw : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessRandom, eEdgeClamped> surf;
-  Image<eRead, eAccessRandom, eEdgeClamped> motes;
-  Image<eRead, eAccessRandom, eEdgeClamped> bins;
-  Image<eRead, eAccessRandom, eEdgeClamped> rows;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_motes;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_bins;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_rows;
   Image<eWrite> dst;
 
   param:
@@ -35,8 +35,8 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
   }
 
   void init() {
-    int W = surf.bounds.width();
-    int H = surf.bounds.height();
+    int W = in_surf.bounds.width();
+    int H = in_surf.bounds.height();
     tw = (W + @TILES_X@ - 1) / @TILES_X@;
     th = (H + @TILES_Y@ - 1) / @TILES_Y@;
     lens_blades = float(blades > 0 ? blades : hdr_blades);
@@ -88,18 +88,18 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
   float3 mote_light(int i, float px, float py) {
     int row = i >> @STATE_COLS_SHIFT@;
     int col = i & (@STATE_COLS@ - 1);
-    float4 bb = motes(col, row);
+    float4 bb = in_motes(col, row);
     if (px < bb.x || px > bb.z || py < bb.y || py > bb.w) {
       return float3(0.0f, 0.0f, 0.0f);
     }
-    float4 en = motes(col + 4 * @STATE_COLS@, row);
+    float4 en = in_motes(col + 4 * @STATE_COLS@, row);
     float hold = held == 1 ? en.w : 1.0f;
     if (hold <= 0.0f) {
       return float3(0.0f, 0.0f, 0.0f);
     }
-    float4 sk = motes(col + @STATE_COLS@, row);
-    float4 rk = motes(col + 2 * @STATE_COLS@, row);
-    float4 fc = motes(col + 3 * @STATE_COLS@, row);
+    float4 sk = in_motes(col + @STATE_COLS@, row);
+    float4 rk = in_motes(col + 2 * @STATE_COLS@, row);
+    float4 fc = in_motes(col + 3 * @STATE_COLS@, row);
     float R = rk.x;
     int SK = int(rk.y + 0.5f);
     int K = SK >> 5;
@@ -126,8 +126,8 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
   }
 
   void process(int2 xy) {
-    int x = xy.x - surf.bounds.x1;
-    int y = xy.y - surf.bounds.y1;
+    int x = xy.x - in_surf.bounds.x1;
+    int y = xy.y - in_surf.bounds.y1;
     float px = float(x) + 0.5f;
     float py = float(y) + 0.5f;
     // the tile (no integer division: Blink's CPU vectoriser can't always do it)
@@ -136,7 +136,7 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
     float3 acc = float3(0.0f, 0.0f, 0.0f);
     for (int r2 = 0; r2 < @ROWS2@; r2++) {
       for (int c2 = 0; c2 < 4; c2++) {
-        int m2 = int(rows(T, r2, c2));
+        int m2 = int(in_rows(T, r2, c2));
         for (int b2 = 0; b2 < 24; b2++) {
           if (m2 == 0) {
             break;
@@ -144,7 +144,7 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
           if ((m2 & 1) != 0) {
             int r1 = r2 * 96 + c2 * 24 + b2;
             for (int c1 = 0; c1 < 4; c1++) {
-              int m1 = int(bins(T, r1, c1));
+              int m1 = int(in_bins(T, r1, c1));
               for (int b1 = 0; b1 < 24; b1++) {
                 if (m1 == 0) {
                   break;

@@ -5,9 +5,9 @@
 // Mirrors shot.build_surface in the Python reference: premultiplication is found by reprojecting edge pixels.
 kernel MFFacts : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessPoint, eEdgeClamped> space;
-  Image<eRead, eAccessRandom, eEdgeClamped> pos;
-  Image<eRead, eAccessRandom, eEdgeClamped> depth;
+  Image<eRead, eAccessPoint, eEdgeClamped> in_space;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_pos;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_depth;
   Image<eWrite> dst;
 
   param:
@@ -26,8 +26,8 @@ kernel MFFacts : ImageComputationKernel<ePixelWise>
 //@include lib_cam
 
   void init() {
-    Wf = float(pos.bounds.width());
-    Hf = float(pos.bounds.height());
+    Wf = float(in_pos.bounds.width());
+    Hf = float(in_pos.bounds.height());
   }
 
   float reproj(float3 P, float px, float py) {
@@ -41,8 +41,8 @@ kernel MFFacts : ImageComputationKernel<ePixelWise>
   }
 
   void process(int2 xy) {
-    int x0 = pos.bounds.x1;
-    int y0 = pos.bounds.y1;
+    int x0 = in_pos.bounds.x1;
+    int y0 = in_pos.bounds.y1;
     int gx = 160;
     int gy = 90;
     float has_a = 0.0f;
@@ -56,8 +56,8 @@ kernel MFFacts : ImageComputationKernel<ePixelWise>
       for (int i = 0; i < gx; i++) {
         int sx = x0 + int((float(i) + 0.5f) * Wf / float(gx));
         int sy = y0 + int((float(j) + 0.5f) * Hf / float(gy));
-        float4 p = pos(sx, sy);
-        float4 z = depth(sx, sy);
+        float4 p = in_pos(sx, sy);
+        float4 z = in_depth(sx, sy);
         float3 P = float3(p.x, p.y, p.z);
         if (p.w > 0.0f) {
           has_a = 1.0f;
@@ -112,8 +112,8 @@ kernel MFFacts : ImageComputationKernel<ePixelWise>
       for (int i = 0; i < gx; i++) {
         int sx = x0 + int((float(i) + 0.5f) * Wf / float(gx));
         int sy = y0 + int((float(j) + 0.5f) * Hf / float(gy));
-        float4 p = pos(sx, sy);
-        float4 z = depth(sx, sy);
+        float4 p = in_pos(sx, sy);
+        float4 z = in_depth(sx, sy);
         float cov = has_a > 0.0f ? clamp(p.w, 0.0f, 1.0f) : 1.0f;
         float3 P = float3(p.x, p.y, p.z);
         if (premult > 0.0f) {
@@ -149,8 +149,8 @@ kernel MFFacts : ImageComputationKernel<ePixelWise>
       for (int i = 0; i < gx; i++) {
         int sx = x0 + int((float(i) + 0.5f) * Wf / float(gx));
         int sy = y0 + int((float(j) + 0.5f) * Hf / float(gy));
-        float4 p = pos(sx, sy);
-        float4 z = depth(sx, sy);
+        float4 p = in_pos(sx, sy);
+        float4 z = in_depth(sx, sy);
         if (!(has_a > 0.0f && p.w > 0.02f && p.w < 0.98f)) {
           continue;
         }

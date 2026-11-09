@@ -4,10 +4,10 @@
 //   pixel 1: velocity (scene units per second of air time) and how much key light reaches it (soft shadows)
 kernel MFPlace : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessPoint, eEdgeClamped> space;
-  Image<eRead, eAccessRandom, eEdgeClamped> modes;
-  Image<eRead, eAccessRandom, eEdgeClamped> surf;
-  Image<eRead, eAccessRandom, eEdgeClamped> setbox;
+  Image<eRead, eAccessPoint, eEdgeClamped> in_space;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_modes;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_setbox;
   Image<eWrite> dst;
 
   param:
@@ -16,6 +16,8 @@ kernel MFPlace : ImageComputationKernel<ePixelWise>
   local:
     float Wf;
     float Hf;
+    int sx0;
+    int sy0;
     float3 Ldir;
     float vis_t0;
     float vis_grow;
@@ -73,8 +75,8 @@ kernel MFPlace : ImageComputationKernel<ePixelWise>
       return;
     }
 //@include body_start
-    float4 b0 = setbox(0, 0);
-    float4 b1 = setbox(1, 0);
+    float4 b0 = in_setbox(0, 0);
+    float4 b1 = in_setbox(1, 0);
     float3 lo = float3(b0.x, b0.y, b0.z);
     float3 hi = float3(b1.x, b1.y, b1.z);
 
@@ -91,8 +93,8 @@ kernel MFPlace : ImageComputationKernel<ePixelWise>
       }
       float msize = is_micro ? size_m : size_e;
       float sweep = is_micro ? am + ae : ae;
-      float4 ma = modes(0, m);
-      float4 mb = modes(1, m);
+      float4 ma = in_modes(0, m);
+      float4 mb = in_modes(1, m);
       float3 K = float3(ma.x, ma.y, ma.z) / msize;
       float3 A = float3(mb.x, mb.y, mb.z);
       float phase0 = dot(w0, K) + ma.w;

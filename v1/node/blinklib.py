@@ -170,7 +170,9 @@ def rule_breaks(src):
     * images read in a function that another user function calls (Blink reads images only in process() or in the
       functions it calls directly; Nuke 12.2 crashes otherwise);
     * images read in init();
-    * integer division outside init() (Blink's CPU vectoriser can't always do it: Nuke 12.2 crashed on it);
+    * integer division outside init() (Blink's CPU vectoriser can't always do it);
+    * input images not named in_... (Nuke 12.2 crashed reading pixels from an input named "surf"), and an image's
+      bounds used inside a read of that image;
     * arrays, while loops, one-value vector constructors."""
     out = []
     imgs = images(src)
@@ -182,6 +184,17 @@ def rule_breaks(src):
                 out.append('%s reads images and is called from %s' % (g, f))
     if 'init' in reads:
         out.append('init reads images')
+    for im in imgs[:-1]:
+        if not im.startswith('in_'):
+            out.append('an input not named in_...: %s' % im)
+    for im in imgs:
+        for m in re.finditer(r'\b%s\s*\(' % im, src):
+            depth, i = 1, m.end()
+            while depth and i < len(src):
+                depth += {'(': 1, ')': -1}.get(src[i], 0)
+                i += 1
+            if '.bounds' in src[m.end():i]:
+                out.append('bounds inside a read of %s' % im)
     code = re.sub(r'//[^\n]*', '', src)
     head = code[:code.find('void define')] if 'void define' in code else ''
     kernel_ints = set(re.findall(r'\bint\s+(\w+)\s*;', head))           # int params and locals

@@ -65,7 +65,7 @@ class OlderBlink(unittest.TestCase):
 
     def test_the_rules_catch_what_they_should(self):
         src = bl.source('bounds').replace('  void process(int2 xy) {', """  float bad(int k) {
-    return surf(k, 0).x;
+    return in_surf(k, in_surf.bounds.y1).x;
   }
   float worse(int k) {
     return bad(k);
@@ -76,6 +76,8 @@ class OlderBlink(unittest.TestCase):
         found = bl.rule_breaks(src)
         self.assertIn('integer division in process (/ 3)', found)
         self.assertIn('bad reads images and is called from worse', found)
+        self.assertIn('bounds inside a read of in_surf', found)
+        self.assertIn('an input not named in_...: surf', bl.rule_breaks(bl.source('bounds').replace('in_surf', 'surf')))
         self.assertIn('an array', found)
 
 

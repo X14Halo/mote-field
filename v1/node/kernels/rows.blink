@@ -2,8 +2,8 @@
 // drawing a pixel skips the empty ones.
 kernel MFRows : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessPoint, eEdgeClamped> space;
-  Image<eRead, eAccessRandom, eEdgeClamped> bins;
+  Image<eRead, eAccessPoint, eEdgeClamped> in_space;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_bins;
   Image<eWrite> dst;
 
   param:
@@ -37,7 +37,7 @@ kernel MFRows : ImageComputationKernel<ePixelWise>
         if (r1 >= nrows) {
           break;
         }
-        float4 w = bins(T, r1);
+        float4 w = in_bins(T, r1);
         if (w.x != 0.0f || w.y != 0.0f || w.z != 0.0f || w.w != 0.0f) {
           bits = bits | (1 << b);
         }

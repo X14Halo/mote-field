@@ -57,7 +57,10 @@ def run(name, params=None, inputs=None, size=None):
         for k, v in (params or {}).items():
             vals = v if isinstance(v, (list, tuple, np.ndarray)) else [v]
             job.append('param %s %s' % (k, ' '.join(repr(float(x)) for x in vals)))
+        names = blinklib.images(blinklib.source(name))
         for k, img in (inputs or {}).items():
+            if k not in names and 'in_' + k in names:        # the kernels name their inputs in_...
+                k = 'in_' + k
             p = os.path.join(d, k + '.raw')
             save(p, img)
             job.append('input %s %s' % (k, p))

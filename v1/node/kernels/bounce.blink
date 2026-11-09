@@ -4,11 +4,11 @@
 // Out: 3 pixels per cell (row = cell): position in metres and weight, normal, flux (rgb).
 kernel MFBounce : ImageComputationKernel<ePixelWise>
 {
-  Image<eRead, eAccessPoint, eEdgeClamped> space;
-  Image<eRead, eAccessRandom, eEdgeClamped> surf;
-  Image<eRead, eAccessRandom, eEdgeClamped> setbox;
-  Image<eRead, eAccessRandom, eEdgeClamped> nrm;
-  Image<eRead, eAccessRandom, eEdgeClamped> alb;
+  Image<eRead, eAccessPoint, eEdgeClamped> in_space;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_surf;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_setbox;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_nrm;
+  Image<eRead, eAccessRandom, eEdgeClamped> in_alb;
   Image<eWrite> dst;
 
   param:
@@ -17,6 +17,8 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
   local:
     float Wf;
     float Hf;
+    int sx0;
+    int sy0;
     float3 Ldir;
     float vis_t0;
     float vis_grow;
@@ -35,8 +37,8 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
 //@include lib_vis
 
   void init() {
-    Wf = float(surf.bounds.width());
-    Hf = float(surf.bounds.height());
+    Wf = float(in_surf.bounds.width());
+    Hf = float(in_surf.bounds.height());
     vis_setup();
   }
 
@@ -54,8 +56,8 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
     float stx = cw / float(ns);
     float sty = ch / float(ns);
     float pix = 2.0f * cam_th / Wf * sqrt(stx * sty);
-    float4 b0 = setbox(0, 0);
-    float4 b1 = setbox(1, 0);
+    float4 b0 = in_setbox(0, 0);
+    float4 b1 = in_setbox(1, 0);
     float3 lo = float3(b0.x, b0.y, b0.z);
     float3 hi = float3(b1.x, b1.y, b1.z);
     float3 pacc = float3(0.0f, 0.0f, 0.0f);
@@ -65,15 +67,15 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
       for (int i = 0; i < ns; i++) {
         float fx = (float(cx) * cw + (float(i) + 0.5f) * stx);
         float fy = (float(cy) * ch + (float(j) + 0.5f) * sty);
-        int sx = surf.bounds.x1 + int(fx);
-        int sy = surf.bounds.y1 + int(fy);
-        float4 s = surf(sx, sy);
+        int sx = in_surf.bounds.x1 + int(fx);
+        int sy = in_surf.bounds.y1 + int(fy);
+        float4 s = in_surf(sx, sy);
         if (s.w < 0.5f || s.z <= 0.0f) {
           continue;
         }
-        float3 dir = ray_dir(float(sx - surf.bounds.x1) + 0.5f, float(sy - surf.bounds.y1) + 0.5f);
+        float3 dir = ray_dir(float(sx - in_surf.bounds.x1) + 0.5f, float(sy - in_surf.bounds.y1) + 0.5f);
         float3 P = cam_pos + dir * s.z;
-        float4 nn = nrm(sx, sy);
+        float4 nn = in_nrm(sx, sy);
         float3 N = float3(nn.x, nn.y, nn.z);
         if (dot(N, N) < 1e-12f) {
           N = cam_pos - P;
@@ -92,7 +94,7 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
         float area = (dist_m * pix) * (dist_m * pix) / max(cosv, 0.2f);
         float3 col = float3(albedo, albedo, albedo);
         if (use_albedo == 1) {
-          float4 a = alb(sx, sy);
+          float4 a = in_alb(sx, sy);
           col = float3(clamp(a.x, 0.0f, 1.0f), clamp(a.y, 0.0f, 1.0f), clamp(a.z, 0.0f, 1.0f));
         }
         float3 flux = col * (nl * v * area);
