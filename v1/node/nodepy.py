@@ -647,6 +647,11 @@ def check(grp):
                 out.append(('ok', 'Scene units', 'The set is a median %.3g m from the camera.' % med))
     except Exception:
         pass
+    bad = kernel_errors(grp)
+    if bad:
+        out.append(('problem', 'Kernels', '%s failed to build or run. %s' % (', '.join(bad), (
+            'If the error says GPU, untick Use GPU: the CPU gives the same dust.' if grp['use_gpu'].value() else
+            'Open the node (Ctrl+Enter) and look at the error on those nodes.'))))
     n, want = mote_count(grp)
     if want > n:
         out.append(('warn', 'Motes', '%d motes (density x box wants %d; capped by Max motes or the node\'s limit '
@@ -662,6 +667,19 @@ def report_html(items):
                        for l, t, d in items)
 
 
+def kernel_errors(grp):
+    """Internal kernels that failed to build or run (on some machines the GPU can't build them)."""
+    bad = []
+    for name in KERNELS:
+        n = _inner(grp, name)
+        try:
+            if n is not None and n.hasError():
+                bad.append(name)
+        except Exception:
+            pass
+    return bad
+
+
 def status(grp):
     try:
         src = json.loads(grp['mf_cam_src'].value() or '{}')
@@ -674,6 +692,10 @@ def status(grp):
     else:
         bits.append('camera from the pass' if src.get('n') else '<span style="color:#e77">no camera yet: press Read camera</span>')
     bits.append('%d motes' % n + (' (capped)' if want > n else ''))
+    bad = kernel_errors(grp)
+    if bad:
+        bits.append('<span style="color:#e77">%d kernel(s) failed to build%s</span>' % (
+            len(bad), ': untick Use GPU' if grp['use_gpu'].value() else ''))
     grp['mf_status'].setValue(' &middot; '.join(bits))
 
 

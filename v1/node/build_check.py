@@ -23,6 +23,7 @@ def build(version='15.0 v1'):
         ' ypos -100',
         '}',
         'BlinkScript {',
+        ' ProgramGroup 1',
         ' kernelSource ' + nk.q(src),
         ' rebuild ""',
         ' rebuild_finalise ""',

@@ -229,6 +229,16 @@ class Script(unittest.TestCase):
         L.run(None, 'knobChanged', knob=nkload.Knob('showPanel'))
         self.assertNotAlmostEqual(L.g['cam_pos'].animation(0).k[1001], before, places=3)
 
+    def test_a_kernel_that_fails_to_build_is_reported(self):
+        L = self.L
+        L.run(None, 'knobChanged', knob=nkload.Knob('inputChange'))
+        self.assertNotIn('failed', L.g['mf_status'].value())
+        L.g.node('mf_motes')._error = True
+        L.run(None, 'knobChanged', knob=nkload.Knob('showPanel'))
+        self.assertIn('untick Use GPU', L.g['mf_status'].value())
+        L.run(None, 'check_shot')
+        self.assertIn('mf_motes failed to build', L.g['mf_report'].value())
+
     def test_a_still_camera_is_not_keyed(self):
         L = Loaded(frames=(1001, 1001))
         L.run(None, 'knobChanged', knob=nkload.Knob('inputChange'))

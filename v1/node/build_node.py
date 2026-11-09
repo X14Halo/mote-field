@@ -302,6 +302,7 @@ def blink_node(name, kfile, n_inputs, xpos, ypos):
                           "    pass\n" % name)
     return ['BlinkScript {',
             ' inputs %d' % n_inputs,
+            ' ProgramGroup 1',                    # as Nuke itself writes a BlinkScript (12.2 and 15 alike)
             ' kernelSource ' + nk.q(src),
             ' rebuild ""',
             ' rebuild_finalise ""',

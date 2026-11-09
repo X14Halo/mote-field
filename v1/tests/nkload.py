@@ -224,6 +224,9 @@ class Node(object):
     def sample(self, chan, x, y, *a, **k):
         return self.script.sample(self, chan, x, y)
 
+    def hasError(self):
+        return bool(getattr(self, '_error', False))
+
     def width(self):
         return self.script.size(self)[0]
 
