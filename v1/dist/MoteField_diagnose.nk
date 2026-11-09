@@ -17,6 +17,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_probe_basic
+ label "1"
  xpos 0
  ypos -120
 }
@@ -37,6 +38,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_probe_float3_param
+ label "2"
  xpos 120
  ypos -120
 }
@@ -57,6 +59,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_probe_float3_function
+ label "3"
  xpos 240
  ypos -120
 }
@@ -77,6 +80,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_probe_bool_local
+ label "4"
  xpos 360
  ypos -120
 }
@@ -97,6 +101,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_probe_loops
+ label "5"
  xpos 480
  ypos -120
 }
@@ -117,6 +122,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_probe_random_component
+ label "6"
  xpos 600
  ypos -120
 }
@@ -137,6 +143,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_info_array_in_function
+ label "17"
  xpos 720
  ypos -120
 }
@@ -157,6 +164,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_info_one_value_vector
+ label "18"
  xpos 840
  ypos -120
 }
@@ -177,6 +185,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_info_while_loop
+ label "19"
  xpos 960
  ypos -120
 }
@@ -197,6 +206,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_modes
+ label "7"
  xpos 0
  ypos 140
 }
@@ -235,6 +245,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_facts
+ label "8"
  xpos 140
  ypos 140
 }
@@ -273,6 +284,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_surface
+ label "9"
  xpos 280
  ypos 140
 }
@@ -302,6 +314,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_bounds
+ label "10"
  xpos 420
  ypos 140
 }
@@ -358,6 +371,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_bounce
+ label "11"
  xpos 560
  ypos 140
 }
@@ -405,6 +419,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_place
+ label "12"
  xpos 700
  ypos 140
 }
@@ -452,6 +467,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_motes
+ label "13"
  xpos 840
  ypos 140
 }
@@ -490,6 +506,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_bins
+ label "14"
  xpos 980
  ypos 140
 }
@@ -519,6 +536,7 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_rows
+ label "15"
  xpos 1120
  ypos 140
 }
@@ -566,17 +584,21 @@ BlinkScript {
  rebuild_finalise ""
  useGPUIfAvailable false
  name mfdiag_kernel_draw
+ label "16"
  xpos 1260
  ypos 140
 }
 NoOp {
  inputs 0
  name MoteField_diagnose
- label "press Report"
+ label "Test next"
  addUserKnob {20 diagnose l Diagnose}
- addUserKnob {26 about l "" +STARTLINE T "Builds every MoteField kernel, and a few probes of single Blink features, on the CPU. Press Report, then send the result. For a node that says ERROR, view it: Nuke shows the error text in the viewer."}
- addUserKnob {22 report l Report T "import nuke\nlines = \[\]\nbad = 0\nfor n in sorted(nuke.allNodes('BlinkScript'), key=lambda n: n.name()):\n    if not n.name().startswith('mfdiag_'):\n        continue\n    try:\n        n.sample('rgba.red', 0.5, 0.5)\n    except Exception:\n        pass\n    err = False\n    try:\n        err = n.hasError()\n    except Exception:\n        pass\n    if err:\n        bad += 1\n    info = ' (the node does not use this)' if n.name().startswith('mfdiag_info_') else ''\n    lines.append('%s: %s%s' % (n.name()\[7:\], 'ERROR' if err else 'ok', info))\nlines.insert(0, '%d of %d failed' % (bad, len(lines)))\nnuke.thisNode()\['result'\].setValue('<br>'.join(lines))\nnuke.message('\\n'.join(lines))\n" +STARTLINE}
- addUserKnob {26 result l "" +STARTLINE T ""}
+ addUserKnob {26 about l "" +STARTLINE T "Every MoteField kernel, and small probes of single Blink features, on the CPU. <b>Check builds</b> reads which failed to build, without rendering anything. <b>Test next</b> renders one node at a time: before each press, the line below says which node is next, so if Nuke crashes, that is the one. For a node that says ERROR, view it: Nuke shows the error text in the viewer."}
+ addUserKnob {22 check_builds l "Check builds" T "import nuke\nnames = \['mfdiag_probe_basic', 'mfdiag_probe_float3_param', 'mfdiag_probe_float3_function', 'mfdiag_probe_bool_local', 'mfdiag_probe_loops', 'mfdiag_probe_random_component', 'mfdiag_kernel_modes', 'mfdiag_kernel_facts', 'mfdiag_kernel_surface', 'mfdiag_kernel_bounds', 'mfdiag_kernel_bounce', 'mfdiag_kernel_place', 'mfdiag_kernel_motes', 'mfdiag_kernel_bins', 'mfdiag_kernel_rows', 'mfdiag_kernel_draw', 'mfdiag_info_array_in_function', 'mfdiag_info_one_value_vector', 'mfdiag_info_while_loop'\]\nlines = \[\]\nfor i, name in enumerate(names):\n    n = nuke.toNode(name)\n    err = False\n    try:\n        err = n.hasError()\n    except Exception:\n        pass\n    lines.append('%d %s: %s' % (i + 1, name\[7:\], 'ERROR' if err else 'no error yet'))\nme = nuke.thisNode()\ni = int(me\['step'\].value())\nnxt = ('<b>Next to test: %d %s</b>' % (i + 1, names\[i\]\[7:\])) if i < len(names) else '<b>All tested.</b>'\nme\['result'\].setValue('<br>'.join(\['Builds (nothing rendered):'\] + lines) + '<br><br>' + me\['log'\].value() + nxt)\n" +STARTLINE}
+ addUserKnob {22 test_next l "Test next" T "import nuke\nnames = \['mfdiag_probe_basic', 'mfdiag_probe_float3_param', 'mfdiag_probe_float3_function', 'mfdiag_probe_bool_local', 'mfdiag_probe_loops', 'mfdiag_probe_random_component', 'mfdiag_kernel_modes', 'mfdiag_kernel_facts', 'mfdiag_kernel_surface', 'mfdiag_kernel_bounds', 'mfdiag_kernel_bounce', 'mfdiag_kernel_place', 'mfdiag_kernel_motes', 'mfdiag_kernel_bins', 'mfdiag_kernel_rows', 'mfdiag_kernel_draw', 'mfdiag_info_array_in_function', 'mfdiag_info_one_value_vector', 'mfdiag_info_while_loop'\]\nme = nuke.thisNode()\ni = int(me\['step'\].value())\nif i >= len(names):\n    nuke.message('All %d tested.' % len(names))\nelse:\n    n = nuke.toNode(names\[i\])\n    try:\n        n.sample('rgba.red', 0.5, 0.5)\n    except Exception:\n        pass\n    err = False\n    try:\n        err = n.hasError()\n    except Exception:\n        pass\n    log = me\['log'\].value()\n    log += '%d %s: %s<br>' % (i + 1, names\[i\]\[7:\], 'ERROR' if err else 'ok')\n    me\['log'\].setValue(log)\n    me\['step'\].setValue(i + 1)\n    nxt = ('<b>Next to test: %d %s</b>' % (i + 2, names\[i + 1\]\[7:\])) if i + 1 < len(names) else '<b>All tested.</b>'\n    me\['result'\].setValue(log + nxt)\n"}
+ addUserKnob {26 result l "" +STARTLINE T "<b>Next to test: 1 probe_basic</b>"}
+ addUserKnob {3 step +INVISIBLE}
+ addUserKnob {1 log +INVISIBLE}
  xpos 0
  ypos -320
 }

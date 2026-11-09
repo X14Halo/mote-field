@@ -110,7 +110,16 @@ class Script(unittest.TestCase):
             self.assertEqual([i.name() for i in n.inputs], ['mfdiag_%s_in%d' % (kfile, i) for i in range(len(inputs))])
             self.assertEqual(n.source, blinklib.source(kfile))
             self.assertEqual(n['useGPUIfAvailable'].value(), False)
-        self.assertIsNotNone(sc.root.children['MoteField_diagnose'].knob('report'))
+        d = sc.root.children['MoteField_diagnose']
+        sys.modules['nuke'] = nkload.fake_nuke(sc)
+        nkload.run_python(d, d['check_builds'].value(), d['check_builds'], group=sc.root)
+        self.assertIn('modes: no error yet', d['result'].value())
+        names = build_diagnose.order()
+        for i in range(len(names)):
+            self.assertIn('Next to test: %d %s' % (i + 1, names[i][7:]), d['result'].value())
+            nkload.run_python(d, d['test_next'].value(), d['test_next'], group=sc.root)
+        self.assertIn('All tested', d['result'].value())
+        self.assertEqual(d['result'].value().count(': ok'), len(names))
 
     def test_embedded_python_is_plain_ascii_and_python2_safe(self):
         """Nuke 12 and older run Python 2.7: no non-ASCII and nothing Python 3 only in the code inside the node."""

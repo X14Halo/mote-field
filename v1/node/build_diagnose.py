@@ -1,6 +1,7 @@
 """Builds dist/MoteField_diagnose.nk: every kernel of the node, each fed four-channel inputs of the sizes the node
-gives it, plus small probes of single Blink features, all on the CPU. A Report button says which fail to build or
-run, so a Nuke that can't run the node shows exactly what it trips on.
+gives it, plus small probes of single Blink features, all on the CPU. Check builds reads which failed to build
+(rendering nothing); Test next renders one node at a time and always shows which is next, so if a node crashes
+Nuke, the panel said which one.
 
     python3 node/build_diagnose.py
 """
@@ -28,12 +29,42 @@ SIZES = {'mf_space_modes': (2, 64), 'mf_space_facts': (3, 1), 'mf_space_bounds':
          'mf_place': (2 * bl.STATE_COLS, bl.STATE_H), 'mf_motes': (bl.STATE_W, bl.STATE_H),
          'mf_bins': (bl.NTILES, bl.ROWS1), 'mf_rows': (bl.NTILES, bl.ROWS2)}
 
-REPORT = '''import nuke
+def order():
+    """The nodes in the order to test them: the simple feature probes, then the kernels as the node runs them, then
+    the probes of features the node doesn't use."""
+    out = ['mfdiag_probe_' + p for p in PROBES if p not in INFO_ONLY]
+    out += ['mfdiag_kernel_' + kfile for node, kfile, space, inputs in GRAPH]
+    out += ['mfdiag_info_' + p for p in INFO_ONLY]
+    return out
+
+
+# Reads each node's error state without rendering anything (it can't crash Nuke)
+CHECK_BUILDS = """import nuke
+names = %r
 lines = []
-bad = 0
-for n in sorted(nuke.allNodes('BlinkScript'), key=lambda n: n.name()):
-    if not n.name().startswith('mfdiag_'):
-        continue
+for i, name in enumerate(names):
+    n = nuke.toNode(name)
+    err = False
+    try:
+        err = n.hasError()
+    except Exception:
+        pass
+    lines.append('%%d %%s: %%s' %% (i + 1, name[7:], 'ERROR' if err else 'no error yet'))
+me = nuke.thisNode()
+i = int(me['step'].value())
+nxt = ('<b>Next to test: %%d %%s</b>' %% (i + 1, names[i][7:])) if i < len(names) else '<b>All tested.</b>'
+me['result'].setValue('<br>'.join(['Builds (nothing rendered):'] + lines) + '<br><br>' + me['log'].value() + nxt)
+"""
+
+# Renders one node, then says which is next: if Nuke crashes, the panel said which node did it
+TEST_NEXT = """import nuke
+names = %r
+me = nuke.thisNode()
+i = int(me['step'].value())
+if i >= len(names):
+    nuke.message('All %%d tested.' %% len(names))
+else:
+    n = nuke.toNode(names[i])
     try:
         n.sample('rgba.red', 0.5, 0.5)
     except Exception:
@@ -43,15 +74,13 @@ for n in sorted(nuke.allNodes('BlinkScript'), key=lambda n: n.name()):
         err = n.hasError()
     except Exception:
         pass
-    if err:
-        bad += 1
-    info = ' (the node does not use this)' if n.name().startswith('mfdiag_info_') else ''
-    lines.append('%s: %s%s' % (n.name()[7:], 'ERROR' if err else 'ok', info))
-lines.insert(0, '%d of %d failed' % (bad, len(lines)))
-nuke.thisNode()['result'].setValue('<br>'.join(lines))
-nuke.message('\\n'.join(lines))
-'''
-
+    log = me['log'].value()
+    log += '%%d %%s: %%s<br>' %% (i + 1, names[i][7:], 'ERROR' if err else 'ok')
+    me['log'].setValue(log)
+    me['step'].setValue(i + 1)
+    nxt = ('<b>Next to test: %%d %%s</b>' %% (i + 2, names[i + 1][7:])) if i + 1 < len(names) else '<b>All tested.</b>'
+    me['result'].setValue(log + nxt)
+"""
 
 def constant(name, w, h, x, y):
     return ['Constant {', ' inputs 0', ' channels rgba', ' color {0 0 0 0}',
@@ -60,9 +89,11 @@ def constant(name, w, h, x, y):
 
 
 def blink(name, src, n_inputs, x, y):
+    names = order()
+    label = ' label %s' % nk.q(str(names.index(name) + 1)) if name in names else ''
     return ['BlinkScript {', ' inputs %d' % n_inputs, ' ProgramGroup 1', ' kernelSource ' + nk.q(src),
-            ' rebuild ""', ' rebuild_finalise ""', ' useGPUIfAvailable false', ' name ' + name,
-            ' xpos %d' % x, ' ypos %d' % y, '}']
+            ' rebuild ""', ' rebuild_finalise ""', ' useGPUIfAvailable false', ' name ' + name] + \
+        ([label] if label else []) + [' xpos %d' % x, ' ypos %d' % y, '}']
 
 
 def build(version='12.2 v1'):
@@ -82,16 +113,23 @@ def build(version='12.2 v1'):
             L += constant('mfdiag_%s_in%d' % (kfile, i), w, h, x + 20 * i, 40)
         L += blink('mfdiag_kernel_' + kfile, bl.source(kfile), len(inputs), x, 140)
         x += 140
+    names = order()
     L += ['NoOp {', ' inputs 0', ' name MoteField_diagnose',
-          ' label "press Report"',
+          ' label "Test next"',
           ' addUserKnob {20 diagnose l Diagnose}',
           ' addUserKnob {26 about l "" +STARTLINE T %s}' % nk.q(
-              'Builds every MoteField kernel, and a few probes of single Blink features, on the CPU. '
-              'Press Report, then send the result. For a node that says ERROR, view it: Nuke shows the '
+              'Every MoteField kernel, and small probes of single Blink features, on the CPU. '
+              '<b>Check builds</b> reads which failed to build, without rendering anything. '
+              '<b>Test next</b> renders one node at a time: before each press, the line below says which node is '
+              'next, so if Nuke crashes, that is the one. For a node that says ERROR, view it: Nuke shows the '
               'error text in the viewer.'),
-          ' addUserKnob {22 report l Report T %s +STARTLINE}' % nk.q(REPORT),
-          ' addUserKnob {26 result l "" +STARTLINE T ""}',
+          ' addUserKnob {22 check_builds l "Check builds" T %s +STARTLINE}' % nk.q(CHECK_BUILDS % (names,)),
+          ' addUserKnob {22 test_next l "Test next" T %s}' % nk.q(TEST_NEXT % (names,)),
+          ' addUserKnob {26 result l "" +STARTLINE T %s}' % nk.q('<b>Next to test: 1 %s</b>' % names[0][7:]),
+          ' addUserKnob {3 step +INVISIBLE}',
+          ' addUserKnob {1 log +INVISIBLE}',
           ' xpos 0', ' ypos -320', '}', '']
+    # each node labelled with its place in the order
     return '\n'.join(L)
 
 
