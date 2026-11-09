@@ -135,15 +135,15 @@ kernel MFMotes : ImageComputationKernel<ePixelWise>
   }
 
   void process(int2 xy) {
-    int g = xy.x / @STATE_COLS@;
-    int i = xy.y * @STATE_COLS@ + (xy.x - g * @STATE_COLS@);
+    int g = xy.x >> @STATE_COLS_SHIFT@;
+    int i = (xy.y << @STATE_COLS_SHIFT@) + (xy.x & (@STATE_COLS@ - 1));
     if (i >= count || g >= @GROUPS@) {
       empty_out(g);
       return;
     }
 //@include body_start
-    float4 pp = place(xy.x - g * @STATE_COLS@, xy.y);
-    float4 pv = place(xy.x - g * @STATE_COLS@ + @STATE_COLS@, xy.y);
+    float4 pp = place(xy.x & (@STATE_COLS@ - 1), xy.y);
+    float4 pv = place((xy.x & (@STATE_COLS@ - 1)) + @STATE_COLS@, xy.y);
     float w = pp.w;
     if (w <= 0.0f) {
       empty_out(g);

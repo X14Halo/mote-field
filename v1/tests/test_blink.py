@@ -71,8 +71,10 @@ class OlderBlink(unittest.TestCase):
     return bad(k);
   }
   void process(int2 xy) {
-    float a[2];""", 1)
+    float a[2];
+    int z = xy.x / 3;""", 1)
         found = bl.rule_breaks(src)
+        self.assertIn('integer division in process (/ 3)', found)
         self.assertIn('bad reads images and is called from worse', found)
         self.assertIn('an array', found)
 

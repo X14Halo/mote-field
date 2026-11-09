@@ -46,8 +46,8 @@ kernel MFBounce : ImageComputationKernel<ePixelWise>
       dst() = float4(0.0f, 0.0f, 0.0f, 0.0f);
       return;
     }
-    int cx = c - (c / @CELLS_X@) * @CELLS_X@;
-    int cy = c / @CELLS_X@;
+    int cx = c & (@CELLS_X@ - 1);
+    int cy = c >> @CELLS_X_SHIFT@;
     float cw = Wf / float(@CELLS_X@);
     float ch = Hf / float(@CELLS_Y@);
     int ns = 24;

@@ -86,8 +86,8 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
 
   // one mote's light at pixel centre (px, py)
   float3 mote_light(int i, float px, float py) {
-    int row = i / @STATE_COLS@;
-    int col = i - row * @STATE_COLS@;
+    int row = i >> @STATE_COLS_SHIFT@;
+    int col = i & (@STATE_COLS@ - 1);
     float4 bb = motes(col, row);
     if (px < bb.x || px > bb.z || py < bb.y || py > bb.w) {
       return float3(0.0f, 0.0f, 0.0f);
@@ -102,8 +102,8 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
     float4 fc = motes(col + 3 * @STATE_COLS@, row);
     float R = rk.x;
     int SK = int(rk.y + 0.5f);
-    int K = SK / 32;
-    int S = SK - K * 32;
+    int K = SK >> 5;
+    int S = SK & 31;
     S = clampi(S, 1, 24);
     K = clampi(K, 1, 24);
     float bend = rk.z;
@@ -130,7 +130,9 @@ kernel MFDraw : ImageComputationKernel<ePixelWise>
     int y = xy.y - surf.bounds.y1;
     float px = float(x) + 0.5f;
     float py = float(y) + 0.5f;
-    int T = clampi(x / tw, 0, @TILES_X@ - 1) + clampi(y / th, 0, @TILES_Y@ - 1) * @TILES_X@;
+    // the tile (no integer division: Blink's CPU vectoriser can't always do it)
+    int T = clampi(int(floor((float(x) + 0.5f) / float(tw))), 0, @TILES_X@ - 1) +
+            clampi(int(floor((float(y) + 0.5f) / float(th))), 0, @TILES_Y@ - 1) * @TILES_X@;
     float3 acc = float3(0.0f, 0.0f, 0.0f);
     for (int r2 = 0; r2 < @ROWS2@; r2++) {
       for (int c2 = 0; c2 < 4; c2++) {

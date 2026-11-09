@@ -37,8 +37,8 @@ kernel MFBins : ImageComputationKernel<ePixelWise>
       dst() = float4(0.0f, 0.0f, 0.0f, 0.0f);
       return;
     }
-    int tx = T - (T / @TILES_X@) * @TILES_X@;
-    int ty = T / @TILES_X@;
+    int tx = T & (@TILES_X@ - 1);
+    int ty = T >> @TILES_X_SHIFT@;
     float x0 = float(tx * tw);
     float y0 = float(ty * th);
     float x1 = x0 + float(tw);
@@ -54,7 +54,7 @@ kernel MFBins : ImageComputationKernel<ePixelWise>
         if (i >= count) {
           break;
         }
-        float4 bb = motes(i - (i / @STATE_COLS@) * @STATE_COLS@, i / @STATE_COLS@);
+        float4 bb = motes(i & (@STATE_COLS@ - 1), i >> @STATE_COLS_SHIFT@);
         if (bb.x < x1 && bb.z > x0 && bb.y < y1 && bb.w > y0) {
           bits = bits | (1 << b);
         }

@@ -97,6 +97,13 @@ def _f(x):
     return s + 'f'
 
 
+def _log2(n):
+    """The shift for a power of two (the kernels divide by shifting: see rule_breaks)."""
+    k = n.bit_length() - 1
+    assert 1 << k == n, '%d is not a power of two' % n
+    return k
+
+
 def source(name):
     """The full source of kernel `name` (node/kernels/NAME.blink), includes and params filled in."""
     text = open(os.path.join(HERE, name + '.blink')).read()
@@ -118,7 +125,8 @@ def source(name):
         text = re.sub(r'^\s*//@define\s*$', define, text, count=1, flags=re.M)
     consts = dict(STATE_COLS=STATE_COLS, GROUPS=GROUPS, MAX_MOTES=MAX_MOTES, TILES_X=TILES_X, TILES_Y=TILES_Y,
                   NTILES=NTILES, ROWS1=ROWS1, ROWS2=ROWS2, CELLS_X=CELLS_X, CELLS_Y=CELLS_Y, NCELLS=NCELLS,
-                  MODES=MODES)
+                  MODES=MODES, STATE_COLS_SHIFT=_log2(STATE_COLS), TILES_X_SHIFT=_log2(TILES_X),
+                  CELLS_X_SHIFT=_log2(CELLS_X))
     text = re.sub(r'@(\w+)@', lambda m: str(consts[m.group(1)]), text)
     return text
 
@@ -162,6 +170,7 @@ def rule_breaks(src):
     * images read in a function that another user function calls (Blink reads images only in process() or in the
       functions it calls directly; Nuke 12.2 crashes otherwise);
     * images read in init();
+    * integer division outside init() (Blink's CPU vectoriser can't always do it: Nuke 12.2 crashed on it);
     * arrays, while loops, one-value vector constructors."""
     out = []
     imgs = images(src)
@@ -174,6 +183,21 @@ def rule_breaks(src):
     if 'init' in reads:
         out.append('init reads images')
     code = re.sub(r'//[^\n]*', '', src)
+    head = code[:code.find('void define')] if 'void define' in code else ''
+    kernel_ints = set(re.findall(r'\bint\s+(\w+)\s*;', head))           # int params and locals
+    sigs = dict((m.group(1), m.group(2)) for m in
+                re.finditer(r'\n  (?:float[234]?|int[234]?|bool|void)\s+(\w+)\s*\(([^)]*)\)\s*\{', code))
+    for f, body in fns.items():
+        if f in ('init', 'define'):
+            continue
+        body = re.sub(r'//[^\n]*', '', body)
+        ints = kernel_ints | set(re.findall(r'\bint\s+(\w+)', body + ' ' + sigs.get(f, '')))
+        floats = set(re.findall(r'\bfloat[234]?\s+(\w+)', body + ' ' + sigs.get(f, '')))
+        ints -= floats
+        for m in re.finditer(r'/\s*(\(?\s*[\w.]+)', body):
+            d = m.group(1).lstrip('( ').strip()
+            if re.match(r'^\d+$', d) or d in ints:
+                out.append('integer division in %s (/ %s)' % (f, d))
     if re.search(r'\w\s*\[', code):
         out.append('an array')
     if re.search(r'\bwhile\s*\(', code):

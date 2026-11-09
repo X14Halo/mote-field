@@ -12,12 +12,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from node import blinklib as bl, nk                 # noqa: E402
-from node.build_node import GRAPH                   # noqa: E402
+from node.build_node import GRAPH, SCALAR           # noqa: E402
 
 PROBES = ('basic', 'float3_param', 'float3_function', 'bool_local', 'loops', 'random_component',
-          'array_in_function', 'one_value_vector', 'while_loop')
+          'array_in_function', 'one_value_vector', 'while_loop', 'int_division')
 # features the node itself avoids (to know about, not to worry about)
-INFO_ONLY = ('array_in_function', 'one_value_vector', 'while_loop')
+INFO_ONLY = ('array_in_function', 'one_value_vector', 'while_loop', 'int_division')
 
 PIC = (320, 180)                                    # the stand-in picture size for full-frame inputs
 SIZES = {'mf_space_modes': (2, 64), 'mf_space_facts': (3, 1), 'mf_space_bounds': (2, 1),
@@ -88,11 +88,12 @@ def constant(name, w, h, x, y):
             ' xpos %d' % x, ' ypos %d' % y, '}']
 
 
-def blink(name, src, n_inputs, x, y):
+def blink(name, src, n_inputs, x, y, vectorize=True):
     names = order()
     label = ' label %s' % nk.q(str(names.index(name) + 1)) if name in names else ''
     return ['BlinkScript {', ' inputs %d' % n_inputs, ' ProgramGroup 1', ' kernelSource ' + nk.q(src),
-            ' rebuild ""', ' rebuild_finalise ""', ' useGPUIfAvailable false', ' name ' + name] + \
+            ' rebuild ""', ' rebuild_finalise ""', ' useGPUIfAvailable false'] + \
+        ([] if vectorize else [' vectorize false']) + [' name ' + name] + \
         ([label] if label else []) + [' xpos %d' % x, ' ypos %d' % y, '}']
 
 
@@ -111,7 +112,7 @@ def build(version='12.2 v1'):
         for i, src in reversed(list(enumerate(inputs))):
             w, h = SIZES[src]
             L += constant('mfdiag_%s_in%d' % (kfile, i), w, h, x + 20 * i, 40)
-        L += blink('mfdiag_kernel_' + kfile, bl.source(kfile), len(inputs), x, 140)
+        L += blink('mfdiag_kernel_' + kfile, bl.source(kfile), len(inputs), x, 140, kfile not in SCALAR)
         x += 140
     names = order()
     L += ['NoOp {', ' inputs 0', ' name MoteField_diagnose',

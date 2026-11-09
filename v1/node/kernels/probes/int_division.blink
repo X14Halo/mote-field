@@ -1,0 +1,13 @@
+kernel MFProbeIntDivision : ImageComputationKernel<ePixelWise>
+{
+  Image<eRead, eAccessPoint, eEdgeClamped> src;
+  Image<eWrite> dst;
+  void process(int2 pos) {
+    int s = 0;
+    for (int k = 0; k < 400; k++) {
+      int i = k - (k / 160) * 160;
+      s += i / 7 + pos.x / 3;
+    }
+    dst() = float4(float(s), 0.0f, 0.0f, 1.0f);
+  }
+};

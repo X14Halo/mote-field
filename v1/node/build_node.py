@@ -31,6 +31,10 @@ GRAPH = [
     ('mf_draw', 'draw', None, ['mf_surface', 'mf_motes', 'mf_bins', 'mf_rows']),
 ]
 
+# kernels that make only a few pixels: Blink's CPU vectoriser (several pixels at once) gains nothing on them, so it is
+# off there (it is experimental, and older versions trip on some code)
+SCALAR = ('modes', 'facts', 'bounds', 'bounce')
+
 UNITS_EXPR = 'parent.units==0?0.01:parent.units==1?1:parent.units==2?0.001:parent.units==3?0.0254:0.3048'
 AIR = ('drift', 'lift', 'eddies', 'micro', 'thermal', 'tumble')
 VEC3 = {'box_center': 'xyz', 'box_size': 'xyz', 'fade_neg': 'xyz', 'fade_pos': 'xyz', 'light_rgb': 'rgb',
@@ -306,7 +310,7 @@ def blink_node(name, kfile, n_inputs, xpos, ypos):
             ' kernelSource ' + nk.q(src),
             ' rebuild ""',
             ' rebuild_finalise ""',
-            ' useGPUIfAvailable {{parent.use_gpu}}',
+            ' useGPUIfAvailable {{parent.use_gpu}}'] + ([' vectorize false'] if kfile in SCALAR else []) + [
             ' name ' + name,
             ' onCreate ' + nk.q(on_create),
             ' xpos %d' % xpos,

@@ -66,8 +66,8 @@ kernel MFPlace : ImageComputationKernel<ePixelWise>
   }
 
   void process(int2 xy) {
-    int g = xy.x / @STATE_COLS@;
-    int i = xy.y * @STATE_COLS@ + (xy.x - g * @STATE_COLS@);
+    int g = xy.x >> @STATE_COLS_SHIFT@;
+    int i = (xy.y << @STATE_COLS_SHIFT@) + (xy.x & (@STATE_COLS@ - 1));
     if (i >= count || g >= 2) {
       dst() = float4(0.0f, 0.0f, 0.0f, 0.0f);
       return;
